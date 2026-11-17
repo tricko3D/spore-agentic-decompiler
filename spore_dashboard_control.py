@@ -66,6 +66,8 @@ class Controller:
 
     def _confirm_idle(self):
         from spore_dashboard_data import connect_ro,proc_running
+        if self.process and self.process.poll() is None:
+            raise ValueError('A dashboard-launched coordinator is already starting or running')
         running=coordinators(self.repo)
         if running:
             raise ValueError('A decompiler coordinator is already active (PID '+', '.join(map(str,running))+')')
