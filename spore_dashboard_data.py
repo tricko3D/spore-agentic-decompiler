@@ -79,6 +79,8 @@ def _inside_logs(repo, raw):
 
 
 def _log_for_va(repo,va):
+    if not isinstance(va,str) or not VA_RE.fullmatch(va):
+        return None
     root=repo/'work/scratch/codex-pass1/logs'
     try:
         files=[p for p in root.glob(va[2:] + '.*.jsonl') if p.is_file()]
@@ -189,7 +191,7 @@ def latest_by_va(db):
     return {row['va']:dict(row) for row in rows}
 
 
-def worker_info(repo,run_id,claimed,last_attempts=None):
+def worker_info(repo,run_id,claimed,last_attempts=None,byte_sizes=None):
     workers=[]
     if not run_id:return workers
     file=repo/'work/scratch/codex-pass1/parallel'/run_id/'run.json'
@@ -202,13 +204,15 @@ def worker_info(repo,run_id,claimed,last_attempts=None):
         if not isinstance(i,int):continue
         pid=int(item.get('pid') or 0)
         va=claimed.get(i)
-        logfile=_log_for_va(repo,va or (last_attempts or {}).get(i))
+        last_va=va or (last_attempts or {}).get(i)
+        logfile=_log_for_va(repo,last_va)
         if logfile:
             view=stream(repo,logfile,limit=4)
         else:
             view=[]
         workers.append({'worker':i+1,'pid':pid,'alive':proc_running(pid),
-                        'current':va,'stream':view})
+                        'current':va,'last_function':last_va,
+                        'bytes':(byte_sizes or {}).get(last_va), 'stream':view})
     return workers
 
 
@@ -251,6 +255,15 @@ def snapshot(repo):
         latest=latest_by_va(db)
         by_status=Counter(row['status'] for row in latest.values())
         effort=Counter(row['effort'] for row in latest.values() if row['status']=='FAIL')
+        byte_sizes={r['va']:int(r['size']) for r in db.execute('SELECT va,size FROM queue')}
+        byte_totals=Counter()
+        effort_bytes=Counter()
+        for va,size in byte_sizes.items():
+            kind=latest[va]['status'] if va in latest else 'PENDING'
+            byte_totals[kind]+=size
+            if kind=='FAIL':
+                effort_bytes[latest[va]['effort']]+=size
+        byte_totals['queue']=sum(byte_sizes.values())
         scalar=lambda sql,*a:db.execute(sql,a).fetchone()[0]
         last=db.execute('SELECT * FROM runs ORDER BY started_utc DESC LIMIT 1').fetchone()
         rid=last['run_id'] if last else None
@@ -275,7 +288,18 @@ def snapshot(repo):
               OR (SELECT COUNT(*) FROM attempts t LEFT JOIN attempt_reviews v ON v.attempt_id=t.id
                 WHERE t.va=x.va AND t.status IN ('FAIL','DEFER') AND v.attempt_id IS NULL)>=?
               OR EXISTS(SELECT 1 FROM run_exclusions e WHERE e.run_id=x.run_id AND e.va=x.va))''',rid,last['passes'])
-            run={'id':rid,'targets':target,'completed':completed,'workers':last['workers'],
+            completed_bytes=scalar('''SELECT COALESCE(SUM(q.size),0) FROM assignments x JOIN queue q ON q.va=x.va
+                  WHERE x.run_id=? AND (
+                    (SELECT t.status FROM attempts t LEFT JOIN attempt_reviews v ON v.attempt_id=t.id
+                      WHERE t.va=x.va AND v.attempt_id IS NULL ORDER BY t.id DESC LIMIT 1) IN ('MATCH','SKIP')
+                    OR (SELECT COUNT(*) FROM attempts t LEFT JOIN attempt_reviews v ON v.attempt_id=t.id
+                        WHERE t.va=x.va AND t.status IN ('FAIL','DEFER') AND v.attempt_id IS NULL)>=?
+                    OR EXISTS(SELECT 1 FROM run_exclusions e WHERE e.run_id=x.run_id AND e.va=x.va))''',rid,last['passes'])
+            target_bytes=scalar('''SELECT COALESCE(SUM(q.size),0) FROM assignments x
+                                  JOIN queue q ON q.va=x.va WHERE x.run_id=?''',rid)
+            run={'id':rid,'targets':target,'completed':completed,
+                 'bytes_target':target_bytes,'bytes_completed':completed_bytes,
+                 'workers':last['workers'],
                  'finished':bool(last['finished_utc']),'started':last['started_utc']}
         a=db.execute('SELECT * FROM adaptive_control WHERE singleton=1').fetchone()
         adaptive={}
@@ -299,12 +323,14 @@ def snapshot(repo):
         # Costs are covered only to the extent the CLI emitted step_finish records.
         from spore_dashboard_control import modules as known_modules
         module_names=known_modules(repo)
-    workers=worker_info(repo,rid,claims,last_by_worker)
+    workers=worker_info(repo,rid,claims,last_by_worker,byte_sizes)
     run['live_workers']=sum(w['alive'] for w in workers)
     return {'generated_utc':datetime.now(timezone.utc).isoformat(timespec='seconds'),
             'run':run,'workers':workers,'events':events,'counters':counts,'budget':budget,
             'adaptive':adaptive,'effort':{f'+{i}':effort.get(f'+{i}',0) for i in range(1,6)},
-            'costs':costs,'modules':module_names}
+            'costs':costs,'modules':module_names,
+            'bytes':dict(byte_totals),
+            'effort_bytes':{f'+{i}':effort_bytes.get(f'+{i}',0) for i in range(1,6)}}
 
 
 def functions(repo,status='ALL',search='',offset=0,limit=75):
@@ -325,7 +351,8 @@ def functions(repo,status='ALL',search='',offset=0,limit=75):
             rows.append({'va':r['va'],'size':r['size'],'file':sanitize(r['suggested_file'],180),
                          'status':kind,'effort':x['effort'] if x else '',
                          'attempts':attempts[r['va']]})
-        return {'total':len(rows),'offset':offset,'items':rows[offset:offset+limit]}
+        return {'total':len(rows),'bytes':sum(r['size'] for r in rows),
+                'offset':offset,'items':rows[offset:offset+limit]}
 
 
 def _checker_output(repo,raw):
@@ -384,10 +411,13 @@ def agent_detail(repo,worker):
         if not va and rid:
             r=db.execute('''SELECT va FROM attempts WHERE run_id=? AND worker_idx=? ORDER BY id DESC LIMIT 1''',(rid,worker-1)).fetchone()
             if r:va=r['va']
-    logfile=_log_for_va(repo,va or (last_attempts or {}).get(i))
+        size=db.execute('SELECT size FROM queue WHERE va=?',(va,)).fetchone() if va else None
+        byte_count=size['size'] if size else None
+    logfile=_log_for_va(repo,va)
     workerlog=repo/'work/scratch/codex-pass1/parallel'/rid/f'worker-{worker:02d}.log' if rid else None
     status=[]
     if workerlog and workerlog.is_file():
         status=[sanitize(x,220) for x in _read_tail(workerlog,6000)[-9:] if x.strip()]
-    return {'worker':worker,'va':va,'events':stream(repo,logfile,limit=100) if logfile else [],
+    return {'worker':worker,'va':va,'bytes':byte_count,
+            'events':stream(repo,logfile,limit=100) if logfile else [],
             'log_status':status,'has_stream':bool(logfile)}
