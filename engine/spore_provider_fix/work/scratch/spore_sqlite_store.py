@@ -14,6 +14,7 @@ import os
 from pathlib import Path
 import sqlite3
 import uuid
+import time
 
 ROOT = Path.cwd()
 WORK = ROOT / 'work' / 'scratch' / 'codex-pass1'
@@ -94,6 +95,12 @@ def init_schema():
         CREATE TABLE IF NOT EXISTS inference_slots(
           id TEXT PRIMARY KEY, run_id TEXT, va TEXT NOT NULL,
           created_utc TEXT NOT NULL);
+        CREATE TABLE IF NOT EXISTS adaptive_control(
+          singleton INTEGER PRIMARY KEY CHECK(singleton=1),
+          run_id TEXT NOT NULL,concurrency INTEGER NOT NULL,ceiling INTEGER NOT NULL,
+          clean_streak INTEGER NOT NULL, productive_samples INTEGER NOT NULL,
+          provider_failures INTEGER NOT NULL,consecutive_errors INTEGER NOT NULL,
+          cooldown_until REAL NOT NULL,last_probe REAL NOT NULL,updated_utc TEXT NOT NULL);
         ''')
 
 
@@ -394,7 +401,15 @@ def reserve_inference_slot(va,run_id,max_inflight):
         db.execute('BEGIN IMMEDIATE')
         try:
             n=db.execute('SELECT COUNT(*) FROM inference_slots').fetchone()[0]
-            if n>=max_inflight:
+            effective = max_inflight
+            if os.environ.get('SPORE_ADAPTIVE_INFLIGHT') == '1':
+                window = db.execute('SELECT * FROM adaptive_control WHERE singleton=1').fetchone()
+                if not window or window['run_id'] != run_id:
+                    db.execute('COMMIT'); return None
+                if time.time() < window['cooldown_until']:
+                    db.execute('COMMIT'); return None
+                effective = min(effective, window['concurrency'])
+            if n>=effective:
                 db.execute('COMMIT'); return None
             db.execute('INSERT INTO inference_slots VALUES(?,?,?,?)',(token,run_id,va,utc()))
             db.execute('COMMIT'); return token
