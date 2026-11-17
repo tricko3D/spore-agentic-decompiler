@@ -10,6 +10,7 @@ from datetime import datetime, timezone
 import getpass
 import importlib.util
 import json
+import re
 import os
 from pathlib import Path
 import shutil
@@ -37,6 +38,7 @@ INSTALL = {
     'migrate_spore_sqlite.py': 'migrate_spore_sqlite.py',
     'install_spore_sqlite.py': 'install_spore_sqlite.py',
     'bootstrap_spore_queue.py': 'bootstrap_queue.py',
+    'extend_spore_queue.py': 'expand_queue.py',
 }
 
 
@@ -166,6 +168,47 @@ def get_key(prompt=False):
     return key
 
 
+def scope_settings(args, previous):
+    module_arg = getattr(args, 'module', None)
+    all_modules = getattr(args, 'all_modules', False)
+    if all_modules and module_arg:
+        fail('--all-modules cannot be combined with --module')
+    if all_modules:
+        modules = ['*']
+    elif module_arg:
+        modules = list(dict.fromkeys(module_arg))
+    else:
+        modules = previous.get('modules', ['SPGonzago'])
+    if not isinstance(modules, list) or not modules:
+        fail('Select at least one module')
+    if '*' in modules and len(modules) != 1:
+        fail('All modules must be selected using --all-modules')
+    for module in modules:
+        if module != '*' and (not isinstance(module, str) or not re.fullmatch(r'[A-Za-z0-9_.+\\-]+', module)):
+            fail(f'Invalid module name: {module!r}')
+    minimum = getattr(args, 'min_confidence', None)
+    if minimum is None:
+        minimum = previous.get('min_confidence', 0.70)
+    if not 0.0 <= float(minimum) <= 1.0:
+        fail('--min-confidence must be between 0 and 1')
+    return {'modules': modules, 'min_confidence': float(minimum)}
+
+
+def with_scope(env, settings):
+    return {**env, 'SPORE_TARGET_MODULES': ';'.join(settings['modules']),
+            'SPORE_MIN_MODULE_CONFIDENCE': str(settings['min_confidence'])}
+
+
+def add_scope_arguments(parser):
+    group = parser.add_mutually_exclusive_group()
+    group.add_argument('--module', action='append', metavar='NAME',
+                       help='Select a module; repeat to select several (default: saved scope)')
+    group.add_argument('--all-modules', action='store_true',
+                       help='Use all modules with confidence >= threshold')
+    parser.add_argument('--min-confidence', type=float,
+                        help='Minimum module mapping confidence, default 0.70')
+
+
 def command_setup(args):
     if sys.platform != 'linux':
         fail('This runner requires Linux or Windows Subsystem for Linux (WSL)')
@@ -187,13 +230,14 @@ def command_setup(args):
         'quota_wait': int(previous.get('quota_wait', 1)),
         'provider_retries': int(previous.get('provider_retries', 2)),
         'reasoning': previous.get('reasoning', 'high'),
+        **scope_settings(args, previous),
     }
     validate_settings(settings)
     install(repo)
     work = repo/'work/scratch/codex-pass1'
     if not (work/'spore.sqlite3').exists():
         if not (work/'queue.csv').exists() and not (work/'results.csv').exists():
-            execute(repo, 'bootstrap_spore_queue.py')
+            execute(repo, 'bootstrap_spore_queue.py', env=with_scope(os.environ.copy(), settings))
         elif not (work/'queue.csv').exists() or not (work/'results.csv').exists():
             fail('Only one of queue.csv/results.csv exists. Refusing to invent lost history.')
         execute(repo, 'migrate_spore_sqlite.py')
@@ -209,6 +253,7 @@ def command_setup(args):
 
 
 def validate_settings(s):
+    scope_settings(argparse.Namespace(), s)
     if not 1 <= int(s['workers']) <= 32:
         fail('workers must be 1..32')
     if not 1 <= int(s['max_inflight']) <= 32:
@@ -226,14 +271,29 @@ def command_run(args, mode):
     repo = repo_path(args, saved)
     if not (repo/'work/scratch/codex-pass1/spore.sqlite3').is_file():
         fail('SQLite state not initialized. Run setup first.')
+    if mode in ('scope', 'modules'):
+        requested = scope_settings(args, saved)
+        env = with_scope(os.environ.copy(), requested)
+        argv = ['extend_spore_queue.py']
+        if mode == 'modules':
+            argv.append('--list-modules')
+        if mode == 'scope' and args.apply:
+            ensure_stopped()
+            argv.append('--apply')
+        rc = execute(repo, *argv, env=env, check=False)
+        if rc == 0 and mode == 'scope' and args.apply:
+            atomic_private_file(CONFIG_FILE, json.dumps({**saved, **requested}, indent=2)+'\n')
+            print('Saved default module scope:', ', '.join(requested['modules']))
+        return rc
     if mode == 'run':
         settings = {**saved}
         for name in ('workers', 'max_inflight', 'passes', 'minutes', 'budget'):
             value = getattr(args, name, None)
             if value is not None:
                 settings[name] = value
+        settings.update(scope_settings(args, saved))
         validate_settings(settings)
-        env = os.environ.copy()
+        env = with_scope(os.environ.copy(), settings)
         env['OPENROUTER_API_KEY'] = get_key()
         argv = ['spore_parallel_sqlite.py', 'run',
                 '--workers', settings['workers'], '--max-inflight', settings['max_inflight'],
@@ -248,7 +308,7 @@ def command_run(args, mode):
         argv = ['spore_parallel_sqlite.py', mode]
         if mode == 'plan':
             argv += ['--workers', args.workers or saved.get('workers', 5)]
-        return execute(repo, *argv, check=False)
+        return execute(repo, *argv, env=with_scope(os.environ.copy(), scope_settings(args, saved)), check=False)
     if mode == 'recover':
         argv = ['spore_recover_provider_attempts.py', '--show', args.show]
         if args.apply:
@@ -261,6 +321,7 @@ def command_run(args, mode):
         print('OpenCode:', shutil.which('opencode') or 'MISSING')
         print('Python:', python_for(repo))
         print('SQLite:', 'present' if (repo/'work/scratch/codex-pass1/spore.sqlite3').is_file() else 'missing')
+        print('Module scope:', ', '.join(scope_settings(args, saved)['modules']))
         print('Checker lock:', 'installed' if 'SPGONZAGO_SQLITE_CHECK_LOCK_V1' in (repo/'tools/contrib/check.py').read_text() else 'missing')
         print('Credential:', 'configured' if os.environ.get('OPENROUTER_API_KEY') or KEY_FILE.is_file() else 'missing')
         if args.live:
@@ -376,18 +437,28 @@ def main(argv=None):
     setup.add_argument('--change-key', action='store_true', help='Prompt to replace the stored API key')
     for name, type_ in [('workers', int), ('max-inflight', int), ('passes', int), ('minutes', int), ('budget', float)]:
         setup.add_argument('--'+name, type=type_)
+    add_scope_arguments(setup)
     r = sub.add_parser('run', help='Run paid matching agents, preserving prior results')
     r.add_argument('--repo')
     for name, type_ in [('workers', int), ('max-inflight', int), ('passes', int), ('minutes', int), ('budget', float)]:
         r.add_argument('--'+name, type=type_)
+    add_scope_arguments(r)
     r.add_argument('--max-functions-per-worker', type=int, default=0)
     plan = sub.add_parser('plan', help='Preview eligible functions and worker split')
     plan.add_argument('--repo'); plan.add_argument('--workers', type=int)
+    add_scope_arguments(plan)
     for action in ('status', 'progress', 'doctor'):
         p = sub.add_parser(action)
         p.add_argument('--repo')
         if action == 'doctor':
             p.add_argument('--live', action='store_true', help='Validate OpenRouter key over network; no inference')
+    scope = sub.add_parser('scope', help='Preview or append functions for selected modules without removing existing history')
+    scope.add_argument('--repo')
+    scope.add_argument('--apply', action='store_true', help='Back up DB, append new targets and save module selection')
+    add_scope_arguments(scope)
+    modules = sub.add_parser('modules', help='List confidently classified modules from the upstream checkout')
+    modules.add_argument('--repo')
+    modules.add_argument('--min-confidence', type=float)
     recover = sub.add_parser('recover', help='Preview or apply conservative VOID_PROVIDER annotations')
     recover.add_argument('--repo'); recover.add_argument('--apply', action='store_true')
     recover.add_argument('--show', type=int, default=20)
