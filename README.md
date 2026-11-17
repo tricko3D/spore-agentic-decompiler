@@ -52,6 +52,8 @@ python3 spore_agentic.py progress
 
 `run` **incurs OpenRouter charges** and uses the existing upstream checkout to write real C++ and invoke the upstream compiler verifier. It supports module-scoped work across the existing upstream source tree, using DeepSeek V4.1 Flash (`deepseek/deepseek-v4.1-flash-1017`) through OpenRouter, with the currently pinned Sail Research route. Model/provider selection and fully persistent OpenCode *processes* are not yet configurable.
 
+The `plan` command now reports only **runnable functions**: confidently classified, not already matched or skipped, and still below the valid-pass limit. `VOID_PROVIDER` attempts are excluded from that count. Worker assignment uses the same snapshot filter, while SQLite claims perform a fresh eligibility check at execution time.
+
 The worker preserves the OpenCode **conversation session** per function between passes. It starts a new CLI process for each pass, so this is *not* a persistent OpenCode server. Worker count and simultaneous API calls are separate controls. Provider `ttft_deadline_guard` failures are recorded as incidents and do **not** consume a legitimate decompilation pass; no-source retries can be reclaimed with `recover --apply` if their saved logs contain unequivocal evidence. The original attempt rows and logs remain available, with invalidated rows annotated as `VOID_PROVIDER`.
 
 The **$20 budget is a local soft limit** using OpenRouter key-usage accounting, not a provider-enforced spending cap. For a hard cap, configure a limit on the key in OpenRouter itself.
