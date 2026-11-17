@@ -8,6 +8,7 @@ from __future__ import annotations
 import argparse
 from datetime import datetime, timezone
 import getpass
+import importlib.util
 import json
 import os
 from pathlib import Path
@@ -269,6 +270,68 @@ def command_run(args, mode):
         return 0
 
 
+
+def provider_evidence(repo, snapshot):
+    """Summarize local retry logs without exporting prompts or model responses.
+
+    The installed provider classifier is the authority for VOID_PROVIDER. A
+    missing or ambiguous log is always UNVERIFIED, never automatically voided.
+    """
+    classifier = repo/'work/scratch/spore_provider_log.py'
+    if not classifier.is_file():
+        return {'schema': 1, 'error': 'Provider classifier not installed; run setup',
+                'attempts': [], 'counts': {'proven_provider_only': 0, 'unverified': 0}}
+    spec = importlib.util.spec_from_file_location('spore_diag_provider', classifier)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    # Its default LOGS is relative to cwd; point it to the selected checkout.
+    module.LOGS = repo/'work/scratch/codex-pass1/logs'
+    with sqlite3.connect(snapshot) as db:
+        db.row_factory = sqlite3.Row
+        reviews_exist = db.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='attempt_reviews'"
+        ).fetchone() is not None
+        sql = """SELECT a.id, a.va, a.pass_number, a.status, a.utc, a.run_id,
+                        a.log_path
+                 FROM attempts a
+                 WHERE a.status IN ('FAIL','DEFER')"""
+        if reviews_exist:
+            sql += " AND NOT EXISTS(SELECT 1 FROM attempt_reviews r WHERE r.attempt_id=a.id)"
+        sql += " ORDER BY a.id"
+        rows = [dict(r) for r in db.execute(sql)]
+    entries = []
+    by_run = {}
+    confirmed = 0
+    for row in rows:
+        log_path = row['log_path']
+        if log_path:
+            path = Path(log_path)
+            if not path.is_absolute():
+                path = repo/path
+            ok, reason = module.provider_only(path, row['utc'])
+        else:
+            ok, reason = False, 'no saved log path'
+        confirmed += int(ok)
+        run = row['run_id'] or 'legacy'
+        totals = by_run.setdefault(run, {'proven_provider_only': 0, 'unverified': 0})
+        totals['proven_provider_only' if ok else 'unverified'] += 1
+        entries.append({
+            'attempt_id': row['id'], 'va': row['va'],
+            'pass_number': row['pass_number'], 'status': row['status'],
+            'run_id': run,
+            'classification': 'PROVEN_PROVIDER_ONLY' if ok else 'UNVERIFIED',
+            'evidence': reason,
+        })
+    return {
+        'schema': 1,
+        'generated_utc': datetime.now(timezone.utc).isoformat(),
+        'explanation': 'Local JSONL classification only; no prompts, model output or raw logs exported',
+        'counts': {'proven_provider_only': confirmed,
+                   'unverified': len(entries) - confirmed},
+        'by_run': by_run, 'attempts': entries,
+    }
+
+
 def command_diagnostics(args):
     repo = repo_path(args)
     work = repo/'work/scratch/codex-pass1'
@@ -289,6 +352,8 @@ def command_diagnostics(args):
                 with sqlite3.connect(database) as src, sqlite3.connect(snapshot) as dst:
                     src.backup(dst)
                 z.write(snapshot, 'state/spore.sqlite3')
+                evidence = provider_evidence(repo, snapshot)
+                z.writestr('state/provider-evidence.json', json.dumps(evidence, indent=2) + '\n')
         for relative in sources:
             p = repo/relative
             if p.is_file():
@@ -296,9 +361,11 @@ def command_diagnostics(args):
         z.writestr('README.txt',
                    'Spore Agentic Decompiler diagnostic bundle. Contains SQLite attempt history, '
                    'queue, budget metadata and scripts. Does not contain the API key. '
-                   'Review before uploading. OpenCode JSONL logs are not included.\n')
+                   'Review before uploading. The provider-evidence.json file contains only '
+                   'local classifications, no raw OpenCode JSONL logs or model output.\n')
     print('Created:', destination)
-    print('The archive contains attempt history. No API key or raw OpenCode logs are included.')
+    print('The archive contains attempt history and sanitized provider evidence.')
+    print('No API key, raw OpenCode logs, prompts or model output are included.')
 
 
 def main(argv=None):
