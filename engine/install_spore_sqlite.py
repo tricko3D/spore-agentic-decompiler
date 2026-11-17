@@ -27,6 +27,13 @@ def main():
         sys.exit('Missing SQLite runner. Extract the ZIP in repository root first.')
     live=old_runners()
     if live:sys.exit('Stop all existing runners before patching the shared checker:\n'+str(live[:4]))
+    # The checker lock can already be installed while SQLite still needs an
+    # additive schema migration (for example, inference_slots.verified).
+    # Always perform this migration, including on repeated setup runs.
+    sys.path.insert(0,str(ROOT/'work/scratch'))
+    import spore_sqlite_store as store
+    store.init_schema()
+    print('SQLite schema up to date; existing attempt history retained.')
     code=p.read_text(encoding='utf-8')
     if MARKER in code:
         print('Checker lock already installed.');return

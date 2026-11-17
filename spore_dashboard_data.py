@@ -268,8 +268,18 @@ def snapshot(repo):
         last=db.execute('SELECT * FROM runs ORDER BY started_utc DESC LIMIT 1').fetchone()
         rid=last['run_id'] if last else None
         claims={r['worker_idx']:r['va'] for r in db.execute('SELECT worker_idx,va FROM claims WHERE run_id=?',(rid,))} if rid else {}
-        active_slots={r['va']:bool(r['verified']) for r in db.execute(
-            'SELECT va,verified FROM inference_slots WHERE run_id=?',(rid,))} if rid else {}
+        # Telemetry must remain readable for databases created before the
+        # verified-token schema migration. Setup upgrades the schema, but a
+        # read-only dashboard must not require it just to show old results.
+        slot_columns={row['name'] for row in db.execute('PRAGMA table_info(inference_slots)')}
+        if rid and 'verified' in slot_columns:
+            active_slots={r['va']:bool(r['verified']) for r in db.execute(
+                'SELECT va,verified FROM inference_slots WHERE run_id=?',(rid,))}
+        elif rid:
+            active_slots={r['va']:False for r in db.execute(
+                'SELECT va FROM inference_slots WHERE run_id=?',(rid,))}
+        else:
+            active_slots={}
         last_by_worker={}
         if rid:
             for x in db.execute('SELECT worker_idx,va FROM attempts WHERE run_id=? AND worker_idx IS NOT NULL ORDER BY id',(rid,)):
