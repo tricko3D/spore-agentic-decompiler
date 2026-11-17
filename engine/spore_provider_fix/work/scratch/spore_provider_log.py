@@ -6,6 +6,39 @@ from pathlib import Path
 LOGS = Path.cwd() / 'work' / 'scratch' / 'codex-pass1' / 'logs'
 
 
+def provider_pressure(path: Path) -> int:
+    """Count actual upstream 429s, including those embedded in HTTP 200 streams.
+
+    A partial response with real agent work stays a real attempt; this signal
+    only governs the adaptive concurrency ceiling.
+    """
+    if not path or not path.is_file():
+        return 0
+    n = 0
+    try:
+        for line in path.read_text(encoding='utf-8', errors='replace').splitlines():
+            try:
+                event = json.loads(line)
+            except (ValueError, TypeError):
+                continue
+            if not isinstance(event, dict) or event.get('type') != 'retry':
+                continue
+            error = event.get('error') or {}
+            if not isinstance(error, dict):
+                continue
+            raw = (error.get('response') or {}).get('body') or ''
+            try:
+                response = json.loads(raw) if isinstance(raw, str) else raw
+            except ValueError:
+                continue
+            upstream = response.get('error') if isinstance(response, dict) else None
+            if isinstance(upstream, dict) and upstream.get('code') == 429:
+                n += 1
+    except OSError:
+        return 0
+    return n
+
+
 def provider_only(path: Path, outcome_utc: str | None = None) -> tuple[bool, str]:
     """Conservative: only provider retries, at least one ttft guard, no model/tool output."""
     try:
