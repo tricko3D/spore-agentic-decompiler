@@ -297,7 +297,8 @@ def snapshot(repo):
         events=sorted(events,key=lambda r:r['time'],reverse=True)[:50]
         costs=cost_analysis(repo,db,latest)
         # Costs are covered only to the extent the CLI emitted step_finish records.
-        module_names=sorted({p.name for p in (repo/'src/game').iterdir() if p.is_dir()} if (repo/'src/game').is_dir() else set())
+        from spore_dashboard_control import modules as known_modules
+        module_names=known_modules(repo)
     workers=worker_info(repo,rid,claims,last_by_worker)
     run['live_workers']=sum(w['alive'] for w in workers)
     return {'generated_utc':datetime.now(timezone.utc).isoformat(timespec='seconds'),
