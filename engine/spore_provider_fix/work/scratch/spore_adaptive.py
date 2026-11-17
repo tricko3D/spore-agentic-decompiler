@@ -51,13 +51,16 @@ def observe(run_id, overloaded=False, productive=False, now=None):
             message = None
             if overloaded:
                 errors += 1
-                consecutive += 1
                 streak = 0
-                reduced = max(1, cap // 2)
-                seconds = min(900, 60 * 2 ** min(consecutive - 1, 4))
-                paused = max(paused, now + seconds)
-                message = f'provider pressure: concurrency {cap}->{reduced}, quiet {seconds}s, strike {consecutive}'
-                cap = reduced
+                # Overlapping agents may all fail in the same overload wave.
+                # Halve only once per cooldown epoch, not once per worker.
+                if now >= paused:
+                    consecutive += 1
+                    reduced = max(1, cap // 2)
+                    seconds = min(900, 60 * 2 ** min(consecutive - 1, 4))
+                    paused = now + seconds
+                    message = f'provider pressure: concurrency {cap}->{reduced}, quiet {seconds}s, strike {consecutive}'
+                    cap = reduced
             elif productive:
                 good += 1
                 consecutive = 0
