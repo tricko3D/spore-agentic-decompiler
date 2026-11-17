@@ -108,10 +108,12 @@ def live_workers():
         if not p.name.isdigit() or int(p.name) == os.getpid():
             continue
         try:
-            argv = (p/'cmdline').read_bytes().replace(b'\x00', b' ').decode('utf-8', 'replace')
+            argv = [x.decode('utf-8', 'replace') for x in
+                    (p/'cmdline').read_bytes().split(b'\x00') if x]
         except (PermissionError, OSError):
             continue
-        if ('spore_first_pass_sqlite.py' in argv or 'spore_parallel_sqlite.py run' in argv) and 'run' in argv:
+        scripts = ('spore_first_pass_sqlite.py', 'spore_parallel_sqlite.py')
+        if 'run' in argv and any(Path(arg).name in scripts for arg in argv):
             found.append(p.name)
     return found
 
@@ -463,6 +465,9 @@ def main(argv=None):
     modules = sub.add_parser('modules', help='List confidently classified modules from the upstream checkout')
     modules.add_argument('--repo')
     modules.add_argument('--min-confidence', type=float)
+    dashboard = sub.add_parser('dashboard', help='Run a read-only localhost HTTP activity dashboard')
+    dashboard.add_argument('--repo')
+    dashboard.add_argument('--port', type=int, default=8765)
     recover = sub.add_parser('recover', help='Preview or apply conservative VOID_PROVIDER annotations')
     recover.add_argument('--repo'); recover.add_argument('--apply', action='store_true')
     recover.add_argument('--show', type=int, default=20)
@@ -471,6 +476,9 @@ def main(argv=None):
     args = ap.parse_args(argv)
     if args.command == 'setup':
         return command_setup(args)
+    if args.command == 'dashboard':
+        from spore_dashboard import serve
+        return serve(repo_path(args), args.port)
     if args.command == 'diagnostics':
         return command_diagnostics(args)
     return command_run(args, args.command)
