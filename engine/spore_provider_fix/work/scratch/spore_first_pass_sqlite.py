@@ -49,8 +49,14 @@ OPENROUTER_PROVIDER = 'sail-research'
 OPENROUTER_API = 'https://openrouter.ai/api/v1'
 BUDGET_STATE = WORK / 'openrouter-budget.json'
 MODULE_MAP = ROOT / 'work' / 'migrate' / 'modmap.json'
-TARGET_MODULE = 'SPGonzago'
-MIN_MODULE_CONFIDENCE = 0.70
+# Scope is selected by the standalone controller and inherited by child workers.
+# The legacy default stays on SPGonzago to protect existing workflows.
+TARGET_MODULES = tuple(x.strip() for x in os.environ.get('SPORE_TARGET_MODULES', 'SPGonzago').split(';') if x.strip())
+MIN_MODULE_CONFIDENCE = float(os.environ.get('SPORE_MIN_MODULE_CONFIDENCE', '0.70'))
+
+def module_scope():
+    return 'all confidently classified modules' if '*' in TARGET_MODULES else ', '.join(TARGET_MODULES)
+
 PARALLEL_RUNNER_VERSION = 'SPGONZAGO_SQLITE_V1'
 PASS_LIMIT_STATE = WORK / 'pass-limit.json'  # legacy only
 DB_PATH = store.DB
@@ -146,7 +152,7 @@ class ManifestIndex:
 
 
 class ModuleIndex:
-    """Fail-closed SPGonzago classifier.
+    """Fail-closed classifier for selected upstream modules.
 
     Prefer the precise generated modmap when available. When the development
     PDB and work/xmatch/retail.json are absent, use only unambiguous source
@@ -172,7 +178,7 @@ class ModuleIndex:
         source_root = ROOT / 'src' / 'game'
         anchors = collections.defaultdict(set)
         if not source_root.is_dir():
-            sys.exit('Cannot classify SPGonzago: src/game source tree not found. '
+            sys.exit('Cannot classify modules: src/game source tree not found. '
                      'No API requests will be made.')
 
         # The migration has source files in src/game/<module>/<object>.cpp.
@@ -220,9 +226,8 @@ class ModuleIndex:
                 # Notes alone identify the module but do not prove object identity.
                 anchors[va].add((module, None))
 
-        if not anchors or not any(any(mod.lower() == TARGET_MODULE.lower() for mod, _ in s)
-                                  for s in anchors.values()):
-            sys.exit('No usable SPGonzago anchors in src/game. Cannot safely filter the queue. '
+        if not anchors:
+            sys.exit('No usable module anchors in src/game. Cannot safely filter the queue. '
                      'No API requests will be made.')
 
         self.anchor_vas = sorted(anchors)
@@ -314,20 +319,20 @@ class ModuleIndex:
                 right_mod, right_file = self.anchor_rows[i]
                 gap = right_va - left_va
                 # Closest function anchors MUST agree on module ownership.
-                if left_mod != TARGET_MODULE or right_mod != TARGET_MODULE:
+                if left_mod != right_mod or left_mod == 'AMBIGUOUS':
                     answer = (None, None)
                 elif (left_file and right_file and left_file == right_file and
                       gap <= 0x8000 and addr - left_va <= 0x4000 and right_va - addr <= 0x4000):
                     # Same object file on both sides, stronger than rough
                     # library address-range filtering.
-                    answer = (TARGET_MODULE, 0.90)
+                    answer = (left_mod, 0.90)
                 elif (i >= 2 and i + 1 < len(self.anchor_vas) and
-                      self.anchor_rows[i - 2][0] == TARGET_MODULE and
-                      self.anchor_rows[i + 1][0] == TARGET_MODULE and
+                      self.anchor_rows[i - 2][0] == left_mod and
+                      self.anchor_rows[i + 1][0] == left_mod and
                       gap <= 0x3000 and addr - left_va <= 0x1800 and right_va - addr <= 0x1800):
                     # Two agreeing module anchors on each side and a tight
                     # central gap: useful where module objects interleave.
-                    answer = (TARGET_MODULE, 0.75)
+                    answer = (left_mod, 0.75)
                 else:
                     answer = (None, None)
         self._cache[addr] = answer
@@ -335,8 +340,10 @@ class ModuleIndex:
 
     def eligible(self, va):
         module, confidence = self.classification(va)
-        return bool(module and module.split('/', 1)[0].casefold() == TARGET_MODULE.casefold()
-                    and confidence is not None and confidence >= self.minimum)
+        if not module or confidence is None or confidence < self.minimum:
+            return False
+        top_level = module.split('/', 1)[0].casefold()
+        return '*' in TARGET_MODULES or top_level in {t.casefold() for t in TARGET_MODULES}
 
 
 def require_repo():
@@ -397,7 +404,7 @@ def status():
     allowed = [row for row in queue if modules.eligible(row['va'])]
     eligible_pending = sum(row['va'] not in manifested and row['va'] not in done for row in allowed)
     manifested_in_scope = sum(row['va'] in manifested for row in allowed)
-    print(f'{TARGET_MODULE} classified queue: {len(allowed):,} | '
+    print(f'{module_scope()} classified queue: {len(allowed):,} | '
           f'Already in manifest: {manifested_in_scope:,} | Eligible pending: {eligible_pending:,}')
     print(f'Other modules or uncertain classifications excluded: {len(queue)-len(allowed):,} '
           f'(confidence threshold {modules.minimum:.2f})')
@@ -796,7 +803,7 @@ def continuation_prompt(va, pass_number, prior_row, prior_log, total_passes=3):
     assert 2 <= pass_number <= total_passes
     previous = (prior_row.get('note') or '(No previous explanation.)')[:1000]
     feedback = prior_checker_feedback(prior_log)
-    return f"""SPGONZAGO ONLY. CONTINUATION PASS {pass_number} OF {total_passes} for {va}.
+    return f"""SELECTED MODULES: {module_scope()}. CONTINUATION PASS {pass_number} OF {total_passes} for {va}.
 
 You are continuing a prior attempt at this SAME function. The previous C++
 source and all earlier edits are already on disk. Preserve and improve that
@@ -932,7 +939,7 @@ def process(minutes, unsafe, backend, quota_wait, max_functions,
     manifests = ManifestIndex()
     already_matched = manifests.refresh()
     queued_manifested = sum(row['va'] in already_matched for row in queue if row['va'] in allowed)
-    print(f'Scope: {TARGET_MODULE} only, via {modules.mode}, confidence >= {modules.minimum:.2f}. '
+    print(f'Scope: {module_scope()}, via {modules.mode}, confidence >= {modules.minimum:.2f}. '
           f'{len(allowed)} / {len(queue)} queued functions in scope.', flush=True)
     print(f'Manifest guard: {queued_manifested} scoped queued function(s) already manifested; '
           f'will not call the agent for them.', flush=True)
@@ -945,7 +952,7 @@ def process(minutes, unsafe, backend, quota_wait, max_functions,
     if only_va and only_va not in allowed:
         module, confidence = modules.classification(only_va)
         sys.exit(f'{only_va} excluded: mapped module={module!r}, confidence={confidence}. '
-                 f'Only {TARGET_MODULE} at confidence >= {modules.minimum:.2f} is allowed.')
+                 f'Only {module_scope()} at confidence >= {modules.minimum:.2f} is allowed.')
     if backend == 'nvidia':
         print(f"Backend: NVIDIA {NVIDIA_MODELS[model]['name']} via OpenCode ({reasoning} reasoning). "
               'OpenCode shell tools run WITHOUT a sandbox.', flush=True)
@@ -1109,7 +1116,7 @@ def process(minutes, unsafe, backend, quota_wait, max_functions,
                 print(f'  {va}: exhausted {passes} passes, moving to next function.', flush=True)
         finally:
             store.release_claim(va,rid,worker_idx)
-    print('\nFinished eligible SPGonzago queue at the configured pass limit.')
+    print('\nFinished eligible module scope at the configured pass limit.')
     status()
 
 def doctor(backend, model='mistral4', reasoning='high', live=False, budget=5.0):
@@ -1149,7 +1156,7 @@ def main():
     sub = p.add_subparsers(dest='cmd', required=True)
     init = sub.add_parser('init', help='Create queue from functions without source')
     init.add_argument('--max-size', type=int, default=0, help='Maximum retail function bytes; 0 = all (default)')
-    run = sub.add_parser('run', help='SPGonzago ONLY: run unmanifested functions with confident module mapping')
+    run = sub.add_parser('run', help='Run unmanifested functions in selected modules with confident mapping')
     run.add_argument('--minutes', type=int, default=5, help='Time budget per function (default 5)')
     run.add_argument('--unsafe', action='store_true', help='Disable Codex sandbox; for OpenRouter/NVIDIA, accepted for backwards compatibility only')
     run.add_argument('--backend', choices=['openrouter', 'nvidia', 'codex'], default='openrouter', help='Agent backend (default OpenRouter DeepSeek/OpenCode)')
@@ -1171,7 +1178,7 @@ def main():
     check.add_argument('--reasoning', choices=['low', 'medium', 'high'], default='high')
     check.add_argument('--live', action='store_true', help='Check OpenRouter API key and usage (no inference purchased)')
     check.add_argument('--budget', type=float, default=5.0)
-    sub.add_parser('status', help='Print progress and SPGonzago scoped counts')
+    sub.add_parser('status', help='Print progress for the selected module scope')
     reset = sub.add_parser('reset', help='Untick a specific VA (e.g. an infrastructure failure)')
     reset.add_argument('va')
     a = p.parse_args()
