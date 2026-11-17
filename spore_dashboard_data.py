@@ -183,7 +183,7 @@ def log_cost(repo, raw):
 
 
 def latest_by_va(db):
-    rows=db.execute('''SELECT a.va,a.id,a.status,a.effort,a.note,a.utc FROM attempts a
+    rows=db.execute('''SELECT a.va,a.id,a.status,a.effort,a.note,a.utc,a.log_path FROM attempts a
       LEFT JOIN attempt_reviews v ON v.attempt_id=a.id
       WHERE v.attempt_id IS NULL AND a.id=(
           SELECT MAX(b.id) FROM attempts b LEFT JOIN attempt_reviews x ON x.attempt_id=b.id
@@ -373,6 +373,56 @@ def byte_agreement(status, expected_size, note):
         return None
     return {'matched': total - n, 'total': total, 'diffs': n, 'kind': 'independent_checker'}
 
+
+@lru_cache(maxsize=4096)
+def _logged_agreement_cached(filename, file_size, mtime_ns, status, expected_size):
+    """Last genuine check.py tool output in an OpenCode log.
+
+    Older independent verifier results retained only a headline; this may
+    reflect an intermediate agent check, not necessarily the final edit.
+    """
+    last = None
+    for line in _read_tail(Path(filename), 250_000):
+        if 'tool_use' not in line or 'check.py' not in line:
+            continue
+        try:
+            event = json.loads(line)
+        except ValueError:
+            continue
+        if not isinstance(event, dict) or event.get('type') != 'tool_use':
+            continue
+        part = event.get('part') or {}
+        if not isinstance(part, dict):
+            continue
+        state = part.get('state') or {}
+        if not isinstance(state, dict):
+            continue
+        inputs = state.get('input') or {}
+        cmd = str(inputs.get('command') or inputs.get('cmd') or '') if isinstance(inputs, dict) else ''
+        if 'check.py' not in cmd:
+            continue
+        output = state.get('output') or ''
+        if not isinstance(output, str):
+            continue
+        guess = byte_agreement(status, expected_size, ' | checker:' + output)
+        if guess is not None:
+            guess['kind'] = 'logged_checker' if guess['matched'] is not None else 'size_mismatch'
+            guess['origin'] = 'agent_tool_log'
+            last = guess
+    return last
+
+
+def logged_byte_agreement(repo, raw, status, expected_size):
+    path = _inside_logs(repo, raw)
+    if not path or status not in ('FAIL', 'DEFER'):
+        return None
+    try:
+        st = path.stat()
+        return _logged_agreement_cached(str(path), st.st_size, st.st_mtime_ns,
+                                         status, int(expected_size))
+    except OSError:
+        return None
+
 def functions(repo,status='ALL',search='',offset=0,limit=75):
     status=status.upper()
     if status not in ('ALL','MATCH','FAIL','DEFER','SKIP','PENDING'):raise ValueError('Invalid status')
@@ -389,12 +439,18 @@ def functions(repo,status='ALL',search='',offset=0,limit=75):
             if status!='ALL' and status!=kind:continue
             if search and search.lower() not in (r['va']+' '+(r['suggested_file'] or '')).lower():continue
             rows.append({'va':r['va'],'size':r['size'],'file':sanitize(r['suggested_file'],180),
+                         '_last_log':x['log_path'] if x else None,
                          'status':kind,'effort':x['effort'] if x else '',
                          'reason':failure_reason(x['note']) if x and kind in ('FAIL','DEFER','SKIP') else '',
                          'agreement':byte_agreement(kind,r['size'],x['note'] if x else ''),
                          'attempts':attempts[r['va']]})
+        items=rows[offset:offset+limit]
+        for item in items:
+            if item['agreement'] is None:
+                item['agreement']=logged_byte_agreement(repo,item['_last_log'],item['status'],item['size'])
+            item.pop('_last_log',None)
         return {'total':len(rows),'bytes':sum(r['size'] for r in rows),
-                'offset':offset,'items':rows[offset:offset+limit]}
+                'offset':offset,'items':items}
 
 
 def _checker_output(repo,raw):
@@ -440,7 +496,9 @@ def function_detail(repo,va):
     return {'va':va,'size':row['size'],'file':sanitize(row['suggested_file'],220),
             'history':history,'current':live,'checker':checker,
             'reason':failure_reason(last['note']) if last and last['status'] in ('FAIL','DEFER','SKIP') else '',
-            'agreement':byte_agreement(last['status'] if last else 'PENDING',row['size'],last['note'] if last else ''),
+            'agreement':(byte_agreement(last['status'] if last else 'PENDING',row['size'],last['note'] if last else '') or
+                         logged_byte_agreement(repo,last['log_path'] if last else None,
+                                               last['status'] if last else 'PENDING',row['size'])),
             'diff_status':'MATCH: zero remaining byte differences' if verified else (
               'Saved checker mismatch evidence' if checker['evidence'] else 'No verified byte-level diff available')}
 
