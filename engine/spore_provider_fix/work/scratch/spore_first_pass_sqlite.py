@@ -1174,7 +1174,7 @@ def process(minutes, unsafe, backend, quota_wait, max_functions,
                 if is_match:
                     outcome = ('MATCH', '', f'Pass {pass_number}: independently byte-exact ({check_note})')
                 elif kind == 'TIMEOUT':
-                    outcome = ('DEFER', '', f'Pass {pass_number}: time limit ({minutes} min); {check_note}')
+                    outcome = ('DEFER', '', f'Pass {pass_number}: time limit ({minutes} min) | checker: {check_note}')
                 else:
                     skip = re.search(r'(?m)^\s*SKIP\b\s*:?\s*(.*)$', answer)
                     failed = re.search(r'(?m)^\s*FAIL\s*\+([1-5])\s*:?\s*(.*)$', answer)
