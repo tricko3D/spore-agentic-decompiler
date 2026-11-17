@@ -10,7 +10,6 @@ from datetime import datetime, timezone
 import getpass
 import hashlib
 import math
-import importlib.util
 import json
 import re
 import os
@@ -191,7 +190,7 @@ def scope_settings(args, previous):
     if '*' in modules and len(modules) != 1:
         fail('All modules must be selected using --all-modules')
     for module in modules:
-        if module != '*' and (not isinstance(module, str) or not re.fullmatch(r'[A-Za-z0-9_.+\\-]+', module)):
+        if module != '*' and (not isinstance(module, str) or not re.fullmatch(r'[A-Za-z0-9_.+\-]+', module)):
             fail(f'Invalid module name: {module!r}')
     minimum = getattr(args, 'min_confidence', None)
     if minimum is None:
@@ -410,7 +409,7 @@ def command_run(args, mode):
             stored = budget_db.execute('SELECT key_fingerprint FROM budget WHERE singleton=1').fetchone()
         if stored and stored[0] != expected_key_fingerprint:
             fail('OpenRouter key changed since the stored spending baseline. '
-                 'Run python3 spore_agentic.py rotate-key to preserve the existing budget '
+                 'Run `python3 spore_agentic.py rotate-key` to safely preserve the existing budget '
                  'before launching workers.')
         argv = ['spore_parallel_sqlite.py', 'run',
                 '--workers', settings['workers'], '--max-inflight', settings['max_inflight'],
@@ -450,68 +449,6 @@ def command_run(args, mode):
         return 0
 
 
-
-def provider_evidence(repo, snapshot):
-    """Summarize local retry logs without exporting prompts or model responses.
-
-    The installed provider classifier is the authority for VOID_PROVIDER. A
-    missing or ambiguous log is always UNVERIFIED, never automatically voided.
-    """
-    classifier = repo/'work/scratch/spore_provider_log.py'
-    if not classifier.is_file():
-        return {'schema': 1, 'error': 'Provider classifier not installed; run setup',
-                'attempts': [], 'counts': {'proven_provider_only': 0, 'unverified': 0}}
-    spec = importlib.util.spec_from_file_location('spore_diag_provider', classifier)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    # Its default LOGS is relative to cwd; point it to the selected checkout.
-    module.LOGS = repo/'work/scratch/codex-pass1/logs'
-    with sqlite3.connect(snapshot) as db:
-        db.row_factory = sqlite3.Row
-        reviews_exist = db.execute(
-            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='attempt_reviews'"
-        ).fetchone() is not None
-        sql = """SELECT a.id, a.va, a.pass_number, a.status, a.utc, a.run_id,
-                        a.log_path
-                 FROM attempts a
-                 WHERE a.status IN ('FAIL','DEFER')"""
-        if reviews_exist:
-            sql += " AND NOT EXISTS(SELECT 1 FROM attempt_reviews r WHERE r.attempt_id=a.id)"
-        sql += " ORDER BY a.id"
-        rows = [dict(r) for r in db.execute(sql)]
-    entries = []
-    by_run = {}
-    confirmed = 0
-    for row in rows:
-        log_path = row['log_path']
-        if log_path:
-            path = Path(log_path)
-            if not path.is_absolute():
-                path = repo/path
-            ok, reason = module.provider_only(path, row['utc'])
-        else:
-            ok, reason = False, 'no saved log path'
-        confirmed += int(ok)
-        run = row['run_id'] or 'legacy'
-        totals = by_run.setdefault(run, {'proven_provider_only': 0, 'unverified': 0})
-        totals['proven_provider_only' if ok else 'unverified'] += 1
-        entries.append({
-            'attempt_id': row['id'], 'va': row['va'],
-            'pass_number': row['pass_number'], 'status': row['status'],
-            'run_id': run,
-            'classification': 'PROVEN_PROVIDER_ONLY' if ok else 'UNVERIFIED',
-            'evidence': reason,
-        })
-    return {
-        'schema': 1,
-        'generated_utc': datetime.now(timezone.utc).isoformat(),
-        'explanation': 'Local JSONL classification only; no prompts, model output or raw logs exported',
-        'counts': {'proven_provider_only': confirmed,
-                   'unverified': len(entries) - confirmed},
-        'by_run': by_run, 'attempts': entries,
-    }
-
-
 def command_diagnostics(args):
     repo = repo_path(args)
     work = repo/'work/scratch/codex-pass1'
@@ -532,8 +469,6 @@ def command_diagnostics(args):
                 with sqlite3.connect(database) as src, sqlite3.connect(snapshot) as dst:
                     src.backup(dst)
                 z.write(snapshot, 'state/spore.sqlite3')
-                evidence = provider_evidence(repo, snapshot)
-                z.writestr('state/provider-evidence.json', json.dumps(evidence, indent=2) + '\n')
         for relative in sources:
             p = repo/relative
             if p.is_file():
@@ -541,11 +476,9 @@ def command_diagnostics(args):
         z.writestr('README.txt',
                    'Spore Agentic Decompiler diagnostic bundle. Contains SQLite attempt history, '
                    'queue, budget metadata and scripts. Does not contain the API key. '
-                   'Review before uploading. The provider-evidence.json file contains only '
-                   'local classifications, no raw OpenCode JSONL logs or model output.\n')
+                   'Review before uploading. OpenCode JSONL logs are not included.\n')
     print('Created:', destination)
-    print('The archive contains attempt history and sanitized provider evidence.')
-    print('No API key, raw OpenCode logs, prompts or model output are included.')
+    print('The archive contains attempt history. No API key or raw OpenCode logs are included.')
 
 
 def main(argv=None):
@@ -584,6 +517,7 @@ def main(argv=None):
     dashboard = sub.add_parser('dashboard', help='Run a read-only localhost HTTP activity dashboard')
     dashboard.add_argument('--repo')
     dashboard.add_argument('--port', type=int, default=8765)
+    dashboard.add_argument('--control', action='store_true', help='Enable localhost start/stop run controls (read-only by default)')
     recover = sub.add_parser('recover', help='Preview or apply conservative VOID_PROVIDER annotations')
     recover.add_argument('--repo'); recover.add_argument('--apply', action='store_true')
     recover.add_argument('--show', type=int, default=20)
@@ -596,7 +530,7 @@ def main(argv=None):
         return command_rotate_key(args)
     if args.command == 'dashboard':
         from spore_dashboard import serve
-        return serve(repo_path(args), args.port)
+        return serve(repo_path(args), args.port, control=args.control)
     if args.command == 'diagnostics':
         return command_diagnostics(args)
     return command_run(args, args.command)
