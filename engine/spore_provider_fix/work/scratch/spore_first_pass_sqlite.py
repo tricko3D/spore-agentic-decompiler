@@ -380,8 +380,20 @@ def completed():
     return store.latest()
 
 
+def compact_attempt_note(note, limit=1200):
+    """Preserve independent checker evidence even after a lengthy model explanation."""
+    content=re.sub(r'\s+', ' ', str(note or '')).strip()
+    if len(content)<=limit:
+        return content
+    head,separator,checker=content.rpartition(' | checker: ')
+    if not separator:
+        return content[:limit]
+    evidence=checker[:220]
+    return head[:max(0,limit-len(separator)-len(evidence))].rstrip()+separator+evidence
+
+
 def record(va, status, effort='', note='', log_path=None):
-    note=re.sub(r'\s+', ' ', note).strip()[:300]
+    note=compact_attempt_note(note)
     rid,idx=run_info()
     store.record(va,status,effort,note,run_id=rid,worker_idx=idx,log_path=log_path)
 
@@ -878,6 +890,17 @@ def checker_flag_candidates(log_path):
     return candidates[-4:]
 
 
+def checker_metric_summary(lines):
+    """Extract only numbers reported by the independently invoked checker."""
+    output='\n'.join(lines)
+    sizes=re.findall(r'\bsize\s*[=:]\s*(\d+)\s*/\s*(\d+)\b',output,re.I)
+    diffs=re.findall(r'\b(?:diffs?|differences)\s*[=:]\s*(\d+)\b',output,re.I)
+    if not sizes or not diffs:
+        return ''
+    compiled,retail=sizes[-1]
+    return f'size={compiled}/{retail} diffs={diffs[-1]}'
+
+
 def checked_result(va, log_path=None, minutes=2):
     """Independent byte check; never accept a model's MATCH statement alone.
 
@@ -899,7 +922,8 @@ def checked_result(va, log_path=None, minutes=2):
         lines = (p.stdout + '\n' + p.stderr).strip().splitlines()
         headline = next((x.strip() for x in lines if x.strip()), 'No checker output')
         if p.returncode != 0 or not headline.startswith('MATCH '):
-            last_failure = headline[:220]
+            metrics=checker_metric_summary(lines)
+            last_failure = (((metrics + ' | ') if metrics else '') + headline)[:220]
             continue
         if va not in ManifestIndex().refresh():
             # The dry-run independently verified the bytes. Let the checker
