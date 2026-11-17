@@ -183,6 +183,9 @@ s.create_run('run1',2,3,{'0x00000001':0,'0x00000002':1,'0x00000003':0})
 
 
     def test_snapshot_reports_actual_verified_slots(self):
+        folder=self.work/'parallel/run1'
+        folder.mkdir(parents=True,exist_ok=True)
+        (folder/'run.json').write_text(json.dumps({'processes':[{'worker':0,'pid':999999}]}))
         with sqlite3.connect(self.work/'spore.sqlite3') as db:
             db.execute("INSERT INTO inference_slots(id,run_id,va,created_utc,verified) VALUES('test-slot','run1','0x00000001','now',1)")
             db.execute("INSERT INTO claims(va,run_id,worker_idx,pid,started_utc) VALUES('0x00000001','run1',0,999999,'now')")
