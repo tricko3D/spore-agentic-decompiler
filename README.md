@@ -17,38 +17,9 @@ python3 spore_agentic.py setup --repo ~/spore-decomp
 
 The API key, if entered interactively, is saved to `~/.config/spore-agentic-decompiler/openrouter.key` with permission `0600`. The repository checkout never receives the key. For environments with managed credentials, supply `OPENROUTER_API_KEY` instead. Configuration is in `~/.config/spore-agentic-decompiler/config.json`; `XDG_CONFIG_HOME` is supported.
 
-`setup` detects an existing `work/scratch/codex-pass1/spore.sqlite3` database and **preserves it**. If there is no database but old `queue.csv`/`results.csv` files are present, it imports them without deleting them. For a new checkout it builds a queue for the selected module(s), defaulting to **SPGonzago** for compatibility. The module selection is configuration, not a restriction of the decompiler. Targets must have a confident module classification; unknown addresses are excluded rather than guessed. It refuses an incomplete or ambiguous old queue rather than guessing at missing history.
+`setup` detects an existing `work/scratch/codex-pass1/spore.sqlite3` database and **preserves it**. If there is no database but old `queue.csv`/`results.csv` files are present, it imports them without deleting them. For an unused upstream checkout with no prior queue, it builds a new SPGonzago-only queue from the upstream fingerprint index and module mapping, then migrates it to SQLite. It refuses an incomplete or ambiguous old queue rather than guessing at missing history.
 
 The controller installs the bundled worker scripts and a narrow cross-process checker lock into the selected upstream checkout; replaced scripts and the original checker are backed up under `work/scratch/codex-pass1/sqlite-backups/`. **Stop all agents before setup/recovery.** An unexpected upstream checker layout makes setup fail closed rather than attempting a blind rewrite.
-
-## Choose modules
-
-SPGonzago remains the default **focus**, not the only supported module. The scope can be a named module, several modules, or all confidently classified modules. Run `setup` again after updating this controller so its latest engine scripts are installed into your existing `spore-decomp` checkout.
-
-```bash
-python3 spore_agentic.py modules                         # show discovered modules
-python3 spore_agentic.py scope --module SPGonzago        # preview, no changes
-python3 spore_agentic.py scope --module OtherModule      # preview a different module
-python3 spore_agentic.py scope --module OtherModule --apply
-python3 spore_agentic.py scope --module SPGonzago --module OtherModule --apply
-python3 spore_agentic.py scope --all-modules --apply
-```
-
-A successful `scope --apply` **backs up SQLite, appends new eligible addresses, and saves the selected scope**. It does not delete old queue entries, attempts, matches or legacy CSVs. An ordinary `plan` or `run` then uses that saved scope. `plan --module OtherModule` and `run --module OtherModule` override it for that invocation, but selecting an unqueued module does not implicitly expand the database. Use `scope --apply` first to add new module targets.
-
-The default confidence threshold is **0.70**; `--min-confidence` is available for explicit changes. Module ownership comes from `work/migrate/modmap.json` where available, or conservative existing source anchors when that map is absent. The `--all-modules` option does **not** bypass mapping confidence or other upstream exclusions.
-
-## OpenRouter API key rotation
-
-OpenRouter keys may be revoked or replaced without resetting any decompilation progress. Because the SQLite spending guard tracks a key fingerprint, **a new key must be explicitly authorized** before starting workers. The `run` command now detects mismatches and fails *before* launching worker processes.
-
-Configure the replacement key via `OPENROUTER_API_KEY` or by using `setup --change-key` to save it privately (0600). Then, with workers stopped:
-
-```bash
-python3 spore_agentic.py rotate-key
-```
-
-The command performs a **free OpenRouter `/key` validation**, creates an online SQLite backup in `work/scratch/codex-pass1/sqlite-backups/`, and changes only the budget's key fingerprint and usage baseline. It **carries forward all historically recorded spending**, keeps the existing project budget ceiling, and appends an audit record in `budget_key_rotations`. All matches, attempts, `VOID_PROVIDER` annotations and source files stay untouched. If validation fails, the database is not modified. The new key's own spending limit remains independent and is enforced separately.
 
 ## Run and inspect
 
@@ -62,9 +33,7 @@ python3 spore_agentic.py status
 python3 spore_agentic.py progress
 ```
 
-`run` **incurs OpenRouter charges** and uses the existing upstream checkout to write real C++ and invoke the upstream compiler verifier. It supports module-scoped work across the existing upstream source tree, using DeepSeek V4.1 Flash (`deepseek/deepseek-v4.1-flash-1017`) through OpenRouter, with the currently pinned Sail Research route. Model/provider selection and fully persistent OpenCode *processes* are not yet configurable.
-
-The `plan` command now reports only **runnable functions**: confidently classified, not already matched or skipped, and still below the valid-pass limit. `VOID_PROVIDER` attempts are excluded from that count. Worker assignment uses the same snapshot filter, while SQLite claims perform a fresh eligibility check at execution time.
+`run` **incurs OpenRouter charges** and uses the existing upstream checkout to write real C++ and invoke the upstream compiler verifier. It currently supports the **SPGonzago** scope, using DeepSeek V4.1 Flash (`deepseek/deepseek-v4.1-flash-1017`) through OpenRouter, with the currently pinned Sail Research route. Model/provider selection, arbitrary modules, and fully persistent OpenCode *processes* are not yet configurable.
 
 ## Sail Research adaptive throughput (default)
 
@@ -83,24 +52,22 @@ The worker preserves the OpenCode **conversation session** per function between 
 
 The **$20 budget is a local soft limit** using OpenRouter key-usage accounting, not a provider-enforced spending cap. For a hard cap, configure a limit on the key in OpenRouter itself.
 
-## Dynamic work stealing and crash recovery
+## Mission Control dashboard
 
-Parallel workers now draw from a **shared SQLite target pool** instead of having permanently assigned functions. The previous per-worker assignment counts are only initial planning estimates. Each worker atomically claims the next function, checks historical valid passes, and uses a **source-group lock** so functions in the same C++ source file are not edited simultaneously.
-
-If a worker exits or crashes, the next surviving worker checks its claim and Linux process identity; any tracked orphaned OpenCode process is terminated before ownership can be released. The function can then be claimed by another worker with its previous SQLite attempts and OpenCode conversation intact. Live worker claims are **never reclaimed solely because time has elapsed**. If every worker stops, no process remains to continue the run; restart the controller to resume unfinished work.
-
-New runs add columns and tables to the existing SQLite database without deleting historical attempts. The setup installer retains a script backup. As before, agents work on a shared unsandboxed checkout, and file-level locking does not prevent mistakes in shared headers or unrelated files.
-
-## Live local dashboard
-
-A lightweight **read-only HTTP dashboard** uses only Python's standard library. Open it in a second WSL terminal while agents are running:
+The local dashboard has a **read-only monitoring mode** and an explicitly enabled **run-control mode**:
 
 ```bash
-cd ~/spore-agentic-decompiler
-python3 spore_agentic.py dashboard --port 8765
+python3 spore_agentic.py dashboard                   # read-only, safe alongside an active run
+python3 spore_agentic.py dashboard --control         # launch / stop / choose module
 ```
 
-Then visit **http://127.0.0.1:8765** in your browser. It refreshes every three seconds and shows the latest run, match counts, selected targets, live worker processes and their current functions, adaptive Sail concurrency, cooldown, provider incidents, recent results and estimated OpenRouter spending. It never exposes API keys, raw agent logs, prompts or model output. It binds to **localhost only**, has no write APIs, and does not initiate paid inference. Historical cost totals come from the last cached budget sample and may lag actual billing.
+Open `http://127.0.0.1:8765` in the browser. Both modes show a live grid of the latest run's workers, with a compact preview of each agent's recent OpenCode events. Select an agent to view a longer live stream and its worker status. The grid works with a terminal-launched run as well as runs started in the browser. Raw tool commands and full tool output are **not** served. Agent text is filtered for obvious key-like strings, but may still contain checkout-specific details, so do not expose the server to a network.
+
+The results explorer lets you filter all queued functions by their latest valid **MATCH / FAIL / DEFER / SKIP / PENDING** status, view the `+1` through `+5` failure-effort distribution, and inspect a function's complete pass history (including `VOID_PROVIDER` annotations) and any saved checker mismatch evidence. The browser does not run the compiler to synthesize missing diffs. The cost cards group each function's *captured OpenCode step costs* by its latest outcome, including previous attempts on that function, and show coverage. Some OpenCode versions omit the final `step_finish`, so these are **lower-bound estimates** rather than precisely attributed OpenRouter charges. The separate OpenRouter API-key usage total remains authoritative for cumulative cost.
+
+When `--control` is provided, the dashboard can select a module, add its classified functions to the existing SQLite queue through the usual safe `scope --apply` operation, launch an adaptive paid batch, or gracefully stop the active coordinator. Start/stop actions require a random session token and exact localhost origin and host checks; the server listens only on `127.0.0.1`. It never accepts arbitrary shell commands or user-supplied process IDs. Controls remain disabled by default; shutdown leaves recorded results intact. Closing the dashboard does **not** stop an already launched decompilation run.
+
+The dashboard is built entirely with the Python standard library and polls the WAL database without holding a write lock. Live streams are read from bounded tails of existing JSONL logs.
 
 ## Existing-state diagnostic export
 
@@ -112,10 +79,10 @@ python3 spore_agentic.py diagnostics \
   --output /mnt/c/Users/patrick/Downloads/spore-agentic-diagnostics.zip
 ```
 
-This produces a consistent SQLite snapshot, the existing queue/results and runner scripts, plus `state/provider-evidence.json`. That evidence report checks the local OpenCode logs and lists **proven provider-only** versus **unverified** attempts without exporting the model transcript. Missing logs and logs containing actual agent work remain unverified. **It does not include the API key, source trees, prompts, or raw OpenCode JSONL logs.** The archive may still contain private attempt history and machine paths, so inspect it before sharing.
+This produces a consistent SQLite snapshot using SQLite's backup API, plus the existing queue/results and runner scripts. **It does not include the API key, source trees, or raw OpenCode JSONL logs.** The archive may still contain private attempt history and machine paths, so inspect it before sharing.
 
 ## Safety and known limits
 
-This is a working controller around a module-selectable Spore matching workflow, **not a universal binary decompiler**. It needs the retail reference data and a functional compiler-check setup provided by the upstream project. Agents execute commands and modify C++ inside the selected checkout, so keep it under version control and review changes before merging. Functions assigned to different workers may still share dependencies, and the checker lock serializes compilation rather than fully isolating each agent. Only explicit successful byte matches should be considered verified.
+This is a working controller around the existing targeted Spore matching workflow, **not a universal binary decompiler**. It needs the retail reference data and a functional compiler-check setup provided by the upstream project. Agents execute commands and modify C++ inside the selected checkout, so keep it under version control and review changes before merging. Functions assigned to different workers may still share dependencies, and the checker lock serializes compilation rather than fully isolating each agent. Only explicit successful byte matches should be considered verified.
 
 The recovery classifier is deliberately conservative: missing logs and logs containing any actual agent output are not automatically voided. The standalone setup, migration, and recovery paths have offline tests; live OpenRouter/model performance is environment-dependent and has not been certified against every upstream commit. No game assets, binaries, or secrets are included in this repository.
