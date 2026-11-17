@@ -119,6 +119,32 @@ if __name__ == "__main__":
             self.assertEqual(result['attempts'][0]['classification'], 'PROVEN_PROVIDER_ONLY')
 
 
+    def test_extend_scope_preserves_existing_history(self):
+        self.assertEqual(self.cli('setup', '--repo', str(self.repo)).returncode, 0)
+        db = self.repo/'work/scratch/codex-pass1/spore.sqlite3'
+        with sqlite3.connect(db) as conn:
+            conn.execute("INSERT INTO attempts(va,pass_number,status,utc) VALUES('0x12345678',1,'FAIL','now')")
+            conn.commit()
+        preview = self.cli('scope', '--module', 'Unrelated')
+        self.assertEqual(preview.returncode, 0, preview.stdout)
+        self.assertIn('New: 1', preview.stdout)
+        with sqlite3.connect(db) as conn:
+            self.assertEqual(conn.execute('SELECT COUNT(*) FROM queue').fetchone()[0], 1)
+        result = self.cli('scope', '--module', 'Unrelated', '--apply')
+        self.assertEqual(result.returncode, 0, result.stdout)
+        self.assertIn('Added 1 targets', result.stdout)
+        with sqlite3.connect(db) as conn:
+            self.assertEqual(conn.execute('SELECT COUNT(*) FROM queue').fetchone()[0], 2)
+            self.assertEqual(conn.execute('SELECT COUNT(*) FROM attempts').fetchone()[0], 1)
+        plan = self.cli('plan')
+        self.assertEqual(plan.returncode, 0, plan.stdout)
+        self.assertIn('Unrelated eligible scope: 1 functions', plan.stdout)
+        allmods = self.cli('scope', '--all-modules')
+        self.assertEqual(allmods.returncode, 0, allmods.stdout)
+        self.assertIn('Already queued: 2', allmods.stdout)
+        self.assertEqual(self.cli('modules').returncode, 0)
+        self.assertTrue(list((self.repo/'work/scratch/codex-pass1/sqlite-backups').glob('queue-before-scope-*.sqlite3')))
+
     def test_rejects_partial_queue(self):
         work = self.repo/'work/scratch/codex-pass1'
         work.mkdir(parents=True)
