@@ -987,7 +987,7 @@ def process(minutes, unsafe, backend, quota_wait, max_functions,
                 return
         except (OSError, ValueError, RuntimeError) as e:
             print(f'Spending guard check failed, stopping: {e}', file=sys.stderr)
-            return
+            raise SystemExit(3)
 
     dynamic = bool(os.environ.get('SPORE_SQLITE_RUN_ID'))
     rid, worker_idx = run_info()
