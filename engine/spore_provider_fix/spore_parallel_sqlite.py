@@ -129,7 +129,7 @@ def make_assignments(queue, workers, mod, passes=None):
                and latest.get(va) not in ('MATCH', 'SKIP')
                and attempted[va] < limit]
     if not allowed:
-        return [], {}, [0] * workers
+        return [], {}, [0] * workers, {}
     groups = source_groups(allowed)
     position = {va: i for i, va in enumerate(allowed)}
     groups.sort(key=lambda g: min(position[va] for va in g))
@@ -141,7 +141,8 @@ def make_assignments(queue, workers, mod, passes=None):
             assignments[va] = index
         counts[index] += len(group)
     assert len(assignments) == len(allowed)
-    return allowed, assignments, counts
+    group_keys = {va: f'group:{i}' for i, group in enumerate(groups) for va in group}
+    return allowed, assignments, counts, group_keys
 
 
 def status():
@@ -215,14 +216,14 @@ def run(a):
         store.clear_stale_reservations()
         store.clear_stale_inference_slots()
         queue = read_queue()
-        allowed, assignments, counts = make_assignments(queue, a.workers, mod, passes=a.passes)
+        allowed, assignments, counts, group_keys = make_assignments(queue, a.workers, mod, passes=a.passes)
         if not allowed:
             print(f'No runnable {mod.module_scope()} targets under the {a.passes}-pass limit. No workers launched.')
             return 0
         run_id = datetime.now(timezone.utc).strftime('%Y%m%d-%H%M%S') + f'-{os.getpid()}'
         folder = RUN_LOGS / run_id
         folder.mkdir(parents=True, exist_ok=False)
-        store.create_run(run_id,a.workers,a.passes,assignments)
+        store.create_run(run_id,a.workers,a.passes,assignments,group_keys=group_keys)
         if a.adaptive:
             adaptive_ctl.begin(run_id, ceiling=a.max_inflight, start=1)
             print(f'Adaptive Sail concurrency: start 1, ceiling {a.max_inflight}; AIMD and exponential cooldown.', flush=True)
@@ -327,7 +328,7 @@ def main():
         if not 1<=a.workers<=32:
             p.error('--workers must be between 1 and 32')
         mod=load_runner()
-        allowed,assignments,counts=make_assignments(read_queue(),a.workers,mod)
+        allowed,assignments,counts,_=make_assignments(read_queue(),a.workers,mod)
         print(f'{mod.module_scope()} runnable functions (pass limit {store.pass_limit()}): {len(allowed)}')
         print('Assignments:',counts)
         print('No agents started; SQLite history unchanged.')
