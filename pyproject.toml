@@ -1,0 +1,15 @@
+[project]
+name = "spore-agentic-decompiler"
+version = "0.1.0"
+description = "Standalone orchestration CLI targeting an existing Spore decompilation checkout"
+requires-python = ">=3.10"
+
+[project.scripts]
+spore-agentic = "spore_agentic:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+py-modules = ["spore_agentic"]

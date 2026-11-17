@@ -1,12 +1,11 @@
-# Local credentials and runtime state
+# All runtime and credentials remain outside this code repository.
 .env
 .env.*
 !.env.example
-.opencode/
-work/scratch/codex-pass1/
-work/opencode/
-
-# Databases, logs, backup snapshots
+__pycache__/
+*.py[cod]
+.venv/
+venv/
 *.sqlite
 *.sqlite3
 *.sqlite3-*
@@ -15,10 +14,5 @@ work/opencode/
 *.jsonl
 *.log
 *.bak
-
-# Python and local tooling
-__pycache__/
-*.py[cod]
-.venv/
-venv/
-.DS_Store
+*.zip
+work/

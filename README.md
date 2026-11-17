@@ -1,55 +1,58 @@
 # Spore Agentic Decompiler
 
-AI-assisted, compiler-verified function matching tools for [NoahBPeterson/spore-decomp](https://github.com/NoahBPeterson/spore-decomp).
+A standalone **command-line controller** for AI-assisted, compiler-checked C++ reconstruction against [NoahBPeterson/spore-decomp](https://github.com/NoahBPeterson/spore-decomp). It does **not** contain or replace the game binary, retail fingerprints, or the upstream build system. It always works against a separate, existing `spore-decomp` checkout.
 
-This repository currently contains the **SQLite parallel runner provider-recovery patch** for an existing `spore-decomp` checkout. It is not a standalone decompiler. It preserves historical attempts and verified matches while distinguishing upstream provider failures from actual C++ reconstruction attempts.
+Designed for Linux / WSL2 with Python 3.10+, an installed [OpenCode](https://opencode.ai/) CLI, and a working upstream Spore compile/check environment (including the dependencies required by `tools/contrib/check.py`). No extra Python packages are required for this controller.
 
-## What's included
-
-- `spore_provider_fix/spore_recover_provider_attempts.py`: audits historical OpenCode logs and conservatively marks confirmed provider-only failures `VOID_PROVIDER`, without deleting their original attempt records.
-- `spore_provider_fix/work/scratch/spore_sqlite_store.py`: SQLite WAL bookkeeping, attempt reviews, and concurrency slots.
-- `spore_provider_fix/work/scratch/spore_first_pass_sqlite.py`: worker with provider-aware retries, distinct attempt logs, and per-function OpenCode session reuse.
-- `spore_provider_fix/spore_parallel_sqlite.py`: configurable worker and inference concurrency.
-- `spore_provider_fix/spore_matched_bytes.py`: retail-byte and matched-function progress reporting.
-- `install_spore_provider_fix.py`: preview-first installer that backs up replaced scripts.
-
-## Installation into an existing checkout
-
-The original SQLite runner, its migration, and the compiler-check lock must already be installed in `~/spore-decomp`.
+## Install
 
 ```bash
-git clone https://github.com/tricko3D/spore-agentic-decompiler.git ~/spore-agentic-decompiler
-cd ~/spore-decomp
-cp ~/spore-agentic-decompiler/install_spore_provider_fix.py .
-cp -a ~/spore-agentic-decompiler/spore_provider_fix .
-.venv/bin/python install_spore_provider_fix.py
-.venv/bin/python install_spore_provider_fix.py --apply
+# From WSL or Linux
+git clone https://github.com/tricko3D/spore-agentic-decompiler.git
+cd spore-agentic-decompiler
+python3 spore_agentic.py setup --repo ~/spore-decomp
 ```
 
-After all existing workers have stopped, preview the recovery before applying it:
+`setup` prompts for an OpenRouter API key (hidden input) if one is not already provided via `OPENROUTER_API_KEY` or saved locally. It selects conservative defaults of **5 workers, 4 simultaneous inference slots, 3 real passes per function, and a $20 soft budget**. Override these with `--workers`, `--max-inflight`, `--passes`, `--minutes` and `--budget` during setup or at run time.
+
+The API key, if entered interactively, is saved to `~/.config/spore-agentic-decompiler/openrouter.key` with permission `0600`. The repository checkout never receives the key. For environments with managed credentials, supply `OPENROUTER_API_KEY` instead. Configuration is in `~/.config/spore-agentic-decompiler/config.json`; `XDG_CONFIG_HOME` is supported.
+
+`setup` detects an existing `work/scratch/codex-pass1/spore.sqlite3` database and **preserves it**. If there is no database but old `queue.csv`/`results.csv` files are present, it imports them without deleting them. For an unused upstream checkout with no prior queue, it builds a new SPGonzago-only queue from the upstream fingerprint index and module mapping, then migrates it to SQLite. It refuses an incomplete or ambiguous old queue rather than guessing at missing history.
+
+The controller installs the bundled worker scripts and a narrow cross-process checker lock into the selected upstream checkout; replaced scripts and the original checker are backed up under `work/scratch/codex-pass1/sqlite-backups/`. **Stop all agents before setup/recovery.** An unexpected upstream checker layout makes setup fail closed rather than attempting a blind rewrite.
+
+## Run and inspect
 
 ```bash
-.venv/bin/python spore_recover_provider_attempts.py --show 30
-.venv/bin/python spore_recover_provider_attempts.py --apply
-.venv/bin/python spore_parallel_sqlite.py status
-.venv/bin/python spore_matched_bytes.py
+python3 spore_agentic.py doctor
+python3 spore_agentic.py plan                    # no API calls
+python3 spore_agentic.py recover                 # audit only, no changes
+python3 spore_agentic.py recover --apply         # backup DB, annotate proven errors
+python3 spore_agentic.py run --workers 5 --max-inflight 4 --budget 20
+python3 spore_agentic.py status
+python3 spore_agentic.py progress
 ```
 
-A new 32-worker batch with at most eight simultaneous inference slots:
+`run` **incurs OpenRouter charges** and uses the existing upstream checkout to write real C++ and invoke the upstream compiler verifier. It currently supports the **SPGonzago** scope, using DeepSeek V4.1 Flash (`deepseek/deepseek-v4.1-flash-1017`) through OpenRouter, with the currently pinned Sail Research route. Model/provider selection, arbitrary modules, and fully persistent OpenCode *processes* are not yet configurable.
+
+The worker preserves the OpenCode **conversation session** per function between passes. It starts a new CLI process for each pass, so this is *not* a persistent OpenCode server. Worker count and simultaneous API calls are separate controls. Provider `ttft_deadline_guard` failures are recorded as incidents and do **not** consume a legitimate decompilation pass; no-source retries can be reclaimed with `recover --apply` if their saved logs contain unequivocal evidence. The original attempt rows and logs remain available, with invalidated rows annotated as `VOID_PROVIDER`.
+
+The **$20 budget is a local soft limit** using OpenRouter key-usage accounting, not a provider-enforced spending cap. For a hard cap, configure a limit on the key in OpenRouter itself.
+
+## Existing-state diagnostic export
+
+If you have an existing database, you can package it and the relevant local scripts for migration troubleshooting:
 
 ```bash
-.venv/bin/python spore_parallel_sqlite.py run \
-  --workers 32 --max-inflight 8 --passes 3 --reasoning high \
-  --minutes 5 --quota-wait 1 --provider-retries 2 \
-  --budget 20 --unsafe
+python3 spore_agentic.py diagnostics \
+  --repo ~/spore-decomp \
+  --output /mnt/c/Users/patrick/Downloads/spore-agentic-diagnostics.zip
 ```
 
-## Safety and limitations
+This produces a consistent SQLite snapshot using SQLite's backup API, plus the existing queue/results and runner scripts. **It does not include the API key, source trees, or raw OpenCode JSONL logs.** The archive may still contain private attempt history and machine paths, so inspect it before sharing.
 
-- Recovery creates a SQLite online backup before making changes. The original attempt records and logs are retained.
-- Only passes with explicit `ttft_deadline_guard` retry evidence and no model or tool output are invalidated automatically. Missing or ambiguous logs stay unchanged.
-- OpenCode **conversation** sessions are reused for the same function. The runner still creates a new OpenCode CLI process/private server for each pass, so it does not eliminate process startup overhead.
-- The concurrency cap is not a guarantee against upstream throttling. API keys, databases, logs, generated sources, and machine-specific files should not be committed here.
-- This patch has been locally syntax-checked and tested with a simulated SQLite recovery database. It has **not** been validated against every version of a live `spore-decomp` checkout.
+## Safety and known limits
 
-See [README_PROVIDER_RECOVERY.txt](README_PROVIDER_RECOVERY.txt) for further details.
+This is a working controller around the existing targeted Spore matching workflow, **not a universal binary decompiler**. It needs the retail reference data and a functional compiler-check setup provided by the upstream project. Agents execute commands and modify C++ inside the selected checkout, so keep it under version control and review changes before merging. Functions assigned to different workers may still share dependencies, and the checker lock serializes compilation rather than fully isolating each agent. Only explicit successful byte matches should be considered verified.
+
+The recovery classifier is deliberately conservative: missing logs and logs containing any actual agent output are not automatically voided. The standalone setup, migration, and recovery paths have offline tests; live OpenRouter/model performance is environment-dependent and has not been certified against every upstream commit. No game assets, binaries, or secrets are included in this repository.
