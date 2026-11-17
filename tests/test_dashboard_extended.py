@@ -108,6 +108,28 @@ s.create_run('run1',2,3,{'0x00000001':0,'0x00000002':1,'0x00000003':0})
         self.assertIn("w.alive?'LIVE':'OFFLINE'",html)
         self.assertIn('Latest recorded reason',html)
 
+    def test_historical_tool_checker_fallback_and_size_mismatch(self):
+        logs=self.work/'logs'
+        logs.mkdir()
+        path=logs/'00000002.deepseek-openrouter.jsonl'
+        def checker(output):
+            return json.dumps({'type':'tool_use','part':{'tool':'bash','state':{
+                'status':'completed','input':{'command':'python tools/contrib/check.py 0x00000002'},
+                'output':output}}})+'\\n'
+        path.write_text(checker('NO MATCH 0x00000002\\nsize=31/31 diffs= 1 offsets=0x10'))
+        with sqlite3.connect(self.work/'spore.sqlite3') as db:
+            db.execute("INSERT INTO attempts(va,pass_number,status,effort,note,utc,log_path,run_id,worker_idx) VALUES('0x00000002',1,'FAIL','+4',?,'now',?,'run1',1)",
+                       ('Pass 1: parent-frame ABI | checker: NO MATCH 0x00000002',str(path)))
+        row=functions(self.repo,'FAIL')['items'][0]
+        self.assertEqual(row['agreement']['kind'],'logged_checker')
+        self.assertEqual(row['agreement']['matched'],30)
+        self.assertIn('parent-frame ABI',row['reason'])
+        self.assertEqual(function_detail(self.repo,'0x00000002')['agreement']['matched'],30)
+        path.write_text(checker('NO MATCH 0x00000002\\nsize=30/31 diffs=1'))
+        row=functions(self.repo,'FAIL')['items'][0]
+        self.assertIsNone(row['agreement']['matched'])
+        self.assertEqual(row['agreement']['compiled_size'],30)
+
     def test_controls_never_spawn_without_enable_or_invalid_module(self):
         control=Controller(self.repo,enabled=False)
         with self.assertRaises(PermissionError):control.start({})
