@@ -8,6 +8,8 @@ from __future__ import annotations
 import argparse
 from datetime import datetime, timezone
 import getpass
+import hashlib
+import math
 import importlib.util
 import json
 import re
@@ -19,6 +21,8 @@ import subprocess
 import sys
 import tempfile
 import zipfile
+import urllib.request
+import urllib.error
 
 HERE = Path(__file__).resolve().parent
 ENGINE = HERE / 'engine'
@@ -255,6 +259,109 @@ def command_setup(args):
     print('Run `python3 spore_agentic.py plan` before your first paid batch.')
 
 
+def verify_new_openrouter_key(key):
+    """Validate a replacement API key without purchasing model inference."""
+    req = urllib.request.Request(
+        'https://openrouter.ai/api/v1/key',
+        headers={'Authorization': 'Bearer ' + key, 'Accept': 'application/json'},
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=20) as response:
+            result = json.load(response)
+    except urllib.error.HTTPError as exc:
+        fail(f'New OpenRouter key validation failed (HTTP {exc.code}); SQLite was not changed.')
+    except (OSError, ValueError, TimeoutError) as exc:
+        fail(f'Could not validate the replacement key ({type(exc).__name__}); SQLite was not changed.')
+    data = result.get('data') if isinstance(result, dict) else None
+    if not isinstance(data, dict) or isinstance(data.get('usage'), bool) or not isinstance(data.get('usage'), (int, float)):
+        fail('OpenRouter returned no numeric usage for the new key; SQLite was not changed.')
+    usage = float(data['usage'])
+    if not math.isfinite(usage) or usage < 0:
+        fail('OpenRouter returned invalid usage for the replacement key; SQLite was not changed.')
+    remaining = data.get('limit_remaining')
+    if isinstance(remaining, (int, float)) and not isinstance(remaining, bool) and float(remaining) <= 0:
+        fail('The replacement key has no remaining spending allowance; SQLite was not changed.')
+    return usage
+
+
+def rebind_budget_key(repo, fingerprint, current_usage):
+    """Bind spending history to a new key without losing prior costs or attempts.
+
+    Project spend equals (new key current usage - new baseline). Keeping the
+    same cumulative spend means the new baseline may be negative, which is
+    mathematically correct and not a reset of the user's tracked spending.
+    """
+    dbpath = repo/'work/scratch/codex-pass1/spore.sqlite3'
+    if not dbpath.is_file():
+        fail('No SQLite database found. Initialize the selected checkout with setup first.')
+    with sqlite3.connect(dbpath, timeout=60) as db:
+        db.row_factory = sqlite3.Row
+        db.execute('PRAGMA busy_timeout=60000')
+        row = db.execute('SELECT * FROM budget WHERE singleton=1').fetchone()
+        if row is None:
+            fail('No existing spending record was found. Refusing to guess the budget baseline.')
+        if row['key_fingerprint'] == fingerprint:
+            return {'changed': False, 'spent': float(row['last_usage'])-float(row['baseline_usage']), 'backup': None}
+        spent = float(row['last_usage']) - float(row['baseline_usage'])
+        if not math.isfinite(spent) or spent < 0:
+            fail('The stored spending history is invalid; refusing key rotation.')
+        backup_dir = dbpath.parent/'sqlite-backups'
+        backup_dir.mkdir(parents=True,exist_ok=True)
+        backup = backup_dir / ('spore-before-key-rotation-' + datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S%fZ') + '.sqlite3')
+        with sqlite3.connect(backup) as dest:
+            db.backup(dest)
+        db.execute('BEGIN IMMEDIATE')
+        try:
+            live = db.execute('SELECT * FROM budget WHERE singleton=1').fetchone()
+            if (live['key_fingerprint'] != row['key_fingerprint'] or
+                live['last_usage'] != row['last_usage'] or
+                live['baseline_usage'] != row['baseline_usage']):
+                raise RuntimeError('Spending record changed during rotation; database not modified')
+            db.execute("""CREATE TABLE IF NOT EXISTS budget_key_rotations (
+                          id INTEGER PRIMARY KEY AUTOINCREMENT,
+                          old_fingerprint TEXT NOT NULL,new_fingerprint TEXT NOT NULL,
+                          carried_spend REAL NOT NULL,new_key_usage REAL NOT NULL,
+                          rotated_utc TEXT NOT NULL)""")
+            db.execute("""UPDATE budget SET key_fingerprint=?, baseline_usage=?,
+                          last_usage=?, updated_utc=? WHERE singleton=1""",
+                       (fingerprint, float(current_usage)-spent, float(current_usage),
+                        datetime.now(timezone.utc).isoformat()))
+            db.execute("""INSERT INTO budget_key_rotations
+                          (old_fingerprint,new_fingerprint,carried_spend,new_key_usage,rotated_utc)
+                          VALUES(?,?,?,?,?)""",
+                       (row['key_fingerprint'], fingerprint, spent, current_usage,
+                        datetime.now(timezone.utc).isoformat()))
+            db.commit()
+        except Exception:
+            db.rollback()
+            raise
+    return {'changed': True, 'spent': spent, 'backup': backup}
+
+
+def command_rotate_key(args):
+    repo = repo_path(args)
+    ensure_stopped()
+    key = get_key()
+    fingerprint = hashlib.sha256(key.encode()).hexdigest()[:20]
+    dbpath = repo/'work/scratch/codex-pass1/spore.sqlite3'
+    if not dbpath.is_file():
+        fail('SQLite database not initialized. Run setup first.')
+    with sqlite3.connect(dbpath) as db:
+        row = db.execute('SELECT key_fingerprint FROM budget WHERE singleton=1').fetchone()
+    if row is None:
+        fail('No existing spending record. Refusing to guess history.')
+    if row[0] == fingerprint:
+        print('OpenRouter key already matches the stored budget identity. No changes needed.')
+        return 0
+    print('Validating the replacement key with OpenRouter (no inference charges)...', flush=True)
+    usage = verify_new_openrouter_key(key)
+    result = rebind_budget_key(repo, fingerprint, usage)
+    print(f'New key accepted; preserved ${result["spent"]:.4f} of cumulative tracked spending.')
+    print('SQLite backup:', result['backup'])
+    print('Verified matches, retry allowances, attempts and source files were not modified.')
+    return 0
+
+
 def validate_settings(s):
     scope_settings(argparse.Namespace(), s)
     if not 1 <= int(s['workers']) <= 32:
@@ -298,6 +405,13 @@ def command_run(args, mode):
         validate_settings(settings)
         env = with_scope(os.environ.copy(), settings)
         env['OPENROUTER_API_KEY'] = get_key()
+        expected_key_fingerprint = hashlib.sha256(env['OPENROUTER_API_KEY'].encode()).hexdigest()[:20]
+        with sqlite3.connect(repo/'work/scratch/codex-pass1/spore.sqlite3') as budget_db:
+            stored = budget_db.execute('SELECT key_fingerprint FROM budget WHERE singleton=1').fetchone()
+        if stored and stored[0] != expected_key_fingerprint:
+            fail('OpenRouter key changed since the stored spending baseline. '
+                 'Run python3 spore_agentic.py rotate-key to preserve the existing budget '
+                 'before launching workers.')
         argv = ['spore_parallel_sqlite.py', 'run',
                 '--workers', settings['workers'], '--max-inflight', settings['max_inflight'],
                 '--passes', settings['passes'], '--minutes', settings['minutes'],
@@ -443,6 +557,8 @@ def main(argv=None):
     for name, type_ in [('workers', int), ('max-inflight', int), ('passes', int), ('minutes', int), ('budget', float)]:
         setup.add_argument('--'+name, type=type_)
     add_scope_arguments(setup)
+    rotation = sub.add_parser('rotate-key', help='Authorize an already-configured replacement OpenRouter key without resetting spending')
+    rotation.add_argument('--repo')
     r = sub.add_parser('run', help='Run paid matching agents, preserving prior results')
     r.add_argument('--repo')
     for name, type_ in [('workers', int), ('max-inflight', int), ('passes', int), ('minutes', int), ('budget', float)]:
@@ -476,6 +592,8 @@ def main(argv=None):
     args = ap.parse_args(argv)
     if args.command == 'setup':
         return command_setup(args)
+    if args.command == 'rotate-key':
+        return command_rotate_key(args)
     if args.command == 'dashboard':
         from spore_dashboard import serve
         return serve(repo_path(args), args.port)
