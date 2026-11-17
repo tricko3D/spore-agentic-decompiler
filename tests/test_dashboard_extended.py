@@ -77,6 +77,13 @@ s.create_run('run1',2,3,{'0x00000001':0,'0x00000002':1,'0x00000003':0})
         self.assertEqual(mismatch['kind'],'size_mismatch')
         self.assertIsNone(mismatch['matched'])
         self.assertIsNone(byte_agreement('FAIL',59,'Pass 1: guessed one diff'))
+        # The runner stores timeout evidence without the " | checker:" delimiter.
+        timeout='Pass 2: time limit (5 min); size=59/59 diffs=1 | NO MATCH'
+        deferred=byte_agreement('DEFER',59,timeout)
+        self.assertEqual(deferred['matched'],58)
+        self.assertEqual(deferred['kind'],'independent_checker')
+        self.assertIsNone(byte_agreement('DEFER',59,'Pass 2: time limit (5 min); No candidate verified'))
+        self.assertIsNone(byte_agreement('FAIL',59,'Pass 2: model claims size=59/59 diffs=1'))
         idle=agent_detail(self.repo,1)
         self.assertIsNone(idle['va'])
         self.assertIsNone(idle['bytes'])
