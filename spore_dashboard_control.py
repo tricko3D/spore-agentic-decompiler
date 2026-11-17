@@ -4,8 +4,10 @@ Nothing in this module makes direct provider requests or edits Spore source.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import os
+import sqlite3
 from pathlib import Path
 import re
 import signal
@@ -79,6 +81,39 @@ class Controller:
         except FileNotFoundError:
             raise ValueError('SQLite not initialized. Run setup first.')
 
+    def _launch_environment(self):
+        """Read the current key at launch, not the dashboard's old environment.
+
+        A dashboard can predate an external rotate-key call. Only override its
+        inherited environment if the private key file matches the budget row.
+        Never launch with a mismatched key or silently reset spending.
+        """
+        from spore_agentic import KEY_FILE
+
+        env=os.environ.copy()
+        dbpath=self.repo/'work/scratch/codex-pass1/spore.sqlite3'
+        with sqlite3.connect(dbpath) as db:
+            row=db.execute('SELECT key_fingerprint FROM budget WHERE singleton=1').fetchone()
+        if row is None or not row[0]:
+            return env
+        fingerprint=row[0]
+        inherited=env.get('OPENROUTER_API_KEY','').strip()
+        if inherited and hashlib.sha256(inherited.encode()).hexdigest()[:20]==fingerprint:
+            return env
+        if KEY_FILE.is_file():
+            saved=KEY_FILE.read_text(encoding='utf-8').strip()
+            if saved and hashlib.sha256(saved.encode()).hexdigest()[:20]==fingerprint:
+                env['OPENROUTER_API_KEY']=saved
+                return env
+        if inherited:
+            raise ValueError(
+                'The dashboard inherited an outdated OPENROUTER_API_KEY. '
+                'Restart it from the shell with the rotated key, or run '
+                'python3 spore_agentic.py rotate-key --save-key and retry.')
+        raise ValueError(
+            'No saved OpenRouter key matches the spending baseline. '
+            'Run python3 spore_agentic.py rotate-key with the replacement key.')
+
     def start(self,data):
         if not self.enabled:raise PermissionError('Controls disabled')
         if not isinstance(data,dict):raise ValueError('Invalid settings')
@@ -97,6 +132,8 @@ class Controller:
         values['budget']=float(budget)
         with self.lock:
             self._confirm_idle()
+            self.process=None  # Do not replay a previous launch failure after a new attempt.
+            launch_env=self._launch_environment()
             # Scope selection can add functions but never deletes historical work.
             scope=[sys.executable,str(CLI),'scope','--repo',str(self.repo)]
             scope+=['--all-modules'] if module=='*' else ['--module',module]
@@ -117,7 +154,8 @@ class Controller:
             output=work/'dashboard-controller.log'
             with output.open('ab') as file:
                 self.process=subprocess.Popen(cmd,cwd=CLI.parent,stdin=subprocess.DEVNULL,
-                                              stdout=file,stderr=subprocess.STDOUT,start_new_session=True)
+                                              stdout=file,stderr=subprocess.STDOUT,
+                                              env=launch_env,start_new_session=True)
             return {'started':True,'controller_pid':self.process.pid,'module':module}
 
     def state(self):

@@ -162,4 +162,24 @@ s.create_run('run1',2,3,{'0x00000001':0,'0x00000002':1,'0x00000003':0})
             self.assertIn('SPGonzago',argv)
             self.assertIn('--max-inflight',argv)
 
+    def test_dashboard_uses_rotated_saved_key_instead_of_stale_environment(self):
+        import hashlib
+        with sqlite3.connect(self.work/'spore.sqlite3') as db:
+            fingerprint=hashlib.sha256(b'sk-or-new').hexdigest()[:20]
+            db.execute("INSERT OR REPLACE INTO budget(singleton,key_fingerprint,baseline_usage,last_usage,updated_utc) VALUES(1,?,?,?,?)",
+                       (fingerprint,0,0,'now'))
+        saved_key=self.repo/'openrouter.key'
+        saved_key.write_text('sk-or-new\n')
+        control=Controller(self.repo,enabled=True)
+        with patch('spore_agentic.KEY_FILE',saved_key),patch.dict(os.environ,{'OPENROUTER_API_KEY':'sk-or-old'}):
+            env=control._launch_environment()
+            self.assertEqual(env['OPENROUTER_API_KEY'],'sk-or-new')
+        saved_key.unlink()
+        with patch('spore_agentic.KEY_FILE',saved_key),patch.dict(os.environ,{'OPENROUTER_API_KEY':'sk-or-old'}):
+            with self.assertRaisesRegex(ValueError,'outdated OPENROUTER_API_KEY'):
+                control._launch_environment()
+        with patch.dict(os.environ,{'OPENROUTER_API_KEY':'sk-or-new'}):
+            self.assertEqual(control._launch_environment()['OPENROUTER_API_KEY'],'sk-or-new')
+
+
 if __name__=='__main__':unittest.main()

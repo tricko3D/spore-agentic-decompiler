@@ -8,7 +8,8 @@ import unittest
 
 CLI_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(CLI_ROOT))
-from spore_agentic import rebind_budget_key
+from spore_agentic import rebind_budget_key, sync_saved_key
+from unittest.mock import patch
 
 
 class RotationTests(unittest.TestCase):
@@ -48,6 +49,19 @@ class RotationTests(unittest.TestCase):
             self.assertFalse(second['changed'])
             with sqlite3.connect(path) as db:
                 self.assertEqual(db.execute('SELECT COUNT(*) FROM budget_key_rotations').fetchone()[0],1)
+
+
+    def test_rotated_environment_key_updates_existing_file_or_explicitly_saves(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path=Path(tmp)/'openrouter.key'
+            with patch('spore_agentic.KEY_FILE',path):
+                sync_saved_key('sk-or-new')
+                self.assertFalse(path.exists())
+                sync_saved_key('sk-or-new',save_new=True)
+                self.assertEqual(path.read_text(),'sk-or-new\n')
+                self.assertEqual(path.stat().st_mode & 0o777,0o600)
+                sync_saved_key('sk-or-next')
+                self.assertEqual(path.read_text(),'sk-or-next\n')
 
 
 if __name__=='__main__':

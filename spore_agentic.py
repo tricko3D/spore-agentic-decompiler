@@ -174,6 +174,18 @@ def get_key(prompt=False):
     return key
 
 
+def sync_saved_key(key, save_new=False):
+    """Keep an existing private key file in sync after rotation.
+
+    Environment-only credentials remain environment-only unless --save-key
+    explicitly opts into persisting them for a running dashboard.
+    """
+    if save_new or KEY_FILE.is_file():
+        if not KEY_FILE.is_file() or KEY_FILE.read_text(encoding='utf-8').strip() != key:
+            atomic_private_file(KEY_FILE, key+'\n')
+            print('Saved OpenRouter key updated for dashboard launches.')
+
+
 def scope_settings(args, previous):
     module_arg = getattr(args, 'module', None)
     all_modules = getattr(args, 'all_modules', False)
@@ -350,11 +362,13 @@ def command_rotate_key(args):
     if row is None:
         fail('No existing spending record. Refusing to guess history.')
     if row[0] == fingerprint:
+        sync_saved_key(key, save_new=args.save_key)
         print('OpenRouter key already matches the stored budget identity. No changes needed.')
         return 0
     print('Validating the replacement key with OpenRouter (no inference charges)...', flush=True)
     usage = verify_new_openrouter_key(key)
     result = rebind_budget_key(repo, fingerprint, usage)
+    sync_saved_key(key, save_new=args.save_key)
     print(f'New key accepted; preserved ${result["spent"]:.4f} of cumulative tracked spending.')
     print('SQLite backup:', result['backup'])
     print('Verified matches, retry allowances, attempts and source files were not modified.')
@@ -492,6 +506,8 @@ def main(argv=None):
     add_scope_arguments(setup)
     rotation = sub.add_parser('rotate-key', help='Authorize an already-configured replacement OpenRouter key without resetting spending')
     rotation.add_argument('--repo')
+    rotation.add_argument('--save-key', action='store_true',
+                          help='Also save an environment-supplied key to the private 0600 key file for dashboard launches')
     r = sub.add_parser('run', help='Run paid matching agents, preserving prior results')
     r.add_argument('--repo')
     for name, type_ in [('workers', int), ('max-inflight', int), ('passes', int), ('minutes', int), ('budget', float)]:
