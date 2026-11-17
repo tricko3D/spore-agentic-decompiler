@@ -640,8 +640,8 @@ def run_one(va, minutes, unsafe, backend, model='mistral4', reasoning='medium',
         prompt += f"""
 PARALLEL WORKER SAFETY: Other agents are working in this repository concurrently.
 Work ONLY on function {va} and its existing source file shown by task.py.
-Functions sharing a source file have been assigned to the same worker, but
-other workers are editing other files concurrently. Do not change unrelated
+A SQLite source-group claim prevents concurrent edits to this file, but
+other workers are editing other source files concurrently. Do not change unrelated
 functions in that file, shared headers, global tooling, other slices, queues,
 budgets, logs, or other workers' files. Use check.py to record true matches;
 only the checker may update manifests and nonmatching notes. If a necessary
@@ -705,6 +705,8 @@ fix requires changing a shared header, report SKIP instead.
         proc = subprocess.Popen(cmd, cwd=ROOT, stdin=subprocess.DEVNULL,
                                 stdout=output, stderr=subprocess.STDOUT,
                                 env=env, start_new_session=True)
+        if os.environ.get('SPORE_SQLITE_RUN_ID'):
+            store.record_child(va, proc.pid)
         try:
             code = proc.wait(timeout=minutes * 60)
         except subprocess.TimeoutExpired:
@@ -986,26 +988,58 @@ def process(minutes, unsafe, backend, quota_wait, max_functions,
             print(f'Spending guard check failed, stopping: {e}', file=sys.stderr)
             return
 
+    dynamic = bool(os.environ.get('SPORE_SQLITE_RUN_ID'))
+    rid, worker_idx = run_info()
+    positions = {row['va']: (idx, row) for idx,row in enumerate(queue, start=1)}
+
+    def work_items():
+        if not dynamic:
+            yield from enumerate(queue, start=1)
+            return
+        yielded = 0
+        while not max_functions or yielded < max_functions:
+            va, busy = store.claim_next(rid, worker_idx, passes)
+            if va is not None:
+                yielded += 1
+                yield positions[va]
+            elif busy:
+                time.sleep(3)
+            else:
+                return
+
     processed_functions = 0
-    for idx, row in enumerate(queue, start=1):
+    for idx, row in work_items():
         va = row['va']
         if only_va and va != only_va:
             continue
-        if not assigned_worker(va):
+        if not dynamic and not assigned_worker(va):
             continue
         if va not in allowed or not modules.eligible(va):
+            if dynamic:
+                store.ignore_run_target(rid,va,'out of scope')
+                store.release_claim(va,rid,worker_idx)
             continue
         if va in manifests.refresh():
+            if dynamic:
+                store.ignore_run_target(rid,va,'already in upstream manifest')
+                store.release_claim(va,rid,worker_idx)
             if only_va:
                 print(f'{va} is already manifested; skipped.', flush=True)
             continue
-        previous = history.get(va, [])
+        previous = store.history_for(va) if dynamic else history.get(va, [])
+        if dynamic: history[va] = previous
         if previous and previous[-1]['status'] in ('MATCH', 'SKIP'):
+            if dynamic:
+                store.ignore_run_target(rid,va,'already terminal')
+                store.release_claim(va,rid,worker_idx)
             continue
         # Original single-pass results count toward the limit. A timeout
         # consumes one attempt; quota/infra failures were never recorded.
         attempted = sum(r['status'] in ('FAIL', 'DEFER') for r in previous)
         if attempted >= passes:
+            if dynamic:
+                store.ignore_run_target(rid,va,'passes exhausted')
+                store.release_claim(va,rid,worker_idx)
             if only_va:
                 print(f'{va} already used {attempted}/{passes} attempts.', flush=True)
             continue
@@ -1018,7 +1052,7 @@ def process(minutes, unsafe, backend, quota_wait, max_functions,
               f'previous attempts {attempted}/{passes}', flush=True)
 
         rid,worker_idx=run_info()
-        if not store.claim(va,rid,worker_idx,passes):
+        if not dynamic and not store.claim(va,rid,worker_idx,passes):
             print(f'  {va} is already claimed or completed; skipped.',flush=True)
             continue
         try:
