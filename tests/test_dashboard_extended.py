@@ -69,6 +69,45 @@ s.create_run('run1',2,3,{'0x00000001':0,'0x00000002':1,'0x00000003':0})
         self.assertAlmostEqual(log_cost(self.repo,str(log))['cost'],0.005)
         with self.assertRaises(ValueError):function_detail(self.repo,'../../passwd')
 
+    def test_worker_details_byte_agreement_and_reasons(self):
+        from spore_dashboard_data import byte_agreement
+        note='Pass 1: ABI mismatch | checker: NO MATCH size=59/59 diffs=1 offsets=0x48'
+        self.assertEqual(byte_agreement('FAIL',59,note)['matched'],58)
+        mismatch=byte_agreement('FAIL',59,'Pass 1: size mismatch | checker: NO MATCH size=58/59 diffs=1 offsets=0x48')
+        self.assertEqual(mismatch['kind'],'size_mismatch')
+        self.assertIsNone(mismatch['matched'])
+        self.assertIsNone(byte_agreement('FAIL',59,'Pass 1: guessed one diff'))
+        idle=agent_detail(self.repo,1)
+        self.assertIsNone(idle['va'])
+        self.assertIsNone(idle['bytes'])
+        self.assertEqual(idle['events'],[])
+        with sqlite3.connect(self.work/'spore.sqlite3') as db:
+            db.execute("INSERT INTO attempts(va,pass_number,status,effort,note,utc,run_id,worker_idx) VALUES('0x00000002',1,'FAIL','+2',?,'2026-11-17T21:00:00','run1',1)",
+                       ('Pass 1: EBP parent-frame ABI and EH handler differ | checker: NO MATCH size=31/31 diffs=1 offsets=0x12',))
+            db.execute("INSERT INTO attempts(va,pass_number,status,effort,note,utc,run_id,worker_idx) VALUES('0x00000001',1,'MATCH','',?,'2026-11-17T21:00:00','run1',0)",
+                       ('Pass 1: independently byte-exact',))
+        failure=functions(self.repo,'FAIL')['items'][0]
+        self.assertEqual(failure['agreement']['matched'],30)
+        self.assertIn('EBP parent-frame ABI',failure['reason'])
+        detail=function_detail(self.repo,'0x00000002')
+        self.assertEqual(detail['agreement']['total'],31)
+        self.assertIn('EH handler differ',detail['reason'])
+        self.assertEqual(functions(self.repo,'MATCH')['items'][0]['agreement']['matched'],20)
+        agent=agent_detail(self.repo,2)
+        self.assertEqual(agent['va'],'0x00000002')
+        self.assertEqual(agent['bytes'],31)
+        data=snapshot(self.repo)
+        self.assertEqual(data['bytes']['queue'],68)
+        self.assertEqual(data['bytes']['MATCH'],20)
+        self.assertEqual(data['bytes']['FAIL'],31)
+        self.assertEqual(data['bytes']['PENDING'],17)
+        self.assertEqual(data['effort_bytes']['+2'],31)
+        self.assertEqual(data['run']['bytes_target'],68)
+        self.assertEqual(data['run']['bytes_completed'],20)
+        html=(ROOT/'spore_dashboard_ui.html').read_text()
+        self.assertIn("w.alive?'LIVE':'OFFLINE'",html)
+        self.assertIn('Latest recorded reason',html)
+
     def test_controls_never_spawn_without_enable_or_invalid_module(self):
         control=Controller(self.repo,enabled=False)
         with self.assertRaises(PermissionError):control.start({})
