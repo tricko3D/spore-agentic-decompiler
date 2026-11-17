@@ -34,6 +34,7 @@ INSTALL = {
     'work/scratch/spore_first_pass_sqlite.py': 'spore_provider_fix/work/scratch/spore_first_pass_sqlite.py',
     'work/scratch/spore_sqlite_store.py': 'spore_provider_fix/work/scratch/spore_sqlite_store.py',
     'work/scratch/spore_provider_log.py': 'spore_provider_fix/work/scratch/spore_provider_log.py',
+    'work/scratch/spore_adaptive.py': 'spore_provider_fix/work/scratch/spore_adaptive.py',
     'work/scratch/spore_first_pass_prompt.txt': 'spore_first_pass_prompt.txt',
     'migrate_spore_sqlite.py': 'migrate_spore_sqlite.py',
     'install_spore_sqlite.py': 'install_spore_sqlite.py',
@@ -301,6 +302,8 @@ def command_run(args, mode):
                 '--budget', settings['budget'], '--quota-wait', settings.get('quota_wait', 1),
                 '--provider-retries', settings.get('provider_retries', 2),
                 '--reasoning', settings.get('reasoning','high')]
+        if args.fixed_inflight:
+            argv.append('--fixed-inflight')
         if args.max_functions_per_worker:
             argv += ['--max-functions-per-worker', args.max_functions_per_worker]
         return execute(repo, *argv, env=env, check=False)
@@ -444,6 +447,7 @@ def main(argv=None):
         r.add_argument('--'+name, type=type_)
     add_scope_arguments(r)
     r.add_argument('--max-functions-per-worker', type=int, default=0)
+    r.add_argument('--fixed-inflight', action='store_true', help='Disable adaptive Sail congestion control')
     plan = sub.add_parser('plan', help='Preview eligible functions and worker split')
     plan.add_argument('--repo'); plan.add_argument('--workers', type=int)
     add_scope_arguments(plan)
