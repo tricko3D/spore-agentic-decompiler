@@ -357,7 +357,16 @@ def byte_agreement(status, expected_size, note):
     if status not in ('FAIL', 'DEFER'):
         return None
     text = str(note or '')
-    suffix = text.rsplit(' | checker:', 1)[-1] if ' | checker:' in text else ''
+    if ' | checker:' in text:
+        suffix = text.rsplit(' | checker:', 1)[-1]
+    elif status == 'DEFER':
+        # Timeout notes historically used "Pass N: time limit (5 min); <checker>"
+        # rather than the FAIL/regular " | checker:" separator.
+        # Only parse the independent-check section, never arbitrary model text.
+        timeout_note = re.search(r'\btime limit\s*\([^)]*\)\s*;\s*(.*)', text, re.I | re.S)
+        suffix = timeout_note.group(1) if timeout_note else ''
+    else:
+        suffix = ''
     sizes = list(CHECKER_SIZE.finditer(suffix))
     diffs = list(CHECKER_DIFFS.finditer(suffix))
     if not sizes:
