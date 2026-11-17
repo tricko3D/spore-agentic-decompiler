@@ -341,12 +341,12 @@ CHECKER_SIZE = re.compile(r'\bsize\s*[=:]\s*(\d+)\s*/\s*(\d+)\b', re.I)
 CHECKER_DIFFS = re.compile(r'\b(?:diffs?|differences)\s*[=:]\s*(\d+)\b', re.I)
 
 
-def failure_reason(note):
+def failure_reason(note,max_chars=280):
     """Expose the actual recorded technical blocker, separate from checker output."""
     note = str(note or '').strip()
     reason = note.split(' | checker:', 1)[0]
     reason = re.sub(r'^Pass\s+\d+\s*:\s*', '', reason, flags=re.I)
-    return sanitize(reason, 280)
+    return sanitize(reason, max_chars)
 
 
 def byte_agreement(status, expected_size, note):
@@ -485,7 +485,7 @@ def function_detail(repo,va):
              r.classification FROM attempts a LEFT JOIN attempt_reviews r ON r.attempt_id=a.id
              WHERE a.va=? ORDER BY a.id''',(va,)):
             history.append({'id':a['id'],'pass':a['pass_number'],'status':a['classification'] or a['status'],
-                            'effort':a['effort'],'note':sanitize(a['note'],320),'time':a['utc'],
+                            'effort':a['effort'],'note':sanitize(a['note'],1400),'time':a['utc'],
                             'cost':log_cost(repo,a['log_path'])})
         last=db.execute('''SELECT a.status,a.note,a.log_path FROM attempts a LEFT JOIN attempt_reviews r ON r.attempt_id=a.id
             WHERE a.va=? AND r.attempt_id IS NULL ORDER BY a.id DESC LIMIT 1''',(va,)).fetchone()
@@ -495,7 +495,7 @@ def function_detail(repo,va):
     verified=any(h['status']=='MATCH' for h in history if h['status']!='VOID_PROVIDER')
     return {'va':va,'size':row['size'],'file':sanitize(row['suggested_file'],220),
             'history':history,'current':live,'checker':checker,
-            'reason':failure_reason(last['note']) if last and last['status'] in ('FAIL','DEFER','SKIP') else '',
+            'reason':failure_reason(last['note'],1200) if last and last['status'] in ('FAIL','DEFER','SKIP') else '',
             'agreement':(byte_agreement(last['status'] if last else 'PENDING',row['size'],last['note'] if last else '') or
                          logged_byte_agreement(repo,last['log_path'] if last else None,
                                                last['status'] if last else 'PENDING',row['size'])),
