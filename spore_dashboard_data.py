@@ -191,7 +191,7 @@ def latest_by_va(db):
     return {row['va']:dict(row) for row in rows}
 
 
-def worker_info(repo,run_id,claimed,last_attempts=None,byte_sizes=None):
+def worker_info(repo,run_id,claimed,last_attempts=None,byte_sizes=None,active_slots=None):
     workers=[]
     if not run_id:return workers
     file=repo/'work/scratch/codex-pass1/parallel'/run_id/'run.json'
@@ -205,13 +205,13 @@ def worker_info(repo,run_id,claimed,last_attempts=None,byte_sizes=None):
         pid=int(item.get('pid') or 0)
         va=claimed.get(i)
         last_va=va or (last_attempts or {}).get(i)
+        slots=active_slots or {}
+        # Active SQLite slot state, not stale lines in the last agent log.
+        phase=('VERIFIED' if slots.get(va) else 'PROBING') if va in slots else ('NO SLOT' if va else 'IDLE')
         logfile=_log_for_va(repo,last_va)
-        if logfile:
-            view=stream(repo,logfile,limit=4)
-        else:
-            view=[]
+        view=stream(repo,logfile,limit=4) if logfile and phase in ('VERIFIED','PROBING') else []
         workers.append({'worker':i+1,'pid':pid,'alive':proc_running(pid),
-                        'current':va,'last_function':last_va,
+                        'current':va,'last_function':last_va,'phase':phase,
                         'bytes':(byte_sizes or {}).get(last_va), 'stream':view})
     return workers
 
@@ -268,6 +268,8 @@ def snapshot(repo):
         last=db.execute('SELECT * FROM runs ORDER BY started_utc DESC LIMIT 1').fetchone()
         rid=last['run_id'] if last else None
         claims={r['worker_idx']:r['va'] for r in db.execute('SELECT worker_idx,va FROM claims WHERE run_id=?',(rid,))} if rid else {}
+        active_slots={r['va']:bool(r['verified']) for r in db.execute(
+            'SELECT va,verified FROM inference_slots WHERE run_id=?',(rid,))} if rid else {}
         last_by_worker={}
         if rid:
             for x in db.execute('SELECT worker_idx,va FROM attempts WHERE run_id=? AND worker_idx IS NOT NULL ORDER BY id',(rid,)):
@@ -323,7 +325,7 @@ def snapshot(repo):
         # Costs are covered only to the extent the CLI emitted step_finish records.
         from spore_dashboard_control import modules as known_modules
         module_names=known_modules(repo)
-    workers=worker_info(repo,rid,claims,last_by_worker,byte_sizes)
+    workers=worker_info(repo,rid,claims,last_by_worker,byte_sizes,active_slots=active_slots)
     run['live_workers']=sum(w['alive'] for w in workers)
     return {'generated_utc':datetime.now(timezone.utc).isoformat(timespec='seconds'),
             'run':run,'workers':workers,'events':events,'counters':counts,'budget':budget,

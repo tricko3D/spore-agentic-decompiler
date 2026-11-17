@@ -182,4 +182,12 @@ s.create_run('run1',2,3,{'0x00000001':0,'0x00000002':1,'0x00000003':0})
             self.assertEqual(control._launch_environment()['OPENROUTER_API_KEY'],'sk-or-new')
 
 
+    def test_snapshot_reports_actual_verified_slots(self):
+        with sqlite3.connect(self.work/'spore.sqlite3') as db:
+            db.execute("INSERT INTO inference_slots(id,run_id,va,created_utc,verified) VALUES('test-slot','run1','0x00000001','now',1)")
+            db.execute("INSERT INTO claims(va,run_id,worker_idx,pid,started_utc) VALUES('0x00000001','run1',0,999999,'now')")
+        result=snapshot(self.repo)
+        self.assertEqual(result['workers'][0]['phase'],'VERIFIED')
+
+
 if __name__=='__main__':unittest.main()
