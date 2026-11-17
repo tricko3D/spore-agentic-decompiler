@@ -50,6 +50,7 @@ function render(d){
  $('agents').querySelectorAll('[data-worker]').forEach(n=>n.onclick=()=>openDrawer('agent',n.dataset.worker));
  $('events').innerHTML=(d.events||[]).slice(0,20).map(e=>`<tr><td>${esc((e.time||'').slice(11,19))}</td><td class="mono click" data-va="${esc(e.va)}">${esc(e.va)}</td><td><span class="tag ${e.kind}">${esc(e.kind)}</span></td><td>${esc(e.worker??'—')}</td></tr>`).join('');$('events').querySelectorAll('[data-va]').forEach(n=>n.onclick=()=>openDrawer('function',n.dataset.va));
  const old=$('module').value;$('module').innerHTML='<option value="*">All confidently classified</option>'+['SPGonzago',...(d.modules||[])].filter((v,i,a)=>a.indexOf(v)===i).map(v=>`<option value="${esc(v)}">${esc(v)}</option>`).join('');if([...$('module').options].some(o=>o.value===old))$('module').value=old;else $('module').value='SPGonzago';
+ if(CONTROL&&d.controller?.returncode!=null&&d.controller.returncode!==0){set('controlMessage',d.controller.error||'Run exited with code '+d.controller.returncode)}
  set('connection','Connected');set('clock',new Date().toLocaleTimeString());$('dot').classList.remove('off');set('error','');
 }
 async function refreshFunctions(){try{const d=await json(`/api/functions?status=${encodeURIComponent(filter)}&search=${encodeURIComponent(query)}&offset=${off}&limit=75`);total=d.total;set('resultCount',`${total} results`);set('pageInfo',`${off+1}–${Math.min(off+75,total)} of ${total}`);$('prev').disabled=off<=0;$('next').disabled=off+75>=total;
