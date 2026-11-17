@@ -54,6 +54,19 @@ python3 spore_agentic.py progress
 
 The `plan` command now reports only **runnable functions**: confidently classified, not already matched or skipped, and still below the valid-pass limit. `VOID_PROVIDER` attempts are excluded from that count. Worker assignment uses the same snapshot filter, while SQLite claims perform a fresh eligibility check at execution time.
 
+## Sail Research adaptive throughput (default)
+
+The **worker count** is the available local pool. `--max-inflight` is now an **upper ceiling**, not the starting concurrency. A new paid run starts with **one** simultaneous OpenRouter agent pass and increases the shared SQLite cap by one after repeated clean agent passes, with at least 90 seconds between probes. Upstream HTTP 429 events (including `ttft_deadline_guard` embedded in an HTTP 200 stream) trigger a **multiplicative decrease** (halve the limit), followed by a shared 60 to 900 second exponential cooldown. Workers cannot start a new OpenRouter pass during cooldown, even if a slot looks free.
+
+```bash
+python3 spore_agentic.py run --workers 16 --max-inflight 16 --passes 3 --budget 20
+python3 spore_agentic.py status
+```
+
+Here 16 is an upper bound and the controller may settle at 1, 3 or any other sustainable number. The actual usable cap varies by Sail availability. It measures **whole OpenCode pass outcomes**, not individual internal OpenRouter requests, so adjustments are deliberately conservative and may lag sudden changes in provider capacity. It does not guarantee zero TTFT errors, nor is it a guarantee of optimal dollars per match. Fixed-cap behavior is still available via `--fixed-inflight`. Each new run begins a fresh capacity search; the historical attempts, provider-error incidents, and expense tracking persist separately.
+
+Confirmed provider-only failures never consume a matching pass. In adaptive mode workers pause and retry those passes after the shared cooldown instead of permanently exiting after a fixed number of 429s. Temporary failures of the OpenRouter `/key` spending guard also pause requests until the budget can be validated again; authentication errors and insufficient credits still stop the worker. The OpenRouter API key limit remains the true hard spending cap, while `--budget` is a local soft limit. Long unattended runs require the host computer and WSL environment to remain awake.
+
 The worker preserves the OpenCode **conversation session** per function between passes. It starts a new CLI process for each pass, so this is *not* a persistent OpenCode server. Worker count and simultaneous API calls are separate controls. Provider `ttft_deadline_guard` failures are recorded as incidents and do **not** consume a legitimate decompilation pass; no-source retries can be reclaimed with `recover --apply` if their saved logs contain unequivocal evidence. The original attempt rows and logs remain available, with invalidated rows annotated as `VOID_PROVIDER`.
 
 The **$20 budget is a local soft limit** using OpenRouter key-usage accounting, not a provider-enforced spending cap. For a hard cap, configure a limit on the key in OpenRouter itself.
