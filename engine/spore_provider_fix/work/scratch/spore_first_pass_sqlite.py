@@ -5,6 +5,7 @@ import csv
 import spore_sqlite_store as store
 from spore_provider_log import provider_only, provider_pressure
 import spore_adaptive as adaptive_ctl
+import spore_progress_watch as progress_watch
 import fcntl
 from contextlib import contextmanager
 import glob
@@ -637,7 +638,7 @@ def classify_failure(log, code, backend, message=''):
 
 
 def run_one(va, minutes, unsafe, backend, model='mistral4', reasoning='medium',
-            pass_number=1, prompt_override=None):
+            pass_number=1, prompt_override=None, slot=None):
     LOGS.mkdir(parents=True, exist_ok=True)
     suffix = model if backend == 'nvidia' else ('deepseek-openrouter' if backend == 'openrouter' else 'codex')
     pass_suffix = f'.pass{pass_number}' if pass_number > 1 else ''
@@ -721,18 +722,24 @@ fix requires changing a shared header, report SKIP instead.
         if os.environ.get('SPORE_SQLITE_RUN_ID'):
             store.record_child(va, proc.pid)
         try:
-            code = proc.wait(timeout=minutes * 60)
-        except subprocess.TimeoutExpired:
-            os.killpg(proc.pid, signal.SIGKILL)
-            proc.wait()
-            save_session_from_log()
-            only, reason = provider_only(log)
-            if backend == 'openrouter' and only:
-                return 'PROVIDER', reason, log
-            return 'TIMEOUT', '', log
+            rid, _ = run_info()
+            def tokens_confirmed():
+                if backend == 'openrouter' and slot and os.environ.get('SPORE_ADAPTIVE_INFLIGHT') == '1':
+                    message = adaptive_ctl.confirm_output(rid, slot)
+                    if message:
+                        print('    ADAPTIVE: ' + message, flush=True)
+            # --minutes is a legacy CLI name. It now controls inactivity only;
+            # old 5-minute settings are clamped to at least 15 minutes.
+            idle_minutes = max(15, minutes)
+            watch_state, code = progress_watch.watch(
+                proc, log, idle_minutes * 60, on_output=tokens_confirmed)
+            if watch_state != 'complete':
+                save_session_from_log()
+                if watch_state == 'provider_429':
+                    return 'PROVIDER', 'Confirmed upstream HTTP 429 during inference', log
+                return 'IDLE', f'No meaningful progress for {idle_minutes} minutes', log
         except KeyboardInterrupt:
-            os.killpg(proc.pid, signal.SIGTERM)
-            proc.wait()
+            progress_watch.stop_process_group(proc)
             raise
 
     save_session_from_log()
@@ -992,7 +999,7 @@ def process(minutes, unsafe, backend, quota_wait, max_functions,
     if os.environ.get('SPORE_SQLITE_RUN_ID'):
         print(f'Parallel SQLite worker {os.environ.get("SPORE_SQLITE_WORKER_IDX")}', flush=True)
     print(f'Pass policy: at most {passes} total paid attempts per function, '
-          f'including existing first-pass history. Each pass has a {minutes}-minute cap.', flush=True)
+          f'including existing first-pass history. No wall-clock deadline; inactivity watchdog after {max(15, minutes)} min.', flush=True)
     if only_va and only_va not in {r['va'] for r in queue}:
         sys.exit(f'{only_va} is not in the queue')
     if only_va and only_va not in allowed:
@@ -1120,7 +1127,7 @@ def process(minutes, unsafe, backend, quota_wait, max_functions,
                                 print('Budget reserved for other workers or exhausted; stopping.', flush=True)
                                 return
                         kind, answer, log = run_one(va, minutes, unsafe, backend,
-                                                    model, reasoning, pass_number, prompt)
+                                                    model, reasoning, pass_number, prompt, slot=slot)
                     except KeyboardInterrupt:
                         print('\nStopped. Completed passes remain recorded; unfinished pass can be retried.')
                         return
@@ -1130,8 +1137,7 @@ def process(minutes, unsafe, backend, quota_wait, max_functions,
                     if backend == 'openrouter':
                         if adaptive:
                             pressure = provider_pressure(log)
-                            signal = adaptive_ctl.observe(rid, overloaded=kind in ('QUOTA','PROVIDER') or pressure > 0,
-                                                          productive=kind == 'OK' and pressure == 0)
+                            signal = adaptive_ctl.observe(rid, overloaded=kind in ('QUOTA','PROVIDER') or pressure > 0)
                             if signal:
                                 print('    ADAPTIVE: ' + signal, flush=True)
                         try:
@@ -1160,12 +1166,22 @@ def process(minutes, unsafe, backend, quota_wait, max_functions,
                             print('\nStopped; valid attempts preserved.')
                             return
                         continue
+                    if kind == 'IDLE':
+                        print(f'Idle watchdog stopped {va}: {answer}; no pass consumed.', flush=True)
+                        if dynamic:
+                            store.ignore_run_target(rid, va, 'inactivity watchdog; retry in next run')
+                        break
                     if kind == 'INFRA':
                         print(f'Wine/environment failure, stopping without ticking {va}. Log: {log}', file=sys.stderr)
                         return
                     if kind == 'ERROR':
                         print(f'{backend} error, stopping without ticking {va}: {answer}. Log: {log}', file=sys.stderr)
                         return
+                    break
+
+                if kind == 'IDLE':
+                    # Preserve edits and OpenCode session, release the source
+                    # claim and let workers take other eligible functions.
                     break
 
                 # The model can misunderstand its tool output; independently
@@ -1243,7 +1259,7 @@ def main():
     init = sub.add_parser('init', help='Create queue from functions without source')
     init.add_argument('--max-size', type=int, default=0, help='Maximum retail function bytes; 0 = all (default)')
     run = sub.add_parser('run', help='Run unmanifested functions in selected modules with confident mapping')
-    run.add_argument('--minutes', type=int, default=5, help='Time budget per function (default 5)')
+    run.add_argument('--minutes', type=int, default=20, help='Time budget per function (default 5)')
     run.add_argument('--unsafe', action='store_true', help='Disable Codex sandbox; for OpenRouter/NVIDIA, accepted for backwards compatibility only')
     run.add_argument('--backend', choices=['openrouter', 'nvidia', 'codex'], default='openrouter', help='Agent backend (default OpenRouter DeepSeek/OpenCode)')
     run.add_argument('--quota-wait', type=int, default=5, help='Wait this many minutes on 429/quota; 0 = stop with queue unchanged')
