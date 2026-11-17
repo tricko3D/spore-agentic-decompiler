@@ -52,6 +52,10 @@ s.create_run('r1',1,3,{'0x00000001':0})
                 else:
                     self.fail('Dashboard server never started')
                 self.assertEqual(data['counters']['matches'],1)
+                with urlopen(f'http://127.0.0.1:{port}/api/agent?worker=1',timeout=2) as resp:
+                    idle_agent=json.loads(resp.read())
+                self.assertEqual(idle_agent['worker'],1)
+                self.assertIsNone(idle_agent['va'])
                 with urlopen(f'http://127.0.0.1:{port}/',timeout=1) as resp:
                     html=resp.read().decode()
                 self.assertIn('Recent events',html)
