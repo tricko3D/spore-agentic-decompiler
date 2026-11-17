@@ -30,7 +30,7 @@ const TOKEN=__SP_DASH_TOKEN__,CONTROL=__SP_DASH_CONTROL__;
 const $=id=>document.getElementById(id), esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const fmt=x=>typeof x==='number'?'$'+x.toFixed(x<0.01?5:3):'—';
 const bytes=x=>typeof x==='number'?new Intl.NumberFormat('en-US').format(x)+' B':'—';
-const agreement=x=>!x?'—':x.matched!=null?`${x.matched}/${x.total} bytes`:x.kind==='size_mismatch'?`size ${x.compiled_size}/${x.retail_size} B`:'—';
+const agreement=(x,total,status)=>!x?(status==='FAIL'||status==='DEFER'?`unknown / ${total} bytes`:'—'):x.matched!=null?`${x.matched}/${x.total} bytes`:x.kind==='size_mismatch'?`size ${x.compiled_size}/${x.retail_size} B`:'—';
 let selected=null,off=0,query='',filter='ALL',total=0,mutating=false,detailBusy=false;
 function set(id,v){$(id).textContent=v}
 function eventHtml(e){return `<div class="event"><span class="kind">${esc(e.kind)}</span><div class="body">${esc(e.message)}</div></div>`}
