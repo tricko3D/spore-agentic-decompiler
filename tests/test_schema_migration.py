@@ -28,7 +28,7 @@ class SchemaMigrationTests(unittest.TestCase):
             with sqlite3.connect(db_path) as db:
                 db.execute('CREATE TABLE inference_slots (id TEXT PRIMARY KEY,run_id TEXT,va TEXT,created_utc TEXT)')
                 db.execute("INSERT INTO inference_slots VALUES('old','prior-run','0x11223344','now')")
-                db.execute('CREATE TABLE attempts (id INTEGER PRIMARY KEY,status TEXT)')
+                db.execute('CREATE TABLE attempts (id INTEGER PRIMARY KEY,va TEXT,status TEXT)')
                 db.execute("INSERT INTO attempts VALUES(1,'MATCH')")
             result=subprocess.run([sys.executable,'install_spore_sqlite.py'],cwd=repo,
                                   text=True,capture_output=True)
