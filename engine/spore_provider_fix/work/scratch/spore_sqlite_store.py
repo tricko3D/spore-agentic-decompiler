@@ -1,4 +1,4 @@
-"""Durable concurrent state for SPGonzago decompilation.
+"""Durable concurrent state for Spore module-scoped decompilation.
 
 Only the queue, attempts, assignments, claims, pass limit and spending state live
 in SQLite. C++ sources and JSONL logs deliberately remain ordinary repo files.
