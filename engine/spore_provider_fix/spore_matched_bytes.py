@@ -3,7 +3,7 @@
 
 Shows:
   * All-time matches across the 930-function queue.
-  * Cumulative matches within the SPGonzago scope assigned to the selected run.
+  * Cumulative matches within the assigned scope of the selected run.
   * First-time matches and retail bytes gained during that parallel run.
 
 The most recent run is selected by default. To inspect an earlier batch, pass
@@ -159,7 +159,7 @@ def report(data: dict) -> str:
     info = data['run']
     if info:
         scope, gains, attempts = data['scope'], data['gains'], data['attempts']
-        lines += ['', *section('SPGONZAGO (CUMULATIVE)', scope)]
+        lines += ['', *section('SELECTED RUN SCOPE (CUMULATIVE)', scope)]
         lines += ['', 'SELECTED PARALLEL RUN',
                   f'  ID:                    {info["run_id"]}',
                   f'  Started (UTC):         {info["started_utc"]}',
@@ -175,13 +175,13 @@ def report(data: dict) -> str:
         lines += ['', 'Run gains count functions whose FIRST recorded MATCH occurred in',
                   'this run and whose latest result remains MATCH. Each is counted once.']
     else:
-        lines += ['', 'No parallel run recorded in SQLite yet; SPGonzago scope and run gains unavailable.']
+        lines += ['', 'No parallel run recorded in SQLite yet; run scope and gains unavailable.']
     lines += ['Read-only SQLite snapshot. Function sizes are from the retail queue.']
     return '\n'.join(lines)
 
 
 def main() -> int:
-    p = argparse.ArgumentParser(description='Matched retail bytes: all-time, SPGonzago, and current parallel run')
+    p = argparse.ArgumentParser(description='Matched retail bytes: all-time and selected parallel run')
     p.add_argument('--db', type=Path, default=DEFAULT_DB, help='Path to spore.sqlite3')
     p.add_argument('--run-id', help='Inspect a particular parallel run (default: latest)')
     p.add_argument('--watch', type=float, metavar='SECONDS', help='Refresh, e.g. --watch 10')
