@@ -52,7 +52,9 @@ def serve(repo:Path,port:int=8765,control:bool=False):
             try:
                 if route.path=='/':return self.respond(html,html_page=True)
                 if route.path=='/api/snapshot':
-                    return self.respond(snapshot(repo))
+                    data=snapshot(repo)
+                    if control:data['controller']=controller.state()
+                    return self.respond(data)
                 if route.path=='/api/functions':
                     return self.respond(functions(repo,
                        status=params.get('status',['ALL'])[0],search=params.get('search',[''])[0],
