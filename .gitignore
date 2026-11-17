@@ -1,0 +1,24 @@
+# Local credentials and runtime state
+.env
+.env.*
+!.env.example
+.opencode/
+work/scratch/codex-pass1/
+work/opencode/
+
+# Databases, logs, backup snapshots
+*.sqlite
+*.sqlite3
+*.sqlite3-*
+*.db
+*.db-*
+*.jsonl
+*.log
+*.bak
+
+# Python and local tooling
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.DS_Store
