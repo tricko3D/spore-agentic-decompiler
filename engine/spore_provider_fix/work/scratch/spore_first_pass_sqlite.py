@@ -3,7 +3,8 @@
 import argparse
 import csv
 import spore_sqlite_store as store
-from spore_provider_log import provider_only
+from spore_provider_log import provider_only, provider_pressure
+import spore_adaptive as adaptive_ctl
 import fcntl
 from contextlib import contextmanager
 import glob
@@ -912,6 +913,23 @@ def checked_result(va, log_path=None, minutes=2):
     return False, last_failure
 
 
+def budget_check_or_wait(budget, adaptive=False):
+    """Wait out transient billing API outages, but never bypass the spend guard."""
+    delay = 10
+    while True:
+        try:
+            return budget_progress(budget)
+        except RuntimeError as exc:
+            reason = str(exc)
+            transient = ('OpenRouter /key request failed:' in reason or
+                         any(f'OpenRouter /key HTTP {code}' in reason for code in (429, 500, 502, 503, 504)))
+            if not adaptive or not transient:
+                raise
+            print(f'Spending guard unavailable ({reason}); retrying in {delay}s. No paid request started.', flush=True)
+            time.sleep(delay)
+            delay = min(300, delay * 2)
+
+
 def process(minutes, unsafe, backend, quota_wait, max_functions,
             model='mistral4', reasoning='high', retry_timeouts=False, budget=5.0,
             only_va=None, passes=3, max_inflight=8, provider_retries=2):
@@ -927,6 +945,7 @@ def process(minutes, unsafe, backend, quota_wait, max_functions,
         sys.exit(f'Prompt file missing: {PROMPT_FILE}')
     if not 1 <= passes <= 24:
         sys.exit('--passes must be between 1 and 24')
+    adaptive = backend == 'openrouter' and os.environ.get('SPORE_ADAPTIVE_INFLIGHT') == '1'
     store.ensure_imported()
     guard_other_run()
     save_pass_limit(passes)
@@ -960,7 +979,7 @@ def process(minutes, unsafe, backend, quota_wait, max_functions,
         print(f'Backend: OpenRouter {OPENROUTER_MODEL} ({OPENROUTER_PROVIDER} only, '
               f'{reasoning} reasoning). OpenCode shell tools run WITHOUT a sandbox.', flush=True)
         try:
-            if not budget_progress(budget):
+            if not budget_check_or_wait(budget, adaptive=adaptive):
                 print('Budget or API key limit reached. Stopped without starting a function.')
                 return
         except (OSError, ValueError, RuntimeError) as e:
@@ -1009,7 +1028,7 @@ def process(minutes, unsafe, backend, quota_wait, max_functions,
                     break
                 if backend == 'openrouter':
                     try:
-                        if not budget_progress(budget):
+                        if not budget_check_or_wait(budget, adaptive=adaptive):
                             print('OpenRouter budget reached; queue/results preserved.', flush=True)
                             status()
                             return
@@ -1050,8 +1069,14 @@ def process(minutes, unsafe, backend, quota_wait, max_functions,
                         store.release_reservation(reservation)
                         store.release_inference_slot(slot)
                     if backend == 'openrouter':
+                        if adaptive:
+                            pressure = provider_pressure(log)
+                            signal = adaptive_ctl.observe(rid, overloaded=kind in ('QUOTA','PROVIDER') or pressure > 0,
+                                                          productive=kind == 'OK' and pressure == 0)
+                            if signal:
+                                print('    ADAPTIVE: ' + signal, flush=True)
                         try:
-                            under_budget = budget_progress(budget)
+                            under_budget = budget_check_or_wait(budget, adaptive=adaptive)
                         except (OSError, ValueError, RuntimeError) as e:
                             print(f'Spending guard failed after attempt: {e}; recording this pass before stopping.',
                                   file=sys.stderr)
@@ -1063,13 +1088,15 @@ def process(minutes, unsafe, backend, quota_wait, max_functions,
                                               run_id=rid, worker_idx=worker_idx)
                         provider_failures += 1
                         print(f'    PROVIDER_ERROR, no attempt counted: {answer}; log: {log}', flush=True)
-                        if not under_budget or quota_wait == 0 or provider_failures > provider_retries:
+                        if not under_budget or (not adaptive and (quota_wait == 0 or provider_failures > provider_retries)):
                             print(f'Provider unavailable. {va} still eligible for pass {pass_number}; '
                                   f'stopping worker after {provider_failures} provider failure(s).', flush=True)
                             return
-                        print(f'Waiting {quota_wait} minute(s) before retry in same session...', flush=True)
+                        print('Adaptive Sail cooldown; retrying this pass without consuming it.' if adaptive
+                              else f'Waiting {quota_wait} minute(s) before retry in same session...', flush=True)
                         try:
-                            time.sleep(quota_wait * 60)
+                            if not adaptive:
+                                time.sleep(quota_wait * 60)
                         except KeyboardInterrupt:
                             print('\nStopped; valid attempts preserved.')
                             return
