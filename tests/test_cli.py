@@ -1,5 +1,7 @@
 """Offline end-to-end setup checks, no OpenRouter requests or compiler work."""
 import os
+import json
+from datetime import datetime, timezone
 from pathlib import Path
 import sqlite3
 import subprocess
@@ -76,7 +78,46 @@ if __name__ == "__main__":
         from zipfile import ZipFile
         with ZipFile(dest) as z:
             self.assertIn('state/spore.sqlite3', z.namelist())
+            report = json.loads(z.read('state/provider-evidence.json'))
+            self.assertEqual(report['counts']['proven_provider_only'], 0)
+            self.assertEqual(report['counts']['unverified'], 1)
             self.assertNotIn('openrouter.key', ' '.join(z.namelist()))
+
+
+    def test_diagnostics_exports_provider_evidence_without_raw_logs(self):
+        a = self.cli('setup', '--repo', str(self.repo))
+        self.assertEqual(a.returncode, 0, a.stdout)
+        from zipfile import ZipFile
+        logs = self.repo/'work/scratch/codex-pass1/logs'
+        logs.mkdir(parents=True)
+        log = logs/'12345678.deepseek-openrouter.jsonl'
+        now = datetime.now(timezone.utc)
+        t = int(now.timestamp()*1000)
+        log.write_text('\\n'.join(json.dumps(event) for event in (
+            {'type': 'step_start', 'timestamp': t},
+            {'type': 'retry', 'timestamp': t + 1000, 'error': {
+                'type': 'provider.rate-limit', 'status': 200,
+                'response': {'body': json.dumps({'error': {
+                    'code': 429, 'metadata': {
+                        'error_type': 'rate_limit_exceeded',
+                        'provider_code': 'ttft_deadline_guard'}}})}}},
+        ))+'\\n')
+        db = self.repo/'work/scratch/codex-pass1/spore.sqlite3'
+        with sqlite3.connect(db) as conn:
+            conn.execute('''INSERT INTO attempts(va,pass_number,status,utc,log_path)
+                         VALUES(?,?,?,?,?)''',
+                         ('0x12345678', 1, 'DEFER', now.isoformat(), str(log)))
+            conn.commit()
+        dest = self.root/'provider-diagnostics.zip'
+        exported = self.cli('diagnostics', '--output', str(dest))
+        self.assertEqual(exported.returncode, 0, exported.stdout)
+        with ZipFile(dest) as z:
+            self.assertNotIn('checkout/work/scratch/codex-pass1/logs/12345678.deepseek-openrouter.jsonl', z.namelist())
+            result = json.loads(z.read('state/provider-evidence.json'))
+            self.assertEqual(result['counts']['proven_provider_only'], 1)
+            self.assertEqual(result['counts']['unverified'], 0)
+            self.assertEqual(result['attempts'][0]['classification'], 'PROVEN_PROVIDER_ONLY')
+
 
     def test_rejects_partial_queue(self):
         work = self.repo/'work/scratch/codex-pass1'
