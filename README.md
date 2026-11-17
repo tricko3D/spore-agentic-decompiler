@@ -38,6 +38,18 @@ A successful `scope --apply` **backs up SQLite, appends new eligible addresses, 
 
 The default confidence threshold is **0.70**; `--min-confidence` is available for explicit changes. Module ownership comes from `work/migrate/modmap.json` where available, or conservative existing source anchors when that map is absent. The `--all-modules` option does **not** bypass mapping confidence or other upstream exclusions.
 
+## OpenRouter API key rotation
+
+OpenRouter keys may be revoked or replaced without resetting any decompilation progress. Because the SQLite spending guard tracks a key fingerprint, **a new key must be explicitly authorized** before starting workers. The `run` command now detects mismatches and fails *before* launching worker processes.
+
+Configure the replacement key via `OPENROUTER_API_KEY` or by using `setup --change-key` to save it privately (0600). Then, with workers stopped:
+
+```bash
+python3 spore_agentic.py rotate-key
+```
+
+The command performs a **free OpenRouter `/key` validation**, creates an online SQLite backup in `work/scratch/codex-pass1/sqlite-backups/`, and changes only the budget's key fingerprint and usage baseline. It **carries forward all historically recorded spending**, keeps the existing project budget ceiling, and appends an audit record in `budget_key_rotations`. All matches, attempts, `VOID_PROVIDER` annotations and source files stay untouched. If validation fails, the database is not modified. The new key's own spending limit remains independent and is enforced separately.
+
 ## Run and inspect
 
 ```bash
