@@ -93,7 +93,7 @@ if __name__ == "__main__":
         log = logs/'12345678.deepseek-openrouter.jsonl'
         now = datetime.now(timezone.utc)
         t = int(now.timestamp()*1000)
-        log.write_text('\\n'.join(json.dumps(event) for event in (
+        log.write_text('\n'.join(json.dumps(event) for event in (
             {'type': 'step_start', 'timestamp': t},
             {'type': 'retry', 'timestamp': t + 1000, 'error': {
                 'type': 'provider.rate-limit', 'status': 200,
@@ -101,7 +101,7 @@ if __name__ == "__main__":
                     'code': 429, 'metadata': {
                         'error_type': 'rate_limit_exceeded',
                         'provider_code': 'ttft_deadline_guard'}}})}}},
-        ))+'\\n')
+        ))+'\n')
         db = self.repo/'work/scratch/codex-pass1/spore.sqlite3'
         with sqlite3.connect(db) as conn:
             conn.execute('''INSERT INTO attempts(va,pass_number,status,utc,log_path)
