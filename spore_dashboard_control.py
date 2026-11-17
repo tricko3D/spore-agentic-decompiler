@@ -120,6 +120,26 @@ class Controller:
                                               stdout=file,stderr=subprocess.STDOUT,start_new_session=True)
             return {'started':True,'controller_pid':self.process.pid,'module':module}
 
+    def state(self):
+        """Expose the last dashboard-launched coordinator's exit status, not raw logs."""
+        if self.process is None:
+            return {}
+        rc=self.process.poll()
+        info={'pid':self.process.pid,'running':rc is None,'returncode':rc}
+        if rc is not None and rc != 0:
+            from spore_dashboard_data import sanitize
+            logfile=self.repo/'work/scratch/codex-pass1/dashboard-controller.log'
+            try:
+                with logfile.open('rb') as f:
+                    f.seek(0,2)
+                    f.seek(max(0,f.tell()-3600))
+                    lines=f.read().decode('utf-8','replace').splitlines()
+                error=next((x for x in reversed(lines) if 'Error:' in x or 'failed' in x.lower()),None)
+                info['error']=sanitize(error or ('Coordinator exited with status '+str(rc)),350)
+            except OSError:
+                info['error']='Coordinator exited with status '+str(rc)
+        return info
+
     def stop(self):
         if not self.enabled:raise PermissionError('Controls disabled')
         with self.lock:
