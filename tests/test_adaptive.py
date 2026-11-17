@@ -43,7 +43,7 @@ with patch('spore_sqlite_store.time.time',return_value=future):
     d=store.reserve_inference_slot('0x55','run-1',8)
 assert d
 # One new unique stream confirms capacity recovered.
-assert '4->5' in ctl.confirm_output('run-1',d)
+assert '4->5' in ctl.confirm_output('run-1',d,now=future)
 ctl.begin('run-2',ceiling=4,start=1)
 assert ctl.confirm_output('run-1',a) is None
 assert ctl.observe('run-1',overloaded=True) is None
