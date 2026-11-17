@@ -175,6 +175,19 @@ if __name__ == "__main__":
         self.assertIn('SPGonzago runnable functions (pass limit 3): 1', recovered.stdout)
         self.assertIn('Assignments: [1, 0, 0, 0, 0]', recovered.stdout)
 
+    def test_new_key_rejected_before_spawning_workers_until_rotated(self):
+        self.assertEqual(self.cli('setup', '--repo', str(self.repo)).returncode, 0)
+        db = self.repo/'work/scratch/codex-pass1/spore.sqlite3'
+        with sqlite3.connect(db) as conn:
+            conn.execute("INSERT INTO budget(singleton,key_fingerprint,baseline_usage,last_usage,updated_utc) VALUES(1,'old-key-fingerprint',0,3.1218,'now')")
+            conn.commit()
+        attempted = self.cli('run','--workers','3')
+        self.assertNotEqual(attempted.returncode,0,attempted.stdout)
+        self.assertIn('rotate-key',attempted.stdout)
+        self.assertNotIn('spore_parallel_sqlite.py run',attempted.stdout)
+        with sqlite3.connect(db) as conn:
+            self.assertEqual(conn.execute('SELECT COUNT(*) FROM runs').fetchone()[0],0)
+
     def test_rejects_partial_queue(self):
         work = self.repo/'work/scratch/codex-pass1'
         work.mkdir(parents=True)
