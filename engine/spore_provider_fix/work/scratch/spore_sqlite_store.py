@@ -112,6 +112,7 @@ def init_schema():
         for table, columns in {
             'claims': {'pid_start': 'TEXT', 'child_pid': 'INTEGER', 'child_start': 'TEXT'},
             'assignments': {'group_key': "TEXT NOT NULL DEFAULT ''"},
+            'inference_slots': {'verified': 'INTEGER NOT NULL DEFAULT 0'},
         }.items():
             found = {r['name'] for r in db.execute(f'PRAGMA table_info({table})')}
             for name, kind in columns.items():
@@ -547,9 +548,22 @@ def reserve_inference_slot(va,run_id,max_inflight):
                 if time.time() < window['cooldown_until']:
                     db.execute('COMMIT'); return None
                 effective = min(effective, window['concurrency'])
+            if n>=effective and os.environ.get('SPORE_ADAPTIVE_INFLIGHT') == '1':
+                # Re-probe once after cooldown, without terminating verified
+                # active agents. No speculative bursts into an unverified slot.
+                healthy=db.execute('SELECT COUNT(*) FROM inference_slots WHERE run_id=? AND verified=1',
+                                   (run_id,)).fetchone()[0]
+                if (window and n == effective == healthy and n > 0
+                        and effective < window['ceiling']
+                        and time.time() >= window['cooldown_until']
+                        and time.time() - window['last_probe'] >= 5):
+                    effective += 1
+                    db.execute('UPDATE adaptive_control SET concurrency=?,last_probe=?,updated_utc=? WHERE singleton=1',
+                               (effective,time.time(),utc()))
             if n>=effective:
                 db.execute('COMMIT'); return None
-            db.execute('INSERT INTO inference_slots VALUES(?,?,?,?)',(token,run_id,va,utc()))
+            db.execute('INSERT INTO inference_slots(id,run_id,va,created_utc,verified) VALUES(?,?,?,?,0)',
+                       (token,run_id,va,utc()))
             db.execute('COMMIT'); return token
         except Exception:
             db.execute('ROLLBACK');raise

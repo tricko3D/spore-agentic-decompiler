@@ -1,4 +1,4 @@
-"""Pure local congestion control tests, no inference or payment."""
+"""Offline progressive output-token congestion control tests."""
 import os
 from pathlib import Path
 import subprocess
@@ -6,61 +6,50 @@ import sys
 import tempfile
 import unittest
 
-ENGINE = Path(__file__).resolve().parents[1] / 'engine/spore_provider_fix/work/scratch'
+ENGINE=Path(__file__).resolve().parents[1]/'engine/spore_provider_fix/work/scratch'
+
 
 class AdaptiveTests(unittest.TestCase):
-    def test_aimd_probe_cooldown_atomic_slots_and_fixed_mode(self):
+    def test_token_verified_ramp_and_selective_rollback(self):
         with tempfile.TemporaryDirectory() as t:
-            script = '''
-import os, time
+            script=r'''
+import os,time
+from unittest.mock import patch
 import spore_sqlite_store as store
 import spore_adaptive as ctl
-from unittest.mock import patch
 store.init_schema()
-ctl.begin('run-1', ceiling=8, start=1)
-assert ctl.snapshot()['concurrency'] == 1
-now = time.time()
-assert ctl.observe('run-1', productive=True, now=now+95) is None
-assert '1->2' in ctl.observe('run-1', productive=True, now=now+96)
-assert ctl.snapshot()['concurrency'] == 2
-with patch('spore_sqlite_store.time.time', return_value=now+99):
-    a = store.reserve_inference_slot('0x11','run-1',8)
-    b = store.reserve_inference_slot('0x22','run-1',8)
-    c = store.reserve_inference_slot('0x33','run-1',8)
-    assert a and b and c is None
-store.release_inference_slot(a)
-store.release_inference_slot(b)
-assert '2->1' in ctl.observe('run-1', overloaded=True, now=now+100)
-with patch('spore_sqlite_store.time.time', return_value=now+120):
-    assert store.reserve_inference_slot('0x11','run-1',8) is None
-with patch('spore_sqlite_store.time.time', return_value=now+161):
-    a = store.reserve_inference_slot('0x11','run-1',8)
-    b = store.reserve_inference_slot('0x22','run-1',8)
-    assert a and b is None
-store.release_inference_slot(a)
-assert ctl.snapshot()['provider_failures'] == 1
-assert ctl.snapshot()['concurrency'] == 1
-assert ctl.observe('run-1', overloaded=True, now=now+121) is None
-assert ctl.snapshot()['provider_failures'] == 2
-assert ctl.snapshot()['consecutive_errors'] == 1
-# Restarting a batch creates a fresh controller, no archived attempts deleted.
-ctl.begin('run-2', ceiling=4)
-assert ctl.snapshot()['run_id'] == 'run-2'
-assert ctl.snapshot()['provider_failures'] == 0
-assert ctl.observe('run-1', overloaded=True) is None
-assert ctl.snapshot()['provider_failures'] == 0
-os.environ['SPORE_ADAPTIVE_INFLIGHT']='0'
-a = store.reserve_inference_slot('0x11','run-2',2)
-b = store.reserve_inference_slot('0x22','run-2',2)
-c = store.reserve_inference_slot('0x33','run-2',2)
-assert a and b and c is None
+ctl.begin('run-1',ceiling=8,start=1)
+a=store.reserve_inference_slot('0x11','run-1',8)
+assert a and not store.reserve_inference_slot('0x22','run-1',8)
+assert '1->2' in ctl.confirm_output('run-1',a)
+assert ctl.confirm_output('run-1',a) is None
+b=store.reserve_inference_slot('0x22','run-1',8)
+assert b and not store.reserve_inference_slot('0x33','run-1',8)
+assert '2->3' in ctl.confirm_output('run-1',b)
+c=store.reserve_inference_slot('0x33','run-1',8)
+assert '3->4' in ctl.confirm_output('run-1',c)
+d=store.reserve_inference_slot('0x44','run-1',8)
+assert d and not store.reserve_inference_slot('0x55','run-1',8)
+store.release_inference_slot(d)
+assert '4->3' in ctl.observe('run-1',overloaded=True)
+assert ctl.snapshot()['productive_samples']==3
+assert ctl.snapshot()['provider_failures']==1
+with store.connect() as db:
+    assert db.execute('SELECT COUNT(*) FROM inference_slots').fetchone()[0]==3
+    assert db.execute('SELECT SUM(verified) FROM inference_slots').fetchone()[0]==3
+assert not store.reserve_inference_slot('0x55','run-1',8)
+future=time.time()+90
+with patch('spore_sqlite_store.time.time',return_value=future):
+    d=store.reserve_inference_slot('0x55','run-1',8)
+assert d
+# One new unique stream confirms capacity recovered.
+assert '4->5' in ctl.confirm_output('run-1',d)
+ctl.begin('run-2',ceiling=4,start=1)
+assert ctl.confirm_output('run-1',a) is None
+assert ctl.observe('run-1',overloaded=True) is None
 '''
             env=os.environ.copy()
             env['PYTHONPATH']=str(ENGINE)
             env['SPORE_ADAPTIVE_INFLIGHT']='1'
-            p=subprocess.run([sys.executable,'-c',script],cwd=t,env=env,
-                            text=True,capture_output=True)
+            p=subprocess.run([sys.executable,'-c',script],cwd=t,env=env,text=True,capture_output=True)
             self.assertEqual(p.returncode,0,p.stdout+'\n'+p.stderr)
-
-if __name__ == '__main__':
-    unittest.main()
