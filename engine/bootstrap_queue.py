@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Initialize a new SPGonzago-only queue using spore-decomp's own indexes.
+"""Initialize a new module-selected queue using spore-decomp's own indexes.
 
 Refuses to overwrite any existing queue, result history, or SQLite database.
 """
@@ -36,7 +36,7 @@ def main():
                      'suggested_file': task.new_source_path(va)})
     rows.sort(key=lambda row: (int(row['size']), int(row['va'], 16)))
     if not rows:
-        raise SystemExit('No eligible SPGonzago functions. Check src/game or modmap; nothing was created.')
+        raise SystemExit('No eligible functions for selected modules. Check src/game or modmap; nothing was created.')
     WORK.mkdir(parents=True, exist_ok=True)
     try:
         for file, fields, data in (
@@ -53,7 +53,7 @@ def main():
             if file.exists():
                 file.unlink()
         raise
-    print(f'Created a new SPGonzago queue with {len(rows):,} targets. No sources modified.')
+    print(f'Created a {modules.mode} queue for {agent.module_scope()}: {len(rows):,} targets. No sources modified.')
 
 
 if __name__ == '__main__':
