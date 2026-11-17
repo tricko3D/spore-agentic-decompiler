@@ -102,12 +102,33 @@ def source_groups(allowed):
     return list(groups.values())
 
 
-def make_assignments(queue, workers, mod):
+def make_assignments(queue, workers, mod, passes=None):
+    """Assign only claimable targets, not the entire classified module scope.
+
+    SQLite's claim() is authoritative at execution time. This snapshot uses
+    the same latest-terminal / valid-pass-count rules for useful plans.
+    """
+    from collections import Counter
     m = mod.ModuleIndex()
     m.refresh()
-    allowed = [r['va'] for r in queue if m.eligible(r['va'])]
-    if not allowed:
+    classified = [r['va'] for r in queue if m.eligible(r['va'])]
+    if not classified:
         sys.exit('No queued functions passed the selected module confidence filter. No agents started.')
+    limit = passes if passes is not None else store.pass_limit()
+    manifested = mod.ManifestIndex().refresh()
+    latest = {}
+    attempted = Counter()
+    for row in store.read_attempts():
+        va, state = row['va'], row['status']
+        latest[va] = state
+        if state in ('FAIL', 'DEFER'):
+            attempted[va] += 1
+    allowed = [va for va in classified
+               if va not in manifested
+               and latest.get(va) not in ('MATCH', 'SKIP')
+               and attempted[va] < limit]
+    if not allowed:
+        return [], {}, [0] * workers
     groups = source_groups(allowed)
     position = {va: i for i, va in enumerate(allowed)}
     groups.sort(key=lambda g: min(position[va] for va in g))
@@ -187,12 +208,15 @@ def run(a):
         store.clear_stale_reservations()
         store.clear_stale_inference_slots()
         queue = read_queue()
-        allowed, assignments, counts = make_assignments(queue, a.workers, mod)
+        allowed, assignments, counts = make_assignments(queue, a.workers, mod, passes=a.passes)
+        if not allowed:
+            print(f'No runnable {mod.module_scope()} targets under the {a.passes}-pass limit. No workers launched.')
+            return 0
         run_id = datetime.now(timezone.utc).strftime('%Y%m%d-%H%M%S') + f'-{os.getpid()}'
         folder = RUN_LOGS / run_id
         folder.mkdir(parents=True, exist_ok=False)
         store.create_run(run_id,a.workers,a.passes,assignments)
-        print(f'{mod.module_scope()}: {len(allowed)}/{len(queue)} classified targets. '
+        print(f'{mod.module_scope()}: {len(allowed)}/{len(queue)} runnable targets. '
               f'Workers: {a.workers}; assignment sizes: {counts}', flush=True)
         print(f'Shared SQLite state: {store.DB} (WAL transactions)', flush=True)
         print(f'Logs: {folder}', flush=True)
@@ -292,7 +316,7 @@ def main():
             p.error('--workers must be between 1 and 32')
         mod=load_runner()
         allowed,assignments,counts=make_assignments(read_queue(),a.workers,mod)
-        print(f'{mod.module_scope()} eligible scope: {len(allowed)} functions')
+        print(f'{mod.module_scope()} runnable functions (pass limit {store.pass_limit()}): {len(allowed)}')
         print('Assignments:',counts)
         print('No agents started; SQLite history unchanged.')
         return 0
