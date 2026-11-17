@@ -108,7 +108,7 @@ def init_schema():
           provider_failures INTEGER NOT NULL,consecutive_errors INTEGER NOT NULL,
           cooldown_until REAL NOT NULL,last_probe REAL NOT NULL,updated_utc TEXT NOT NULL);
         ''')
-        # Idempotent additive migration, no historical attempts are rewritten.
+        # Additive, idempotent migration for databases created before work stealing.
         for table, columns in {
             'claims': {'pid_start': 'TEXT', 'child_pid': 'INTEGER', 'child_start': 'TEXT'},
             'assignments': {'group_key': "TEXT NOT NULL DEFAULT ''"},
@@ -355,7 +355,7 @@ def pid_identity(pid):
 
 
 def record_child(va, child_pid):
-    """Record OpenCode's process group so a dead worker's function can be recovered safely."""
+    """Record OpenCode's independent process group so a crashed worker is safe to reclaim."""
     with connect() as db:
         db.execute("""UPDATE claims SET child_pid=?, child_start=?
                       WHERE va=? AND pid=?""",
@@ -363,10 +363,10 @@ def record_child(va, child_pid):
 
 
 def _cleanup_dead_claim(db, row):
-    """Kill a known orphan child before releasing dead-worker ownership."""
+    """Clean up a dead worker and its known child before releasing ownership."""
     worker_start = pid_identity(row['pid'])
     if worker_start and (not row['pid_start'] or worker_start == row['pid_start']):
-        return False
+        return False  # Live owners are NEVER reclaimed due to elapsed time.
     child = row['child_pid']
     if child and row['child_start'] and pid_identity(child) == row['child_start']:
         import signal
@@ -384,6 +384,7 @@ def _cleanup_dead_claim(db, row):
                 os.killpg(child, signal.SIGKILL)
             except ProcessLookupError:
                 pass
+        # Never reassign while a known child is still alive.
         if pid_identity(child) == row['child_start']:
             return False
     db.execute('DELETE FROM claims WHERE va=? AND pid=?', (row['va'], row['pid']))
@@ -391,7 +392,11 @@ def _cleanup_dead_claim(db, row):
 
 
 def claim_next(run_id, worker_idx, passes):
-    """Atomic work stealing: (VA, busy), with source-group mutual exclusion."""
+    """Atomic work stealing: (VA, busy) where busy means another live worker owns a claim.
+
+    Assignments form the run's target *set*, not fixed worker ownership. Only
+    one worker may work in a shared source group at a time.
+    """
     with connect() as db:
         db.execute('BEGIN IMMEDIATE')
         try:
@@ -455,7 +460,7 @@ def release_claim(va,run_id,worker_idx):
 
 
 def clear_stale_claims():
-    # Never blindly delete a claim while an agent may still edit source files.
+    # Coordinator startup: never blindly delete a claim while an agent may be alive.
     with connect() as db:
         db.execute('BEGIN IMMEDIATE')
         try:
