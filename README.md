@@ -71,6 +71,25 @@ The worker preserves the OpenCode **conversation session** per function between 
 
 The **$20 budget is a local soft limit** using OpenRouter key-usage accounting, not a provider-enforced spending cap. For a hard cap, configure a limit on the key in OpenRouter itself.
 
+## Dynamic work stealing and crash recovery
+
+Parallel workers now draw from a **shared SQLite target pool** instead of having permanently assigned functions. The previous per-worker assignment counts are only initial planning estimates. Each worker atomically claims the next function, checks historical valid passes, and uses a **source-group lock** so functions in the same C++ source file are not edited simultaneously.
+
+If a worker exits or crashes, the next surviving worker checks its claim and Linux process identity; any tracked orphaned OpenCode process is terminated before ownership can be released. The function can then be claimed by another worker with its previous SQLite attempts and OpenCode conversation intact. Live worker claims are **never reclaimed solely because time has elapsed**. If every worker stops, no process remains to continue the run; restart the controller to resume unfinished work.
+
+New runs add columns and tables to the existing SQLite database without deleting historical attempts. The setup installer retains a script backup. As before, agents work on a shared unsandboxed checkout, and file-level locking does not prevent mistakes in shared headers or unrelated files.
+
+## Live local dashboard
+
+A lightweight **read-only HTTP dashboard** uses only Python's standard library. Open it in a second WSL terminal while agents are running:
+
+```bash
+cd ~/spore-agentic-decompiler
+python3 spore_agentic.py dashboard --port 8765
+```
+
+Then visit **http://127.0.0.1:8765** in your browser. It refreshes every three seconds and shows the latest run, match counts, selected targets, live worker processes and their current functions, adaptive Sail concurrency, cooldown, provider incidents, recent results and estimated OpenRouter spending. It never exposes API keys, raw agent logs, prompts or model output. It binds to **localhost only**, has no write APIs, and does not initiate paid inference. Historical cost totals come from the last cached budget sample and may lag actual billing.
+
 ## Existing-state diagnostic export
 
 If you have an existing database, you can package it and the relevant local scripts for migration troubleshooting:
