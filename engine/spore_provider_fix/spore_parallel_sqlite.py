@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Launch configurable N SPGonzago DeepSeek workers using SQLite WAL state.
+"""Launch configurable DeepSeek workers against selected Spore modules using SQLite WAL state.
 
 Shared state lives in spore.sqlite3; preexisting CSV files are read-only backups.
 The workers share a working tree (this is not OS filesystem isolation).
@@ -107,7 +107,7 @@ def make_assignments(queue, workers, mod):
     m.refresh()
     allowed = [r['va'] for r in queue if m.eligible(r['va'])]
     if not allowed:
-        sys.exit('No SPGonzago functions passed the module confidence filter. No agents started.')
+        sys.exit('No queued functions passed the selected module confidence filter. No agents started.')
     groups = source_groups(allowed)
     position = {va: i for i, va in enumerate(allowed)}
     groups.sort(key=lambda g: min(position[va] for va in g))
@@ -192,7 +192,7 @@ def run(a):
         folder = RUN_LOGS / run_id
         folder.mkdir(parents=True, exist_ok=False)
         store.create_run(run_id,a.workers,a.passes,assignments)
-        print(f'SPGonzago: {len(allowed)}/{len(queue)} classified targets. '
+        print(f'{mod.module_scope()}: {len(allowed)}/{len(queue)} classified targets. '
               f'Workers: {a.workers}; assignment sizes: {counts}', flush=True)
         print(f'Shared SQLite state: {store.DB} (WAL transactions)', flush=True)
         print(f'Logs: {folder}', flush=True)
@@ -266,7 +266,7 @@ def run(a):
 
 
 def main():
-    p = argparse.ArgumentParser(description='Run configurable parallel DeepSeek agents on SPGonzago only')
+    p = argparse.ArgumentParser(description='Run configurable parallel DeepSeek agents on selected Spore modules')
     sub = p.add_subparsers(dest='command', required=True)
     r = sub.add_parser('run', help='Start N workers using SQLite WAL')
     r.add_argument('--workers', type=int, default=5, help='Number of concurrent agents (default: 5)')
@@ -279,7 +279,7 @@ def main():
     r.add_argument('--budget', type=float, default=20.0, help='Cumulative shared OpenRouter soft limit, USD')
     r.add_argument('--unsafe', action='store_true', help='Existing runner flag; OpenCode remains unsandboxed')
     r.add_argument('--max-functions-per-worker', type=int, default=0, help='Optional limit for initial small-scale test')
-    plan=sub.add_parser('plan', help='Preview SPGonzago split without spending any tokens')
+    plan=sub.add_parser('plan', help='Preview selected module split without spending any tokens')
     plan.add_argument('--workers',type=int,default=5)
     sub.add_parser('status', help='Show each worker and aggregate SQLite progress')
     a = p.parse_args()
@@ -292,7 +292,7 @@ def main():
             p.error('--workers must be between 1 and 32')
         mod=load_runner()
         allowed,assignments,counts=make_assignments(read_queue(),a.workers,mod)
-        print(f'SPGonzago eligible scope: {len(allowed)} functions')
+        print(f'{mod.module_scope()} eligible scope: {len(allowed)} functions')
         print('Assignments:',counts)
         print('No agents started; SQLite history unchanged.')
         return 0
