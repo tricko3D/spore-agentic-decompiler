@@ -49,7 +49,7 @@ python3 spore_agentic.py diagnostics \
   --output /mnt/c/Users/patrick/Downloads/spore-agentic-diagnostics.zip
 ```
 
-This produces a consistent SQLite snapshot using SQLite's backup API, plus the existing queue/results and runner scripts. **It does not include the API key, source trees, or raw OpenCode JSONL logs.** The archive may still contain private attempt history and machine paths, so inspect it before sharing.
+This produces a consistent SQLite snapshot, the existing queue/results and runner scripts, plus `state/provider-evidence.json`. That evidence report checks the local OpenCode logs and lists **proven provider-only** versus **unverified** attempts without exporting the model transcript. Missing logs and logs containing actual agent work remain unverified. **It does not include the API key, source trees, prompts, or raw OpenCode JSONL logs.** The archive may still contain private attempt history and machine paths, so inspect it before sharing.
 
 ## Safety and known limits
 
