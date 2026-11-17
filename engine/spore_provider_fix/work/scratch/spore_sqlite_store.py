@@ -75,12 +75,13 @@ def init_schema():
         CREATE TABLE IF NOT EXISTS assignments(
           run_id TEXT NOT NULL REFERENCES runs(run_id),
           va TEXT NOT NULL REFERENCES queue(va), worker_idx INTEGER NOT NULL,
-          PRIMARY KEY(run_id,va));
+          group_key TEXT NOT NULL DEFAULT '', PRIMARY KEY(run_id,va));
         CREATE INDEX IF NOT EXISTS assignments_worker_idx ON assignments(run_id,worker_idx);
         CREATE TABLE IF NOT EXISTS claims(
           va TEXT PRIMARY KEY REFERENCES queue(va),
           run_id TEXT NOT NULL, worker_idx INTEGER NOT NULL,
-          pid INTEGER NOT NULL, started_utc TEXT NOT NULL);
+          pid INTEGER NOT NULL, started_utc TEXT NOT NULL,
+          pid_start TEXT, child_pid INTEGER, child_start TEXT);
         CREATE TABLE IF NOT EXISTS attempt_reviews(
           attempt_id INTEGER PRIMARY KEY REFERENCES attempts(id),
           classification TEXT NOT NULL CHECK(classification='VOID_PROVIDER'),
@@ -95,6 +96,11 @@ def init_schema():
         CREATE TABLE IF NOT EXISTS inference_slots(
           id TEXT PRIMARY KEY, run_id TEXT, va TEXT NOT NULL,
           created_utc TEXT NOT NULL);
+        CREATE TABLE IF NOT EXISTS run_exclusions(
+          run_id TEXT NOT NULL REFERENCES runs(run_id),
+          va TEXT NOT NULL REFERENCES queue(va),
+          reason TEXT NOT NULL, created_utc TEXT NOT NULL,
+          PRIMARY KEY(run_id,va));
         CREATE TABLE IF NOT EXISTS adaptive_control(
           singleton INTEGER PRIMARY KEY CHECK(singleton=1),
           run_id TEXT NOT NULL,concurrency INTEGER NOT NULL,ceiling INTEGER NOT NULL,
@@ -102,6 +108,15 @@ def init_schema():
           provider_failures INTEGER NOT NULL,consecutive_errors INTEGER NOT NULL,
           cooldown_until REAL NOT NULL,last_probe REAL NOT NULL,updated_utc TEXT NOT NULL);
         ''')
+        # Idempotent additive migration, no historical attempts are rewritten.
+        for table, columns in {
+            'claims': {'pid_start': 'TEXT', 'child_pid': 'INTEGER', 'child_start': 'TEXT'},
+            'assignments': {'group_key': "TEXT NOT NULL DEFAULT ''"},
+        }.items():
+            found = {r['name'] for r in db.execute(f'PRAGMA table_info({table})')}
+            for name, kind in columns.items():
+                if name not in found:
+                    db.execute(f'ALTER TABLE {table} ADD COLUMN {name} {kind}')
 
 
 def has_import():
@@ -275,14 +290,14 @@ def pass_limit():
         return int(r['value']) if r else 3
 
 
-def create_run(run_id,workers,passes,assignments):
+def create_run(run_id,workers,passes,assignments,group_keys=None):
     with connect() as db:
         db.execute('BEGIN IMMEDIATE')
         try:
             db.execute('INSERT INTO runs(run_id,workers,passes,started_utc) VALUES(?,?,?,?)',
                        (run_id,workers,passes,utc()))
-            db.executemany('INSERT INTO assignments(run_id,va,worker_idx) VALUES(?,?,?)',
-                           ((run_id,va,i) for va,i in assignments.items()))
+            db.executemany('INSERT INTO assignments(run_id,va,worker_idx,group_key) VALUES(?,?,?,?)',
+                           ((run_id,va,i,(group_keys or {}).get(va,va)) for va,i in assignments.items()))
             db.execute("INSERT OR REPLACE INTO metadata(key,value) VALUES('pass_limit',?)",(str(passes),))
             db.execute('COMMIT')
         except Exception:
@@ -325,6 +340,114 @@ def claim(va,run_id,worker_idx,passes):
             db.execute('ROLLBACK'); raise
 
 
+def pid_identity(pid):
+    """Linux /proc start tick, resilient to ordinary PID reuse; None for zombies."""
+    if not pid or pid <= 0:
+        return None
+    try:
+        data = (Path('/proc')/str(pid)/'stat').read_text()
+        tail = data.rsplit(')', 1)[1].split()
+        if tail[0] in ('Z','X'):
+            return None
+        return tail[19]
+    except (OSError, IndexError, ValueError):
+        return None
+
+
+def record_child(va, child_pid):
+    """Record OpenCode's process group so a dead worker's function can be recovered safely."""
+    with connect() as db:
+        db.execute("""UPDATE claims SET child_pid=?, child_start=?
+                      WHERE va=? AND pid=?""",
+                   (child_pid, pid_identity(child_pid), va, os.getpid()))
+
+
+def _cleanup_dead_claim(db, row):
+    """Kill a known orphan child before releasing dead-worker ownership."""
+    worker_start = pid_identity(row['pid'])
+    if worker_start and (not row['pid_start'] or worker_start == row['pid_start']):
+        return False
+    child = row['child_pid']
+    if child and row['child_start'] and pid_identity(child) == row['child_start']:
+        import signal
+        import time
+        try:
+            os.killpg(child, signal.SIGTERM)
+        except ProcessLookupError:
+            pass
+        for _ in range(10):
+            if pid_identity(child) != row['child_start']:
+                break
+            time.sleep(.1)
+        if pid_identity(child) == row['child_start']:
+            try:
+                os.killpg(child, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+        if pid_identity(child) == row['child_start']:
+            return False
+    db.execute('DELETE FROM claims WHERE va=? AND pid=?', (row['va'], row['pid']))
+    return True
+
+
+def claim_next(run_id, worker_idx, passes):
+    """Atomic work stealing: (VA, busy), with source-group mutual exclusion."""
+    with connect() as db:
+        db.execute('BEGIN IMMEDIATE')
+        try:
+            for row in db.execute('SELECT * FROM claims WHERE run_id=?', (run_id,)).fetchall():
+                _cleanup_dead_claim(db, row)
+            chosen = db.execute("""
+                SELECT q.va FROM assignments a
+                JOIN queue q ON q.va=a.va
+                LEFT JOIN claims held ON held.va=q.va
+                LEFT JOIN run_exclusions excluded ON excluded.va=q.va AND excluded.run_id=a.run_id
+                LEFT JOIN attempts last ON last.id=(
+                    SELECT MAX(t.id) FROM attempts t
+                    LEFT JOIN attempt_reviews r ON r.attempt_id=t.id
+                    WHERE t.va=q.va AND r.attempt_id IS NULL)
+                WHERE a.run_id=? AND held.va IS NULL AND excluded.va IS NULL
+                  AND (last.status IS NULL OR last.status NOT IN ('MATCH','SKIP'))
+                  AND (SELECT COUNT(*) FROM attempts t
+                       LEFT JOIN attempt_reviews r ON r.attempt_id=t.id
+                       WHERE t.va=q.va AND t.status IN ('FAIL','DEFER')
+                         AND r.attempt_id IS NULL) < ?
+                  AND NOT EXISTS(
+                       SELECT 1 FROM claims locked
+                       JOIN assignments same ON same.va=locked.va AND same.run_id=a.run_id
+                       WHERE same.group_key=a.group_key)
+                ORDER BY q.position LIMIT 1
+            """, (run_id, passes)).fetchone()
+            if chosen:
+                va = chosen['va']
+                db.execute("""INSERT INTO claims
+                    (va,run_id,worker_idx,pid,started_utc,pid_start)
+                    VALUES(?,?,?,?,?,?)""",
+                    (va,run_id,worker_idx,os.getpid(),utc(),pid_identity(os.getpid())))
+                db.execute('COMMIT')
+                return va, True
+            busy = db.execute('SELECT 1 FROM claims WHERE run_id=? LIMIT 1',(run_id,)).fetchone() is not None
+            db.execute('COMMIT')
+            return None, busy
+        except Exception:
+            db.execute('ROLLBACK')
+            raise
+
+
+def ignore_run_target(run_id, va, reason):
+    with connect() as db:
+        db.execute('''INSERT OR IGNORE INTO run_exclusions
+                      (run_id,va,reason,created_utc) VALUES(?,?,?,?)''',
+                   (run_id,va,reason,utc()))
+
+
+def history_for(va):
+    with connect() as db:
+        return [dict(row) for row in db.execute("""SELECT a.va,a.status,a.effort,a.note,a.utc,a.pass_number,a.id,a.log_path,a.run_id
+                       FROM attempts a LEFT JOIN attempt_reviews v ON v.attempt_id=a.id
+                       WHERE a.va=? AND v.attempt_id IS NULL ORDER BY a.id""", (va,))]
+
+
 def release_claim(va,run_id,worker_idx):
     with connect() as db:
         db.execute('DELETE FROM claims WHERE va=? AND run_id=? AND worker_idx=?',
@@ -332,9 +455,19 @@ def release_claim(va,run_id,worker_idx):
 
 
 def clear_stale_claims():
-    # Called by coordinator ONLY when no previous SQLite runner processes exist.
+    # Never blindly delete a claim while an agent may still edit source files.
     with connect() as db:
-        return db.execute('DELETE FROM claims').rowcount
+        db.execute('BEGIN IMMEDIATE')
+        try:
+            rows = db.execute('SELECT * FROM claims').fetchall()
+            cleared = sum(_cleanup_dead_claim(db, row) for row in rows)
+            if db.execute('SELECT 1 FROM claims LIMIT 1').fetchone():
+                raise RuntimeError('Active or uncertain claim owner remains. Refusing to start a new run.')
+            db.execute('COMMIT')
+            return cleared
+        except Exception:
+            db.execute('ROLLBACK')
+            raise
 
 
 def claimed():
