@@ -40,6 +40,9 @@ with patch('spore_sqlite_store.time.time', return_value=now+161):
 store.release_inference_slot(a)
 assert ctl.snapshot()['provider_failures'] == 1
 assert ctl.snapshot()['concurrency'] == 1
+assert ctl.observe('run-1', overloaded=True, now=now+121) is None
+assert ctl.snapshot()['provider_failures'] == 2
+assert ctl.snapshot()['consecutive_errors'] == 1
 # Restarting a batch creates a fresh controller, no archived attempts deleted.
 ctl.begin('run-2', ceiling=4)
 assert ctl.snapshot()['run_id'] == 'run-2'
