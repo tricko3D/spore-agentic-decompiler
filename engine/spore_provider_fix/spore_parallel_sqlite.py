@@ -18,6 +18,7 @@ import subprocess
 import sys
 sys.path.insert(0,str(Path(__file__).resolve().parent / "work" / "scratch"))
 import spore_sqlite_store as store
+import spore_adaptive as adaptive_ctl
 import time
 
 ROOT = Path(__file__).resolve().parent
@@ -149,6 +150,12 @@ def status():
         return
     r = json.loads(LATEST.read_text(encoding='utf-8'))
     print('Parallel batch:', r['run_id'])
+    window = adaptive_ctl.snapshot()
+    if window and window['run_id'] == r['run_id']:
+        pause = max(0, int(window['cooldown_until'] - time.time()))
+        print(f'Adaptive Sail: cap {window["concurrency"]}/{window["ceiling"]} | '
+              f'clean passes {window["productive_samples"]} | overload {window["provider_failures"]} | '
+              f'cooldown {pause}s')
     print('Settings:', r['workers'], 'workers,', r['passes'], 'total passes,', r['minutes'], 'minutes/pass,',
           r.get('max_inflight','legacy'), 'max simultaneous inferences')
     print('Run directory:', r['directory'])
@@ -183,7 +190,7 @@ def run(a):
         sys.exit('--workers must be between 1 and 32')
     if not (1 <= a.passes <= 24):
         sys.exit('--passes must be between 1 and 24')
-    if a.minutes < 1 or a.budget <= 0 or a.max_functions_per_worker < 0 or a.quota_wait < 0 or a.max_inflight < 0 or a.provider_retries < 0:
+    if a.minutes < 1 or a.budget <= 0 or a.max_functions_per_worker < 0 or a.quota_wait < 0 or not 1 <= a.max_inflight <= 32 or a.provider_retries < 0:
         sys.exit('Invalid time, budget, quota wait or function limit')
     if shutil.which('opencode') is None:
         sys.exit('opencode not found on PATH')
@@ -216,6 +223,9 @@ def run(a):
         folder = RUN_LOGS / run_id
         folder.mkdir(parents=True, exist_ok=False)
         store.create_run(run_id,a.workers,a.passes,assignments)
+        if a.adaptive:
+            adaptive_ctl.begin(run_id, ceiling=a.max_inflight, start=1)
+            print(f'Adaptive Sail concurrency: start 1, ceiling {a.max_inflight}; AIMD and exponential cooldown.', flush=True)
         print(f'{mod.module_scope()}: {len(allowed)}/{len(queue)} runnable targets. '
               f'Workers: {a.workers}; assignment sizes: {counts}', flush=True)
         print(f'Shared SQLite state: {store.DB} (WAL transactions)', flush=True)
@@ -236,7 +246,7 @@ def run(a):
             if a.unsafe:
                 cmd += ['--unsafe']
             env = os.environ.copy()
-            env.update({'PWD': str(ROOT)})
+            env.update({'PWD': str(ROOT), 'SPORE_ADAPTIVE_INFLIGHT': '1' if a.adaptive else '0'})
             with log_path.open('w', encoding='utf-8') as output:
                 p = subprocess.Popen(cmd, cwd=ROOT, env=env, stdin=subprocess.DEVNULL,
                                      stdout=output, stderr=subprocess.STDOUT, start_new_session=True)
@@ -298,7 +308,9 @@ def main():
     r.add_argument('--reasoning', choices=['low', 'medium', 'high'], default='medium')
     r.add_argument('--minutes', type=int, default=5, help='Minutes for each agent pass')
     r.add_argument('--quota-wait', type=int, default=1, help='Minutes to wait on API rate limit; 0 stops that worker')
-    r.add_argument('--max-inflight', type=int, default=8, help='Concurrent OpenRouter inference cap, independent of worker count')
+    r.add_argument('--max-inflight', type=int, default=8, help='Maximum concurrency for adaptive scaling, fixed cap if --fixed-inflight')
+    r.add_argument('--fixed-inflight', dest='adaptive', action='store_false', help='Disable adaptive Sail congestion control')
+    r.set_defaults(adaptive=True)
     r.add_argument('--provider-retries', type=int, default=2, help='Additional provider-only retries before worker stops, without ticking a pass')
     r.add_argument('--budget', type=float, default=20.0, help='Cumulative shared OpenRouter soft limit, USD')
     r.add_argument('--unsafe', action='store_true', help='Existing runner flag; OpenCode remains unsandboxed')
