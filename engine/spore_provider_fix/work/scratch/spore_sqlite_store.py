@@ -101,6 +101,11 @@ def init_schema():
           va TEXT NOT NULL REFERENCES queue(va),
           reason TEXT NOT NULL, created_utc TEXT NOT NULL,
           PRIMARY KEY(run_id,va));
+        CREATE TABLE IF NOT EXISTS run_delays(
+          run_id TEXT NOT NULL REFERENCES runs(run_id),
+          va TEXT NOT NULL REFERENCES queue(va),
+          retry_after REAL NOT NULL,
+          PRIMARY KEY(run_id,va));
         CREATE TABLE IF NOT EXISTS adaptive_control(
           singleton INTEGER PRIMARY KEY CHECK(singleton=1),
           run_id TEXT NOT NULL,concurrency INTEGER NOT NULL,ceiling INTEGER NOT NULL,
@@ -408,11 +413,13 @@ def claim_next(run_id, worker_idx, passes):
                 JOIN queue q ON q.va=a.va
                 LEFT JOIN claims held ON held.va=q.va
                 LEFT JOIN run_exclusions excluded ON excluded.va=q.va AND excluded.run_id=a.run_id
+                LEFT JOIN run_delays delayed ON delayed.va=q.va AND delayed.run_id=a.run_id
                 LEFT JOIN attempts last ON last.id=(
                     SELECT MAX(t.id) FROM attempts t
                     LEFT JOIN attempt_reviews r ON r.attempt_id=t.id
                     WHERE t.va=q.va AND r.attempt_id IS NULL)
                 WHERE a.run_id=? AND held.va IS NULL AND excluded.va IS NULL
+                  AND (delayed.retry_after IS NULL OR delayed.retry_after <= ?)
                   AND (last.status IS NULL OR last.status NOT IN ('MATCH','SKIP'))
                   AND (SELECT COUNT(*) FROM attempts t
                        LEFT JOIN attempt_reviews r ON r.attempt_id=t.id
@@ -423,7 +430,7 @@ def claim_next(run_id, worker_idx, passes):
                        JOIN assignments same ON same.va=locked.va AND same.run_id=a.run_id
                        WHERE same.group_key=a.group_key)
                 ORDER BY q.position LIMIT 1
-            """, (run_id, passes)).fetchone()
+            """, (run_id, time.time(), passes)).fetchone()
             if chosen:
                 va = chosen['va']
                 db.execute("""INSERT INTO claims
@@ -433,11 +440,24 @@ def claim_next(run_id, worker_idx, passes):
                 db.execute('COMMIT')
                 return va, True
             busy = db.execute('SELECT 1 FROM claims WHERE run_id=? LIMIT 1',(run_id,)).fetchone() is not None
+            if not busy:
+                # Keep work-stealing workers alive until postponed provider
+                # probes are eligible again, without losing their function.
+                busy = db.execute('SELECT 1 FROM run_delays WHERE run_id=? AND retry_after>? LIMIT 1',
+                                  (run_id,time.time())).fetchone() is not None
             db.execute('COMMIT')
             return None, busy
         except Exception:
             db.execute('ROLLBACK')
             raise
+
+
+def defer_run_target(run_id,va,seconds):
+    """Release an uncounted provider failure to the shared queue after backoff."""
+    with connect() as db:
+        db.execute('''INSERT INTO run_delays(run_id,va,retry_after) VALUES(?,?,?)
+                      ON CONFLICT(run_id,va) DO UPDATE SET retry_after=excluded.retry_after''',
+                   (run_id,va,time.time()+max(1,seconds)))
 
 
 def ignore_run_target(run_id, va, reason):

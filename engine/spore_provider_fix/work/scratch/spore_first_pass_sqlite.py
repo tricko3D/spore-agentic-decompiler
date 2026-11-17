@@ -1157,6 +1157,16 @@ def process(minutes, unsafe, backend, quota_wait, max_functions,
                             print(f'Provider unavailable. {va} still eligible for pass {pass_number}; '
                                   f'stopping worker after {provider_failures} provider failure(s).', flush=True)
                             return
+                        if adaptive and dynamic:
+                            # Release the failing probe's source claim; other
+                            # workers may reclaim this function after backoff.
+                            # No matching pass is consumed, and healthy agents
+                            # continue with their own checked-out functions.
+                            window=adaptive_ctl.snapshot()
+                            delay=max(45,int(window['cooldown_until']-time.time()) if window else 45)
+                            store.defer_run_target(rid,va,delay)
+                            print(f'Deferred {va} for {delay}s; returning work to shared queue.', flush=True)
+                            break
                         print('Adaptive Sail cooldown; retrying this pass without consuming it.' if adaptive
                               else f'Waiting {quota_wait} minute(s) before retry in same session...', flush=True)
                         try:
@@ -1179,9 +1189,11 @@ def process(minutes, unsafe, backend, quota_wait, max_functions,
                         return
                     break
 
+                if kind in ('IDLE','QUOTA','PROVIDER') and adaptive and dynamic:
+                    # The failed probe or stalled stream never spends a pass;
+                    # a delayed provider VA is eligible for another worker.
+                    break
                 if kind == 'IDLE':
-                    # Preserve edits and OpenCode session, release the source
-                    # claim and let workers take other eligible functions.
                     break
 
                 # The model can misunderstand its tool output; independently
