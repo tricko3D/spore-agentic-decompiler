@@ -55,6 +55,7 @@ MODULE_MAP = ROOT / 'work' / 'migrate' / 'modmap.json'
 TARGET_MODULES = tuple(x.strip() for x in os.environ.get('SPORE_TARGET_MODULES', 'SPGonzago').split(';') if x.strip())
 MIN_MODULE_CONFIDENCE = float(os.environ.get('SPORE_MIN_MODULE_CONFIDENCE', '0.70'))
 
+
 def module_scope():
     return 'all confidently classified modules' if '*' in TARGET_MODULES else ', '.join(TARGET_MODULES)
 
