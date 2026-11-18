@@ -330,3 +330,18 @@ td.mono{white-space:nowrap}
 }
 @media(prefers-reduced-motion:reduce){*{transition:none!important;scroll-behavior:auto!important}}
 html{scrollbar-color:#73a3c0 #0a2641;scrollbar-width:thin}
+
+/* Search console uses the existing local memory socket and never invokes an LLM. */
+.brain-search{display:flex;gap:8px;align-items:center}
+.brain-search input{flex:1;min-width:0;height:41px}
+.brain-search button{height:41px;min-width:122px}
+.brain-search-results{margin-top:15px;padding-top:13px;border-top:1px solid #4e7290}
+.brain-match-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:13px;margin-top:12px}
+.brain-match-grid>div{display:flex;flex-direction:column;gap:8px;min-width:0}
+.brain-match-grid h3{margin-bottom:3px}
+.brain-match{display:flex;flex-direction:column;gap:7px;text-align:left;
+ border:1px solid #4c7491;border-radius:9px;padding:11px;
+ background:#102c44;box-shadow:none;min-width:0}
+.brain-match small{line-height:1.5;white-space:normal}
+.brain-match .row-between{width:100%}
+@media(max-width:750px){.brain-match-grid{grid-template-columns:1fr}}
