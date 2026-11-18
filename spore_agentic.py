@@ -40,6 +40,7 @@ INSTALL = {
     'work/scratch/spore_adaptive.py': 'spore_provider_fix/work/scratch/spore_adaptive.py',
     'work/scratch/spore_progress_watch.py': 'spore_provider_fix/work/scratch/spore_progress_watch.py',
     'work/scratch/spore_investigation.py': 'spore_provider_fix/work/scratch/spore_investigation.py',
+    'work/scratch/spore_collective_memory.py': 'spore_provider_fix/work/scratch/spore_collective_memory.py',
     'work/scratch/spore_first_pass_prompt.txt': 'spore_first_pass_prompt.txt',
     'migrate_spore_sqlite.py': 'migrate_spore_sqlite.py',
     'install_spore_sqlite.py': 'install_spore_sqlite.py',
