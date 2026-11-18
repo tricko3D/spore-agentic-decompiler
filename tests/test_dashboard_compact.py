@@ -56,7 +56,8 @@ class CompactUIRegression(unittest.TestCase):
     def test_restored_svg_graph_is_scoped_to_fixed_panel(self):
         self.assertIn("<svg",self.graph)
         self.assertIn("viewBox",self.graph)
-        self.assertIn("width={980}",self.graph)
+        self.assertIn("viewport?.pixelWidth??980",self.graph)
+        self.assertIn("viewport?[viewport.x,viewport.y,viewport.width,viewport.height]",self.graph)
         self.assertIn("graph?.links",self.graph)
         self.assertIn("onFinding(x.id)",self.graph)
         self.assertIn("onTechnique(x.id)",self.graph)
@@ -113,10 +114,10 @@ class CompactUIRegression(unittest.TestCase):
         self.assertIn('overflow-x:hidden;overflow-y:auto',self.brain_css)
 
     def test_search_results_and_evidence_do_not_resize_panels(self):
-        self.assertIn('className="brain-global-search"',self.brain_search)
+        self.assertIn('className="brain-search-trigger"',self.brain_search)
         self.assertIn('className="brain-action-row"',self.knowledge)
         self.assertIn('className="brain-map-button"',self.knowledge)
-        self.assertIn('<Drawer title="Collective Memory results"',self.brain_search)
+        self.assertIn('<Drawer title="Search Collective Memory"',self.brain_search)
         self.assertIn("createPortal",self.panels)
         self.assertIn("document.body",self.panels)
         self.assertIn("body>.overlay",self.css)
@@ -218,12 +219,12 @@ class CompactUIRegression(unittest.TestCase):
         self.assertLess(main.index("import './compact.css'"),main.index("import './brain.css'"))
         self.assertIn('className="brain-kpis"',self.knowledge)
         self.assertIn('className="brain-kpi"',self.knowledge)
-        self.assertIn('className="brain-global-search"',self.brain_search)
+        self.assertIn('className="brain-search-trigger"',self.brain_search)
         self.assertNotIn('className="knowledge-metrics"',self.knowledge)
         self.assertNotIn('className="metrics knowledge-metrics"',self.knowledge)
         self.assertIn('grid-template-columns:repeat(4,minmax(0,1fr))',self.brain_css)
         self.assertIn('height:54px',self.brain_css)
-        self.assertIn('height:42px',self.brain_css)
+        self.assertIn('height:32px',self.brain_css)
 
     def test_evidence_is_dense_list_instead_of_cards(self):
         self.assertIn('className="brain-data-row"',self.knowledge)
@@ -237,6 +238,30 @@ class CompactUIRegression(unittest.TestCase):
         self.assertIn("setSelection({kind:'technique',id:x.id})",self.knowledge)
         self.assertIn("setSelection({kind:'finding',id:x.id})",self.knowledge)
         self.assertIn(".brain-workspace .brain-data-row",self.brain_css)
+
+    def test_search_and_map_buttons_share_list_toolbar(self):
+        self.assertIn('className="brain-search-trigger"',self.brain_search)
+        self.assertIn("setOpen(true)",self.brain_search)
+        self.assertIn('<Drawer title="Search Collective Memory"',self.brain_search)
+        self.assertIn("onTechnique(id)",self.brain_search)
+        self.assertIn("onFinding(id)",self.brain_search)
+        self.assertNotIn('className="brain-action-row"',self.knowledge)
+        self.assertIn('<BrainSearch onTechnique={openTechnique} onFinding={openFinding}/>',self.knowledge)
+        self.assertIn('className="brain-list-toolbar"',self.knowledge)
+        self.assertIn('className="brain-map-button"',self.knowledge)
+        self.assertNotIn('.brain-workspace .brain-action-row',self.brain_css)
+
+    def test_evidence_map_uses_svg_viewbox_not_cached_css_texture(self):
+        self.assertIn('const svgViewport:GraphViewport',self.graph_viewer)
+        self.assertIn('x:-camera.x/camera.scale',self.graph_viewer)
+        self.assertIn('width:(size.width||980)/camera.scale',self.graph_viewer)
+        self.assertIn('viewport={svgViewport}',self.graph_viewer)
+        self.assertNotIn("style={{transform:",self.graph_viewer)
+        self.assertNotIn('graph-viewer-world',self.graph_viewer)
+        self.assertIn('graph-svg-viewport',self.graph)
+        self.assertIn('viewBox={viewport?',self.graph)
+        self.assertIn('transform:none!important',self.brain_css)
+        self.assertIn('height:100%!important',self.brain_css)
 
     def test_desktop_shell_restores_fixed_viewport_when_height_allows(self):
         self.assertIn("@media(min-width:1600px) and (min-height:950px)",self.css)

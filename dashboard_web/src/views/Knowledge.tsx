@@ -128,13 +128,6 @@ function Knowledge({active,overview,summaryError,refreshOverview}:{
     <span>Today's spend</span><strong>{money(overview?.daily_spend)}</strong><small>Consolidation only</small>
    </div>
   </div>
-  <div className="brain-action-row">
-   <BrainSearch onTechnique={openTechnique} onFinding={openFinding}/>
-   <button type="button" className="brain-map-button" onClick={()=>setShowGraph(true)}
-    title="Open the source-linked techniques and findings map with pan and zoom">
-    Evidence map <span aria-hidden="true">↗</span>
-   </button>
-  </div>
   <div className="brain-stage">
    <section className="brain-list-pane" aria-label="Investigations and techniques">
     <div className="brain-list-toolbar">
@@ -161,6 +154,9 @@ function Knowledge({active,overview,summaryError,refreshOverview}:{
        <option value="MATCH">MATCH</option><option value="FAIL">FAIL</option>
        <option value="DEFER">DEFER</option><option value="SKIP">SKIP</option>
       </select>}
+     <BrainSearch onTechnique={openTechnique} onFinding={openFinding}/>
+     <button type="button" className="brain-map-button" onClick={()=>setShowGraph(true)}
+      title="Explore linked evidence with pan and zoom">Evidence map <span aria-hidden="true">↗</span></button>
     </div>
     <div className="brain-list-columns" aria-hidden="true">
      <span>{isTechniques?'Technique / compiler finding':'Investigation / evidence'}</span>

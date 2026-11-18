@@ -4,8 +4,10 @@ import type {BrainGraph as Graph} from '../types';
 /** Browsable evidence graph, not an invented neural network visualization.
  * Each edge is a real, current source-hash-validated technique/finding link.
  */
-function BrainGraph({graph,onTechnique,onFinding}:{
- graph:Graph|null;onTechnique:(id:number)=>void;onFinding:(id:number)=>void
+export type GraphViewport={x:number;y:number;width:number;height:number;pixelWidth:number;pixelHeight:number};
+function BrainGraph({graph,onTechnique,onFinding,viewport}:{
+ graph:Graph|null;onTechnique:(id:number)=>void;onFinding:(id:number)=>void;
+ viewport?:GraphViewport;
 }){
  const layout=useMemo(()=>{
   const techniques=graph?.techniques?.slice(0,22)||[];
@@ -21,7 +23,10 @@ function BrainGraph({graph,onTechnique,onFinding}:{
   return {left,right,lines,height:max};
  },[graph]);
  if(!layout.left.length)return <div className="empty">The graph will appear as DeepSeek extracts reusable techniques.</div>;
- return <div className="graph-wrap"><svg className="brain-svg" width={980} height={layout.height} viewBox={'0 0 980 '+layout.height} role="img"
+ return <div className={'graph-wrap'+(viewport?' graph-svg-viewport':'')}><svg className="brain-svg"
+  width={viewport?.pixelWidth??980} height={viewport?.pixelHeight??layout.height}
+  viewBox={viewport?[viewport.x,viewport.y,viewport.width,viewport.height].join(' '):'0 0 980 '+layout.height}
+  role="img"
   aria-label="Interactive graph connecting consolidated compiler techniques to their original investigations">
   <text x="26" y="22" className="graph-heading">COMPILER TECHNIQUES</text>
   <text x="692" y="22" className="graph-heading">SOURCE FINDINGS</text>

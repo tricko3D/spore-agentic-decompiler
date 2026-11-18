@@ -1,6 +1,7 @@
 import {useCallback,useEffect,useMemo,useRef,useState,type PointerEvent} from 'react';
 import {createPortal} from 'react-dom';
 import BrainGraph from './BrainGraph';
+import type {GraphViewport} from './BrainGraph';
 import type {BrainGraph as Graph} from '../types';
 
 type Camera={x:number;y:number;scale:number};
@@ -19,6 +20,7 @@ export default function GraphViewer({graph,onTechnique,onFinding,onClose}:{
  const drag=useRef<{x:number;y:number;camera:Camera}|null>(null);
  const moved=useRef(false);
  const [camera,setCamera]=useState<Camera>({x:25,y:25,scale:1});
+ const [size,setSize]=useState({width:0,height:0});
  const height=useMemo(()=>{
   const countA=Math.min(22,graph?.techniques?.length||0);
   const countB=Math.min(30,graph?.findings?.length||0);
@@ -29,6 +31,8 @@ export default function GraphViewer({graph,onTechnique,onFinding,onClose}:{
   if(!node)return;
   const width=node.clientWidth,availableHeight=node.clientHeight;
   if(!width||!availableHeight)return;
+  setSize(current=>current.width===width&&current.height===availableHeight
+   ?current:{width,height:availableHeight});
   const scale=clamp(Math.min((width-56)/WIDTH,(availableHeight-56)/height),minZoom,1.4);
   setCamera({x:(width-WIDTH*scale)/2,y:(availableHeight-height*scale)/2,scale});
  },[height]);
@@ -80,6 +84,14 @@ export default function GraphViewer({graph,onTechnique,onFinding,onClose}:{
   drag.current=null;
   if(event.currentTarget.hasPointerCapture(event.pointerId))event.currentTarget.releasePointerCapture(event.pointerId);
  }
+ // SVG viewBox is updated in *world coordinates* on every pan or zoom.
+ // This forces vector paths, circles and labels to render at display resolution
+ // instead of enlarging a cached GPU texture with a CSS transform.
+ const svgViewport:GraphViewport={
+  x:-camera.x/camera.scale,y:-camera.y/camera.scale,
+  width:(size.width||980)/camera.scale,height:(size.height||600)/camera.scale,
+  pixelWidth:size.width||980,pixelHeight:size.height||600
+ };
  const chooseTechnique=(id:number)=>{onClose();onTechnique(id)};
  const chooseFinding=(id:number)=>{onClose();onFinding(id)};
  return createPortal(<div className="graph-viewer-backdrop"
@@ -97,10 +109,8 @@ export default function GraphViewer({graph,onTechnique,onFinding,onClose}:{
    <div ref={viewport} className="graph-viewer-viewport" onPointerDown={down} onPointerMove={move}
     onPointerUp={up} onPointerCancel={up}
     onClickCapture={event=>{if(moved.current){event.stopPropagation();moved.current=false}}}>
-    <div className="graph-viewer-world"
-     style={{transform:'translate('+camera.x+'px,'+camera.y+'px) scale('+camera.scale+')'}}>
-     <BrainGraph graph={graph} onTechnique={chooseTechnique} onFinding={chooseFinding}/>
-    </div>
+    <BrainGraph graph={graph} viewport={svgViewport}
+     onTechnique={chooseTechnique} onFinding={chooseFinding}/>
    </div>
    <footer className="graph-viewer-hint">
     Drag to pan · Scroll to zoom around cursor · Click a node to inspect evidence · 0 to fit
