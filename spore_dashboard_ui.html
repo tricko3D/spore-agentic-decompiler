@@ -402,8 +402,32 @@ footer{font-size:10px;color:#82a6be;padding:2px 7px}
  border-radius:16px;font-size:11px;font-weight:800;
 }
 /* Button pair is one command cluster, with matching spacing internally. */
-.bottom-hud .dock-console .control-form #startBtn{margin-left:3px}
-.bottom-hud .dock-console .control-form #stopBtn{margin-left:-6px}
+.bottom-hud .dock-console .control-form #runToggle{margin-left:3px;min-width:66px;text-align:center}
+.bottom-hud .dock-console .control-form #runToggle:disabled{opacity:1;cursor:progress}
+.bottom-hud .dock-console .control-form #runToggle[data-mode="starting"],
+.bottom-hud .dock-console .control-form #runToggle[data-mode="stopping"]{
+ border-color:#9fcae1;
+ background:linear-gradient(#78a8c3,#366b8f);
+ color:#f0fbff;
+}
+.dock-action-feedback{
+ display:inline-flex;flex:0 0 auto;align-items:center;gap:5px;
+ min-width:65px;white-space:nowrap;font-size:10px;font-weight:700;
+ color:#c9e6f6;line-height:1;
+}
+.dock-action-feedback:before{
+ content:"";display:inline-block;width:7px;height:7px;border-radius:50%;
+ background:#a7bdca;box-shadow:0 0 5px #05192c;
+}
+.dock-action-feedback[data-state="running"]{color:#b2ef9d}
+.dock-action-feedback[data-state="running"]:before{background:#8de359;box-shadow:0 0 7px #8de35999}
+.dock-action-feedback[data-state="starting"]{color:#c4eaff}
+.dock-action-feedback[data-state="starting"]:before{background:#83d5f1}
+.dock-action-feedback[data-state="stopping"]{color:#f8dfb2}
+.dock-action-feedback[data-state="stopping"]:before{background:#e8b96d}
+.dock-action-feedback[data-state="error"]{color:#ffc3c3}
+.dock-action-feedback[data-state="error"]:before{background:#f38389}
+@media(max-width:1000px){.dock-action-feedback{min-width:54px}}
 
 .bottom-hud .dock-console #locked {
  font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin:0;
@@ -619,8 +643,8 @@ html,body,.grid,.table-scroll,.drawer,.timeline,.control-status{
       <label class="dock-field dock-number"><span>Passes</span><input id="passesInput" aria-label="Additional passes" title="Additional valid attempts per eligible function each launch" type="number" min="1" max="24" value="3"></label>
       <label class="dock-field dock-number"><span>Idle</span><input id="minutesInput" aria-label="Idle timeout in minutes" title="Stops after inactivity, not total runtime" type="number" min="15" max="120" value="20"></label>
       <label class="dock-field dock-budget"><span>Budget $</span><input id="budgetInput" aria-label="Budget in USD" type="number" min="0.01" step="0.01" value="20"></label>
-      <button class="primary" type="submit" id="startBtn">Launch</button>
-      <button class="danger" type="button" id="stopBtn">Stop</button>
+      <button class="primary" type="submit" id="runToggle" data-mode="launch" aria-label="Launch decompilation">Launch</button>
+      <span class="dock-action-feedback" id="actionFeedback" data-state="idle" aria-live="polite">Ready</span>
     </form>
     <div class="control-status" id="controlMessage" role="status" aria-live="polite"></div>
   </div>
@@ -639,13 +663,130 @@ const fmt=x=>typeof x==='number'?'$'+x.toFixed(x<0.01?5:3):'—';
 const bytes=x=>typeof x==='number'?new Intl.NumberFormat('en-US').format(x)+' B':'—';
 const agreement=(x,total,status)=>!x?(status==='FAIL'||status==='DEFER'?`unknown / ${total} bytes`:'—'):x.matched!=null?`${x.matched}/${x.total} bytes`:x.kind==='size_mismatch'?`size ${x.compiled_size}/${x.retail_size} B`:'—';
 let selected=null,off=0,query='',filter='ALL',total=0,mutating=false,detailBusy=false;
+let commandPhase='idle',lastSnapshot=null;
 function set(id,v){$(id).textContent=v}
 function eventHtml(e){return `<div class="event"><span class="kind">${esc(e.kind)}</span><div class="body">${esc(e.message)}</div></div>`}
 function openDrawer(type,id){selected={type,id};$('backdrop').classList.add('open');$('drawer').classList.add('open');refreshDetail()}
 function closeDrawer(){selected=null;$('backdrop').classList.remove('open');$('drawer').classList.remove('open')}
 async function json(path){const r=await fetch(path,{cache:'no-store'});const j=await r.json();if(!r.ok||j.error)throw Error(j.error||'HTTP '+r.status);return j}
-async function control(action,payload={}){if(mutating)return;mutating=true;set('controlMessage',action==='start'?'Starting…':'Sending shutdown signal…');try{const r=await fetch('/api/control/'+action,{method:'POST',headers:{'Content-Type':'application/json','X-Spore-Token':TOKEN},body:JSON.stringify(payload)});const d=await r.json();if(!r.ok)throw Error(d.error||'HTTP '+r.status);set('controlMessage',action==='start'?'Run requested · controller PID '+d.controller_pid:(d.stopping?'Graceful shutdown requested':d.message));}catch(e){set('controlMessage',e.message)}finally{mutating=false}}
-$('controls').addEventListener('submit',e=>{e.preventDefault();control('start',{module:$('module').value,workers:+$('workersInput').value,max_inflight:+$('inflightInput').value,passes:+$('passesInput').value,minutes:+$('minutesInput').value,budget:+$('budgetInput').value})});$('stopBtn').onclick=()=>{if(confirm('Stop the active decompilation run gracefully?'))control('stop')};$('close').onclick=closeDrawer;$('backdrop').onclick=closeDrawer;document.addEventListener('keydown',e=>{if(e.key==='Escape')closeDrawer()});
+function runCoordinatorActive(d){
+ const state=d?.controller||{};
+ if(typeof state.running==='boolean')return state.running;
+ return d?.run?.state==='running';
+}
+function paintRunAction(mode,feedback){
+ const button=$('runToggle'),indicator=$('actionFeedback');
+ button.dataset.mode=mode;
+ button.disabled=mode==='starting'||mode==='stopping';
+ button.classList.toggle('primary',mode==='launch');
+ button.classList.toggle('danger',mode==='stop');
+ button.textContent=mode==='stop'?'Stop':mode==='starting'?'Starting…':mode==='stopping'?'Stopping…':'Launch';
+ button.setAttribute('aria-label',mode==='stop'?'Stop the active decompilation':mode==='launch'?'Launch decompilation':button.textContent);
+ indicator.dataset.state=mode==='launch'&&feedback==='Failed'?'error':mode==='stop'?'running':mode;
+ indicator.textContent=feedback;
+}
+function syncRunAction(d){
+ lastSnapshot=d;
+ if(!CONTROL||mutating)return;
+ const state=d.controller||{},active=runCoordinatorActive(d);
+ const exitKnown=state.returncode!==null&&state.returncode!==undefined;
+ if(commandPhase==='starting'&&!active&&!exitKnown){
+  paintRunAction('starting','Starting');
+  set('expeditionTitle','Current expedition');set('runState','Starting');
+  set('runActivity','Preparing module scope or awaiting workers');
+  return;
+ }
+ if(commandPhase==='stopping'&&active){
+  paintRunAction('stopping','Stopping');
+  set('runState','Stopping');
+  set('runActivity','Graceful shutdown requested');
+  return;
+ }
+ if(commandPhase==='stopping'&&!active){
+  commandPhase='idle';
+  set('controlMessage','Stopped. All recorded attempt history is preserved.');
+ }
+ if(commandPhase==='starting'&&active){
+  commandPhase='running';
+  set('controlMessage','Coordinator is running. Select Stop to request graceful shutdown.');
+ }
+ if(commandPhase==='starting'&&exitKnown&&!active){
+  commandPhase=state.returncode===0?'idle':'error';
+  set('controlMessage',state.returncode===0?
+   'Run finished without any active workers.':
+   (state.error||'Coordinator exited with status '+state.returncode));
+ }
+ if(active){
+  commandPhase='running';
+  paintRunAction('stop','Running');
+ }else if(exitKnown&&state.returncode!==0){
+  commandPhase='error';
+  paintRunAction('launch','Failed');
+  set('controlMessage',state.error||'Coordinator exited with status '+state.returncode);
+ }else if(commandPhase==='error'){
+  paintRunAction('launch','Failed');
+ }else{
+  if(commandPhase==='running'){
+   commandPhase='idle';
+   set('controlMessage','Run finished. Previous attempts and results are retained.');
+  }
+  paintRunAction('launch',d.run?.state==='completed'?'Completed':'Ready');
+ }
+}
+async function control(action,payload={}){
+ if(mutating)return;
+ mutating=true;
+ const starting=action==='start';
+ commandPhase=starting?'starting':'stopping';
+ paintRunAction(commandPhase,starting?'Starting':'Stopping');
+ set('controlMessage',starting?
+  'Starting: validating settings and preparing module scope. This may take a moment.':
+  'Requesting graceful shutdown. Waiting for agents to exit.');
+ set('expeditionTitle','Current expedition');
+ set('runState',starting?'Starting':'Stopping');
+ set('runActivity',starting?'Applying module selection before inference':'Stopping the coordinator and its workers');
+ try{
+  const r=await fetch('/api/control/'+action,{
+   method:'POST',headers:{'Content-Type':'application/json','X-Spore-Token':TOKEN},
+   body:JSON.stringify(payload)
+  });
+  const d=await r.json();
+  if(!r.ok||d.error)throw Error(d.error||'HTTP '+r.status);
+  if(starting){
+   set('controlMessage','Coordinator launched (PID '+d.controller_pid+'). Waiting for workers to start.');
+  }else if(d.stopping){
+   set('controlMessage','Stop signal sent. Workers are shutting down gracefully.');
+  }else{
+   commandPhase='idle';
+   set('controlMessage',d.message||'No active coordinator found.');
+  }
+ }catch(e){
+  commandPhase='error';
+  set('controlMessage',e.message||'Control request failed');
+ }finally{
+  mutating=false;
+  if(lastSnapshot)syncRunAction(lastSnapshot);
+  else paintRunAction(commandPhase==='starting'?'starting':commandPhase==='stopping'?'stopping':'launch',commandPhase==='error'?'Failed':commandPhase==='starting'?'Starting':commandPhase==='stopping'?'Stopping':'Ready');
+  // The next snapshot, not an optimistic click, confirms Running/Stopped.
+  poll();
+ }
+}
+$('controls').addEventListener('submit',e=>{
+ e.preventDefault();
+ if(mutating)return;
+ const mode=$('runToggle').dataset.mode;
+ if(mode==='stop'){
+  if(confirm('Stop the active decompilation run gracefully?'))control('stop');
+  return;
+ }
+ if(mode!=='launch')return;
+ control('start',{
+  module:$('module').value,workers:+$('workersInput').value,
+  max_inflight:+$('inflightInput').value,passes:+$('passesInput').value,
+  minutes:+$('minutesInput').value,budget:+$('budgetInput').value
+ });
+});
+$('close').onclick=closeDrawer;$('backdrop').onclick=closeDrawer;document.addEventListener('keydown',e=>{if(e.key==='Escape')closeDrawer()});
 function arrangeWorkers(){
  const grid=$('agents');
  if(!grid||window.innerWidth<1900)return;
@@ -716,7 +857,7 @@ function render(d){
  $('agents').querySelectorAll('[data-worker]').forEach(n=>n.onclick=()=>openDrawer('agent',n.dataset.worker));
  arrangeWorkers();
  const old=$('module').value;$('module').innerHTML='<option value="*">All confidently classified</option>'+['SPGonzago',...(d.modules||[])].filter((v,i,a)=>a.indexOf(v)===i).map(v=>`<option value="${esc(v)}">${esc(v)}</option>`).join('');if([...$('module').options].some(o=>o.value===old))$('module').value=old;else $('module').value='SPGonzago';
- if(CONTROL&&d.controller?.returncode!=null&&d.controller.returncode!==0){set('controlMessage',d.controller.error||'Run exited with code '+d.controller.returncode)}
+ syncRunAction(d);
  set('connection','Connected');set('clock',new Date().toLocaleTimeString());$('dot').classList.remove('off');set('error','');
 }
 async function refreshFunctions(){try{const d=await json(`/api/functions?status=${encodeURIComponent(filter)}&search=${encodeURIComponent(query)}&offset=${off}&limit=75`);total=d.total;set('resultCount',`${total} results · ${bytes(d.bytes||0)} total`);set('pageInfo',`${off+1}–${Math.min(off+75,total)} of ${total}`);$('prev').disabled=off<=0;$('next').disabled=off+75>=total;
@@ -729,6 +870,7 @@ async function refreshDetail(){if(!selected||detailBusy)return;detailBusy=true;l
  }catch(e){body.innerHTML='<p class="red">'+esc(e.message)+'</p>'}finally{detailBusy=false}}
 async function poll(){try{render(await json('/api/snapshot'));}catch(e){set('connection','Disconnected');$('dot').classList.add('off');set('error',e.message)}}
 $('controls').hidden=!CONTROL;$('locked').hidden=CONTROL;
+if(CONTROL)paintRunAction('launch','Ready');
 poll();refreshFunctions();setInterval(poll,3000);setInterval(refreshFunctions,15000);setInterval(()=>{if(selected)refreshDetail()},1800);
 </script>
 </body></html>
