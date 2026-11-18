@@ -138,7 +138,7 @@ class MemoryTests(unittest.TestCase):
 
     def test_local_unix_socket_has_fallback_and_status(self):
         class Dummy:
-            def search(self, text, count):
+            def search(self, text, count, verified_only=False):
                 return [{"va": VA, "pass": 4, "verified_match": False,
                          "summary": text, "evidence_path": ""}]
         socket_path = mem.paths(self.root)[3]
@@ -184,6 +184,9 @@ class MemoryTests(unittest.TestCase):
         scratch.mkdir(parents=True, exist_ok=True)
         script = scratch / "spore_collective_memory.py"
         script.write_text(FILE.read_text(encoding="utf-8"), encoding="utf-8")
+        source_parser = FILE.with_name("spore_memory_evidence.py")
+        (scratch / source_parser.name).write_text(
+            source_parser.read_text(encoding="utf-8"), encoding="utf-8")
         (scratch / "dis.py").write_text(
             'raise RuntimeError("shadowed dis.py was imported")\n', encoding="utf-8")
         result = subprocess.run(
@@ -192,6 +195,89 @@ class MemoryTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn('"installed": true', result.stdout)
         self.assertNotIn("shadowed dis.py", result.stderr)
+
+    def _write_tool_log(self, va=VA):
+        folder = self.root / "work/scratch/codex-pass1/logs"
+        folder.mkdir(parents=True, exist_ok=True)
+        log = folder / "checker.jsonl"
+        events = [
+            {"type": "tool_use", "part": {"state": {"status": "completed",
+                "input": {"command": "sed -n '1,80p' tools/contrib/check.py"},
+                "output": "CHECKER SOURCE"}}},
+            {"type": "tool_use", "part": {"state": {"status": "completed",
+                "input": {"command": f"cd /tmp; .venv/bin/python tools/contrib/check.py {va} --flags '/O2 /MD'"},
+                "output": "NO MATCH 0x00e61d90 [O2]\nsize=141/144 diffs=12 offsets=0x01,0x02"}}},
+            {"type": "tool_use", "part": {"state": {"status": "completed",
+                "input": {"command": f".venv/bin/python tools/contrib/check.py {va} --flags '/O2 /MD /Gy'"},
+                "output": "NO MATCH 0x00e61d90 [O2]\nsize=144/144 diffs=3 offsets=0x04,0x07"}}},
+            {"type": "tool_use", "part": {"state": {"status": "running",
+                "input": {"command": f".venv/bin/python tools/contrib/check.py {va}"},
+                "output": "size=144/144 diffs=0"}}},
+        ]
+        log.write_text("\n".join(json.dumps(event) for event in events) + "\n")
+        return log
+
+    def test_duplicate_historical_summary_is_removed(self):
+        self.assertTrue(self.add(
+            note="register allocation differs; last pointer spills to stack.",
+            checker="register allocation differs; last pointer spills to stack."))
+        found = mem.query(self.root, "register allocation pointer", 1)
+        self.assertEqual(found[0]["summary"],
+                         "register allocation differs; last pointer spills to stack.")
+        self.assertEqual(found[0]["summary"].count("register allocation"), 1)
+
+    def test_historical_import_extracts_actual_checker_flags_and_metrics(self):
+        log = self._write_tool_log()
+        self.assertTrue(mem.ingest(self.root, VA, 1, "FAIL",
+                                   note="register allocation mismatch",
+                                   checker="size=144/144 diffs=3",
+                                   log_path=str(log)))
+        con = mem.connection(self.root)
+        try:
+            rows = con.execute("""SELECT ordinal,flags,size_compiled,
+                size_retail,diff_bytes FROM finding_experiments
+                ORDER BY ordinal""").fetchall()
+            self.assertEqual(len(rows), 2)
+            self.assertEqual([row["diff_bytes"] for row in rows], [12, 3])
+            self.assertEqual(rows[1]["flags"], "/O2 /MD /Gy")
+        finally:
+            con.close()
+        hit = mem.query(self.root, "register allocation", 1)[0]
+        self.assertEqual(len(hit["experiments"]), 2)
+        self.assertIn("3 different bytes", hit["experiments"][-1])
+        self.assertIn("Checks:", mem.print_findings([hit]))
+        self.assertTrue(mem.evidence.experiment_brief(
+            mem.evidence.parse_experiments(log, VA, self.root)).count("improved"))
+
+    def test_backfill_replays_checker_log_without_touching_operational_db(self):
+        log = self._write_tool_log()
+        db_path = self.root / "work/scratch/codex-pass1/spore.sqlite3"
+        db_path.parent.mkdir(parents=True, exist_ok=True)
+        con = sqlite3.connect(db_path)
+        con.executescript("""CREATE TABLE attempts (
+            id INTEGER PRIMARY KEY,va TEXT,pass_number INTEGER,status TEXT,
+            note TEXT,log_path TEXT);
+            CREATE TABLE attempt_reviews(attempt_id INTEGER);
+        """)
+        con.execute("INSERT INTO attempts VALUES(1,?,?,?,?,?)",
+                    (VA, 1, "FAIL", "register allocation mismatched", str(log)))
+        con.commit()
+        con.close()
+        before = db_path.read_bytes()
+        res = mem.backfill(self.root)
+        self.assertEqual(res["imported"], 1)
+        self.assertEqual(db_path.read_bytes(), before)
+        with mem.connection(self.root) as con:
+            self.assertEqual(con.execute("SELECT count(*) FROM finding_experiments").fetchone()[0], 2)
+
+    def test_verified_only_does_not_invent_relevant_success(self):
+        self.add(note="EAX caller register allocation")
+        mem.ingest(self.root, OTHER, 1, "MATCH", note="Texture atlas sampler",
+                   checker="independently byte-exact")
+        self.assertEqual(mem.query(self.root, "EAX caller", 4,
+                                   verified_only=True), [])
+        self.assertEqual(mem.query(self.root, "Texture atlas", 4,
+                                   verified_only=True)[0]["status"], "MATCH")
 
     def test_pinned_fastembed_api_and_model_registry(self):
         try:
