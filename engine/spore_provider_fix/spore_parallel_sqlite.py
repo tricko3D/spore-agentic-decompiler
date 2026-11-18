@@ -361,7 +361,7 @@ def main():
     r.add_argument('--fixed-inflight', dest='adaptive', action='store_false', help='Disable adaptive Sail congestion control')
     r.set_defaults(adaptive=True)
     r.add_argument('--provider-retries', type=int, default=2, help='Additional provider-only retries before worker stops, without ticking a pass')
-    r.add_argument('--budget', type=float, default=20.0, help='Cumulative shared OpenRouter soft limit, USD')
+    r.add_argument('--budget', type=float, default=20.0, help='Shared spending limit for THIS run, USD; OpenRouter key limits remain separate')
     r.add_argument('--unsafe', action='store_true', help='Existing runner flag; OpenCode remains unsandboxed')
     r.add_argument('--max-functions-per-worker', type=int, default=0, help='Optional limit for initial small-scale test')
     plan=sub.add_parser('plan', help='Preview selected module split without spending any tokens')
