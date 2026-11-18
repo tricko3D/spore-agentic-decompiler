@@ -225,7 +225,7 @@ def _finding(con, finding_id):
 def make_prompt(con, finding_id, repo=None):
     finding, evidence = _finding(con, finding_id)
     lookup = finding["summary"] + " " + finding["details"][:300]
-    similar = candidates(con, lookup, top=5)
+    similar = candidates(con, lookup, top=3)
     # When local FastEmbed is online, broaden the shortlist to semantically
     # related techniques. The OpenRouter consolidator does not do embedding
     # inference and never contacts an external embedding service.
