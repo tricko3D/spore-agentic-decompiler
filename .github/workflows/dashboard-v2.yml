@@ -1,7 +1,7 @@
 name: Dashboard V2 (React/TS + Python)
 on:
   push:
-    branches: ['feature/dashboard-*', dev]
+    branches: ['feature/dashboard-*', dev, main]
     paths:
       - "dashboard_web/src/**"
       - "dashboard_web/package.json"
