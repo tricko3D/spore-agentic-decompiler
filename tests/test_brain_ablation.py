@@ -95,6 +95,23 @@ def run_one():
             db.execute("INSERT INTO compiler_technique_links VALUES(?,?,?,?)",
                        (10,1,f"Observed at {VA}","stack-frame mismatch"))
 
+    def test_benchmark_query_tool_compiles_and_rejects_direct_address_search(self):
+        import ast
+        from types import ModuleType
+        source=(ROOT/"brain_ablation_query.py").read_text(encoding="utf-8")
+        ast.parse(source)
+        with mock.patch.dict(sys.modules,{"spore_collective_memory":ModuleType(
+                "spore_collective_memory")}):
+            queryspec=importlib.util.spec_from_file_location(
+                "test_benchmark_query_module",ROOT/"brain_ablation_query.py")
+            query=importlib.util.module_from_spec(queryspec)
+            queryspec.loader.exec_module(query)
+        cfg={"arm":"consolidated","target":VA,"alias":"0xffeeabcd","seed":2}
+        output,nfind,ntech=query.lookup(self.source,cfg,
+                                       f"Please investigate {VA}")
+        self.assertIn("Direct target-address lookup",output)
+        self.assertEqual((nfind,ntech),(0,0))
+
     def test_candidates_use_only_genuine_failed_standalone_slices(self):
         rows=bench.candidates(self.source,7)
         self.assertEqual(len(rows),1)
