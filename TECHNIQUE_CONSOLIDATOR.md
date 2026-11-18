@@ -102,6 +102,40 @@ cap, configure the key or workspace credit limit with OpenRouter. The provider
 also has per-million-token price ceilings of $0.50 input and $1.00 output,
 which are maximum rates, not expected rates.
 
+### Automatic consolidation, no manual batches
+
+After installing the updated dev scripts, one explicit command enables
+unattended paid technique extraction. You no longer have to run ad-hoc
+consolidation batches while this service is active:
+
+~~~bash
+cd ~/spore-agentic-decompiler
+bash enable_automatic_consolidation.sh --repo ~/spore-decomp --daily-usd 0.25
+~~~
+
+The installer prefers a persistent systemd user service, which resumes after
+user login while WSL systemd is running. If systemd --user is unavailable,
+it uses a background nohup process for the current WSL lifetime, which does
+not survive a full WSL shutdown. Neither mode changes the SAD worker processes,
+their OpenCode sessions, or the operational SQLite database.
+
+Enabling this service authorizes ongoing paid DeepSeek requests. The default
+estimated local cap is USD 0.25 per UTC day. It is not an enforced provider
+credit ceiling. The existing OpenRouter key is used.
+
+~~~bash
+bash enable_automatic_consolidation.sh --repo ~/spore-decomp --status
+bash enable_automatic_consolidation.sh --repo ~/spore-decomp --disable
+~~~
+
+Individual malformed model responses are recorded with their finding ID and
+error reason, then retried with exponential backoff up to three failures.
+Other findings proceed in the same batch. Network/configuration errors stop
+the current batch to avoid repeated paid provider failures. The status command
+also shows recent errors and their next eligible retry times. Charges are
+settled from provider-reported usage even for rejected proposals.
+
+
 Optional low-priority, continuous consolidation, started only explicitly:
 
 ~~~bash
