@@ -1,4 +1,4 @@
-import {useEffect,useState} from 'react';
+import {useCallback,useEffect,useState} from 'react';
 import {controlsEnabled,money,post,pretty,query} from '../api';
 import {usePoll} from '../hooks';
 import {Drawer,ErrorText,Metric,Panel,Tag} from '../components/Panel';
@@ -138,6 +138,8 @@ export default function Knowledge({active}:{active:boolean}){
  const [mode,setMode]=useState<'techniques'|'findings'>('techniques');
  const [draft,setDraft]=useState(''),[search,setSearch]=useState(''),[category,setCategory]=useState<Category>('all');
  const [status,setStatus]=useState(''),[offset,setOffset]=useState(0),[selection,setSelection]=useState<Selection|null>(null);
+ const openTechnique=useCallback((id:number)=>setSelection({kind:'technique',id}),[]);
+ const openFinding=useCallback((id:number)=>setSelection({kind:'finding',id}),[]);
  useEffect(()=>{const t=window.setTimeout(()=>{setSearch(draft);setOffset(0)},300);return ()=>clearTimeout(t)},[draft]);
  const endpoint=mode==='techniques'?'/api/knowledge/techniques?'+query({
    search,category:category==='all'?'':category,offset,limit:30
@@ -158,14 +160,13 @@ export default function Knowledge({active}:{active:boolean}){
    <Metric label="Embedding backlog" value={pretty(overview?.pending_embeddings)} detail="Local ONNX model"/>
    <Metric label="Today’s spend" value={money(overview?.daily_spend)} detail="Separate from worker spend"/>
   </div><ErrorText error={summaryError}/>
-  <BrainSearch onTechnique={id=>setSelection({kind:'technique',id})}
-   onFinding={id=>setSelection({kind:'finding',id})}/>
+  <BrainSearch onTechnique={openTechnique} onFinding={openFinding}/>
   <div className="knowledge-layout">
    <div className="knowledge-main">
     <Panel title="Evidence graph" subtitle="Click a technique or function; every edge represents a stored evidence link"
       action={<span className="subtle">Current source hashes only</span>}>
-     <BrainGraph graph={graph} onTechnique={id=>setSelection({kind:'technique',id})}
-       onFinding={id=>setSelection({kind:'finding',id})}/>
+     <BrainGraph graph={graph} onTechnique={openTechnique}
+       onFinding={openFinding}/>
     </Panel>
     <Panel title="Explore the brain" subtitle="Search consolidated compiler techniques and individual investigations" className="explorer">
      <div className="tabs"><button className={mode==='techniques'?'selected':''}
