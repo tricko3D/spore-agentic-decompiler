@@ -288,16 +288,89 @@ footer{font-size:10px;color:#82a6be;padding:2px 7px}
  .explorer-heading .small{display:none}
 }
 @media(prefers-reduced-motion:reduce){*,*:before,*:after{transition:none!important;animation:none!important}}
+
+/* SAD in-game command deck with compact fleet and integrated wallpaper. */
+.game-shell{
+  gap:8px;padding:10px 13px 7px;
+  background:
+    linear-gradient(180deg,rgba(5,15,30,.35),rgba(2,11,25,.62)),
+    url('/wallpaper') center center / cover no-repeat fixed,
+    radial-gradient(ellipse at 58% 18%,#254f76,#071728 76%);
+}
+.workspace{flex:1;min-height:0}
+.agent-column{background:linear-gradient(160deg,#24445fc9,#102b49dc 28%,#0c2039df 90%)}
+.metric-grid,.panel{backdrop-filter:blur(3px)}
+.agent-column .grid{justify-content:center;align-content:start;gap:11px;scrollbar-gutter:stable}
+.bottom-hud{
+  position:relative;z-index:3;flex:none;display:grid;
+  grid-template-columns:minmax(180px,225px) minmax(0,1fr) minmax(170px,205px);
+  align-items:center;gap:14px;min-width:0;
+  padding:8px 14px;min-height:95px;
+  border:2px solid #9abed0;border-radius:24px 24px 16px 16px;
+  background:linear-gradient(#527d9b 0%,#365f80 10%,#1e3e5b 42%,#102a47 86%,#0b1d34 100%);
+  box-shadow:inset 0 2px #d4f3ff8c,inset 0 -4px 8px #051626,0 -4px 12px #000a
+}
+.bottom-hud:before{content:"";position:absolute;left:25px;right:25px;top:3px;height:1px;
+ background:linear-gradient(90deg,transparent,#d3f4ff92,transparent);pointer-events:none}
+.dock-identity{display:flex;align-items:center;gap:9px;min-width:0}
+.spore-mark{
+ display:flex;align-items:center;justify-content:center;
+ width:65px;height:65px;flex:none;border:2px solid #aad9eb;border-radius:50%;
+ background:radial-gradient(circle at 30% 18%,#8ec6e4,#245f89 55%,#0a2542 85%);
+ box-shadow:inset 0 2px 5px #e3f8ff8c,inset 0 -4px 8px #051a32,0 2px 5px #0009
+}
+.spore-mark img{width:58px;height:58px;object-fit:contain;filter:drop-shadow(0 1px 2px #09203e)}
+.dock-brand{display:flex;flex-direction:column;gap:1px;min-width:0}
+.dock-brand strong{font-size:28px;font-weight:950;line-height:1;letter-spacing:1px;color:#eefcff;text-shadow:0 2px #082642}
+.dock-brand span{font-size:11px;font-weight:750;line-height:1.2;color:#c9e8f7}
+.dock-console{display:flex;flex-direction:column;gap:4px;min-width:0}
+.dock-caption{font-size:11px;font-weight:800;color:#d6f1ff;padding-left:5px}
+.dock-console .control-form{display:flex;flex-wrap:wrap;gap:6px;align-items:end}
+.dock-console .control-form label{font-size:10px;gap:2px;color:#d8eefa}
+.dock-console .control-form select{max-width:185px}
+.dock-console .control-form input[type=number]{width:63px}
+.dock-console .control-form input,.dock-console .control-form select{padding:6px 8px;font-size:12px;height:31px;border-radius:10px}
+.dock-console .control-form button{height:32px;align-self:end;border-radius:17px}
+.dock-console .control-status{margin:0;min-height:0;font-size:10px;max-height:26px;overflow:auto}
+.dock-console .note{margin:0}
+.dock-connection{display:flex;flex-direction:column;align-items:flex-end;gap:6px;min-width:0}
+.dock-connection .up{display:flex;align-items:center;justify-content:flex-end;gap:7px;flex-wrap:wrap;
+ border:1px solid #5a81a0;background:#102944;padding:7px 9px;border-radius:20px;font-size:11px}
+.dock-connection .up .small{font-size:10px}
+.dock-subline{text-align:right;color:#a3cde3;font-size:10px}
+.dock-subline #error{display:block}
+html,body,.grid,.table-scroll,.drawer,.timeline,.control-status{scrollbar-color:#83bad5 #0a2641;scrollbar-width:thin}
+::-webkit-scrollbar{width:11px;height:11px}
+::-webkit-scrollbar-track{background:#0a2641;border:1px solid #4a7291;border-radius:12px;box-shadow:inset 0 0 5px #020b1b}
+::-webkit-scrollbar-thumb{border:2px solid #0a2641;border-radius:12px;background:linear-gradient(90deg,#417194,#9ac7dd 55%,#4f82a4)}
+::-webkit-scrollbar-thumb:hover{background:linear-gradient(90deg,#639dc0,#c4e5f2,#6194b5)}
+::-webkit-scrollbar-corner{background:#0a2641}
+@media(min-width:1900px){
+ .game-shell{gap:7px;padding:8px 11px 6px}
+ .bottom-hud{min-height:93px;padding:8px 13px}
+ .agent-column .grid{align-content:center;justify-content:center;gap:11px;
+  grid-template-columns:repeat(var(--worker-cols,4),var(--worker-size,150px));
+  grid-auto-rows:var(--worker-size,150px)}
+}
+@media(max-width:1899px){
+ .bottom-hud{grid-template-columns:190px minmax(0,1fr)}
+ .dock-connection{grid-column:1 / -1;flex-direction:row;justify-content:flex-end;align-items:center}
+}
+@media(max-width:1100px){
+ .bottom-hud{grid-template-columns:1fr}
+ .dock-console{order:2}
+ .dock-connection{grid-column:1;order:3}
+}
+@media(max-width:600px){
+ .bottom-hud{padding:9px;gap:8px;border-radius:16px}
+ .spore-mark{width:50px;height:50px}
+ .spore-mark img{width:44px;height:44px}
+ .dock-brand strong{font-size:24px}
+}
 </style></head>
 <body>
 <div class="game-shell">
-<header class="top">
- <div class="logo-unit"><div class="logo-orb" aria-hidden="true">S</div><div>
- <h1><span class="wordmark">Spore Agentic</span><span class="title-divider">/</span><span class="title-context">Mission Control</span></h1>
- <p>Decompilation command deck</p>
- </div></div>
- <div class="up"><span class="dot" id="dot"></span><span id="connection">Connecting…</span><span class="small" id="clock"></span></div>
-</header>
+
 <section class="metric-grid" aria-label="Decompiler telemetry">
  <div class="metric metric-match"><span class="small">Matched functions</span><strong id="matches">—</strong><small id="matchBytes">Verified bytes</small></div>
  <div class="metric metric-fail"><span class="small">Unmatched functions</span><strong id="fails">—</strong><small id="failBytes">Remaining differences</small></div>
@@ -319,27 +392,14 @@ footer{font-size:10px;color:#82a6be;padding:2px 7px}
      <div class="subhead"><h3>Failed attempts</h3><span class="small">Latest function outcome</span></div>
      <div class="efforts" id="efforts"></div>
     </div>
-    <div class="controls-pane">
-     <div class="pane-title"><span class="bubble-glyph" aria-hidden="true">⚙</span><h2>Command console</h2></div>
-     <div id="locked" class="note">Read-only mode. Restart the dashboard with <code>--control</code> to enable controls.</div>
-     <form id="controls" class="control-form" hidden>
-      <label>Module<select id="module"></select></label>
-      <label>Workers<input id="workersInput" type="number" min="1" max="32" value="16"></label>
-      <label>Max in flight<input id="inflightInput" type="number" min="1" max="32" value="16"></label>
-      <label>Additional passes<input title="Fresh attempts per eligible function for each launch" id="passesInput" type="number" min="1" max="24" value="3"></label>
-      <label>Idle timeout (min)<input id="minutesInput" type="number" min="15" max="120" value="20" title="Stops after inactivity, not elapsed run time"></label>
-      <label>Budget USD<input id="budgetInput" type="number" min="0.01" step="0.01" value="20"></label>
-      <button class="primary" type="submit" id="startBtn">Launch</button>
-      <button type="button" id="stopBtn" class="danger">Stop</button>
-     </form>
-     <div class="control-status" id="controlMessage" role="status" aria-live="polite"></div>
-     <p class="note">The selected module scope applies before inference. Stop preserves the recorded history.</p>
+    <div class="controls-pane"><div class="pane-title"><span class="bubble-glyph" aria-hidden="true">◌</span><h2>Current expedition</h2></div>
      <div class="run-block">
-      <h3>Current expedition</h3>
+      <h3>Run progress</h3>
       <div id="runStats" class="mono small">No run recorded</div>
       <div class="mini-bar"><span id="runProgress" style="width:0%"></span></div>
       <div class="small" id="runPercent">—</div>
      </div>
+<p class="note">Attempt history is preserved across runs.</p>
     </div>
    </div>
   </section></div>
@@ -361,7 +421,31 @@ footer{font-size:10px;color:#82a6be;padding:2px 7px}
   <div class="grid" id="agents"><div class="empty">No workers in the current expedition</div></div>
  </section>
 </main>
-<footer>Local dashboard. Agent streams can contain sensitive checkout information. No model command bodies are transmitted. <span id="error"></span></footer>
+<footer class="bottom-hud" aria-label="SAD command bar">
+ <div class="dock-identity">
+  <div class="spore-mark"><img src="https://media.contentapi.ea.com/content/dam/gin/common/logos/spore-mono-logo.png" width="58" height="58" alt="Spore logo"></div>
+  <div class="dock-brand"><strong>SAD</strong><span>Spore Agentic Compiler</span></div>
+ </div>
+ <div class="dock-console">
+  <div class="dock-caption">Command console</div>
+  <div id="locked" class="note">Read-only mode. Restart with <code>--control</code> to enable commands.</div>
+     <form id="controls" class="control-form" hidden>
+      <label>Module<select id="module"></select></label>
+      <label>Workers<input id="workersInput" type="number" min="1" max="32" value="16"></label>
+      <label>Max in flight<input id="inflightInput" type="number" min="1" max="32" value="16"></label>
+      <label>Additional passes<input title="Fresh attempts per eligible function for each launch" id="passesInput" type="number" min="1" max="24" value="3"></label>
+      <label>Idle timeout (min)<input id="minutesInput" type="number" min="15" max="120" value="20" title="Stops after inactivity, not elapsed run time"></label>
+      <label>Budget USD<input id="budgetInput" type="number" min="0.01" step="0.01" value="20"></label>
+      <button class="primary" type="submit" id="startBtn">Launch</button>
+      <button type="button" id="stopBtn" class="danger">Stop</button>
+     </form>
+  <div class="control-status" id="controlMessage" role="status" aria-live="polite"></div>
+ </div>
+ <div class="dock-connection">
+  <div class="up"><span class="dot" id="dot"></span><span id="connection">Connecting…</span><span class="small" id="clock"></span></div>
+  <div class="dock-subline">Local dashboard <span id="error"></span></div>
+ </div>
+</footer>
 </div>
 <div class="drawer-back" id="backdrop"></div>
 <aside class="drawer" id="drawer" aria-label="Function or agent details"><div class="drawer-head"><div><h2 id="detailTitle">Details</h2><p id="detailSub"></p></div><button id="close">Close</button></div><div id="detailBody"></div></aside>
@@ -399,6 +483,7 @@ function arrangeWorkers(){
  if(best){
    grid.style.setProperty('--worker-cols',best.cols);
    grid.style.setProperty('--worker-size',best.size+'px');
+   // Deliberate 11px gutters replace space-evenly distribution.
  }
 }
 if(typeof ResizeObserver!=='undefined'){
