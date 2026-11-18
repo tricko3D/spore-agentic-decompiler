@@ -428,55 +428,81 @@ html,body,#root{height:100%;overflow:hidden}
 .knowledge-view .evidence-map{contain:layout style}
 .knowledge-view .metrics{box-shadow:none}
 
-/* Two discrete always-present command bubbles, outside either scroll surface. */
-.persistent-docks{
- display:flex;align-items:center;justify-content:space-between;
- gap:10px;flex:none;height:48px;min-height:48px;min-width:0;
- position:relative;z-index:6;
-}
-.persistent-docks .control-dock{
- flex-wrap:nowrap;
- order:0;flex:0 1 auto;max-width:none;width:auto;min-width:0;
- margin:0;align-self:center;overflow-x:auto;overflow-y:hidden;
-}
-.knowledge-dock{
+/* One permanent bottom bar. Brand | Agents | Brain | agent controls | backend. */
+.bottom-hud{
  display:flex;align-items:center;gap:10px;
- flex:0 0 auto;min-width:0;height:46px;padding:3px 11px 3px 8px;
+ flex:0 0 50px;height:50px;min-height:50px;min-width:0;
+ padding:3px 11px 3px 5px;position:relative;z-index:6;
  border:2px solid #a4cadb;border-radius:25px;
  background:linear-gradient(#50809d,#315b79 23%,#0e2a45);
- box-shadow:inset 0 1px #effaff83,0 3px 6px #0008;
+ box-shadow:inset 0 2px #effaff83,0 3px 9px #0009;
  white-space:nowrap;
 }
-.knowledge-dock-state{display:flex;align-items:center;gap:7px;padding-right:10px;border-right:1px solid #87b5cc77}
-.knowledge-dock-state>div{display:grid;gap:1px}
-.knowledge-dock-state strong{font-size:12px;line-height:1.1}
-.knowledge-dock-state small{font-size:9px;line-height:1.1;color:#b9d5e5}
-.knowledge-dock-limit{font:10px var(--numbers);color:#bfdceb}
-.knowledge-dock-actions{display:flex;align-items:center;gap:5px}
-.knowledge-dock-actions button{flex:none;font-size:11px;height:28px;border-radius:15px;padding:3px 9px}
-.knowledge-dock-message{
- position:absolute;bottom:55px;right:0;max-width:460px;
- border:1px solid #82b3cf;border-radius:9px;
- background:#143a55;color:#e1f5ff;font-size:11px;padding:6px 10px;
+.hud-brand{display:flex;align-items:center;gap:7px;flex:none;padding-right:9px;border-right:1px solid #8fb9cc66}
+.hud-brand .mini-orb{width:32px;height:32px;font-size:17px}
+.hud-brand strong{font-size:18px;line-height:1}
+.hud-nav{display:flex;align-items:center;gap:5px;flex:none}
+.hud-nav button{
+ font-size:11px;line-height:1;height:31px;padding:5px 14px;
+ border-radius:14px;box-shadow:none;
+ border:1px solid #618eaa;background:linear-gradient(#305b78,#16354f);
+ color:#c0d6e3;
 }
-.persistent-docks>.dock-message{position:absolute;bottom:55px;left:90px;max-width:520px}
-@media(max-width:1900px){
- .knowledge-dock{gap:6px;padding-right:6px}
- .knowledge-dock-limit{display:none}
- .persistent-docks .control-dock{max-width:calc(100% - 310px)}
- .knowledge-dock-actions button{padding:3px 7px}
+.hud-nav button.selected{
+ color:#173211;background:linear-gradient(#dbf9aa,#8cc54c);
+ border-color:#ebffc3;box-shadow:inset 0 1px #fff9,0 1px 3px #0008;
 }
-@media(max-width:1350px){
- .persistent-docks{height:48px;gap:6px}
- .persistent-docks .control-dock{max-width:calc(100% - 255px)}
- .knowledge-dock-state{gap:5px;padding-right:5px}
- .knowledge-dock-actions{gap:3px}
- .knowledge-dock-actions button{font-size:10px;padding:3px 5px}
+.hud-spacer{flex:1 1 18px;min-width:8px}
+.hud-spacer-end{flex:1 1 12px;min-width:8px}
+.bottom-hud .control-dock{
+ order:0;display:flex;flex:0 1 auto;align-items:center;
+ width:auto;max-width:none;height:100%;min-height:0;min-width:0;
+ margin:0;padding:0;gap:8px;border:0;border-radius:0;
+ background:transparent;box-shadow:none;overflow-x:auto;overflow-y:hidden;
+ scrollbar-width:none;white-space:nowrap;
 }
-@media(max-width:900px){
- .persistent-docks{height:96px;flex-direction:column;align-items:stretch;justify-content:center;gap:5px}
- .persistent-docks .control-dock{width:100%;max-width:100%;flex:none}
- .knowledge-dock{height:42px;flex:none;align-self:flex-end}
- .persistent-docks>.dock-message{bottom:103px;left:8px}
- .knowledge-dock-message{bottom:103px}
+.bottom-hud .control-dock::-webkit-scrollbar{display:none}
+.bottom-hud .control-fields{flex:0 0 auto;flex-wrap:nowrap}
+.bottom-hud .dock-actions{flex:0 0 auto}
+.bottom-hud .dock-message{
+ position:absolute;left:33%;bottom:55px;z-index:9;
+ max-width:min(580px,70vw);max-height:115px;overflow:auto;
+}
+.hud-connection{
+ display:flex;align-items:center;gap:7px;
+ flex:none;padding-left:12px;border-left:1px solid #8fb9cc66;
+ color:#deeffb;font-size:10px;letter-spacing:.35px;
+}
+.hud-connection.connected .status-dot{background:#8be66f}
+.hud-connection.disconnected .status-dot{background:#ed8e92}
+.hud-connection.connecting .status-dot{background:#dfb76a}
+.knowledge-service-panel{background:#11283e}
+.knowledge-service-body{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+.knowledge-service-body .knowledge-dock-state{display:flex;align-items:center;gap:8px}
+.knowledge-service-body .knowledge-dock-state>div{display:grid;gap:2px}
+.knowledge-service-body .knowledge-dock-state strong{font-size:12px}
+.knowledge-service-body .knowledge-dock-state small{font-size:10px;color:#b9d5e5}
+.knowledge-service-body .knowledge-dock-limit{font:11px var(--numbers);color:#c5dce9}
+.knowledge-service-body .knowledge-dock-actions{display:flex;gap:5px;margin-left:auto}
+.knowledge-service-body .knowledge-dock-actions button{font-size:11px;padding:5px 9px}
+@media(max-width:1500px){
+ .bottom-hud{gap:7px}
+ .hud-nav button{padding:5px 10px}
+ .hud-spacer,.hud-spacer-end{min-width:4px}
+ .hud-connection{padding-left:7px}
+}
+@media(max-width:1050px){
+ .bottom-hud{gap:5px;padding-right:7px}
+ .hud-brand{gap:4px;padding-right:5px}
+ .hud-brand strong{font-size:14px}
+ .hud-nav{gap:3px}
+ .hud-nav button{padding:5px 8px}
+ .bottom-hud .control-dock{flex:1 1 auto}
+ .hud-connection strong{font-size:9px}
+}
+@media(max-width:600px){
+ .hud-connection strong{display:none}
+ .hud-connection{padding-left:5px}
+ .hud-brand strong{display:none}
+ .hud-spacer,.hud-spacer-end{display:none}
 }

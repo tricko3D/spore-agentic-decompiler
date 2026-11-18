@@ -1,6 +1,6 @@
 import {useEffect,useState} from 'react';
 import {controlsEnabled,money,post} from '../api';
-import {Drawer,ErrorText} from './Panel';
+import {Drawer,ErrorText,Panel} from './Panel';
 import type {ConsolidatorState} from '../types';
 
 /** Persistent consolidation controls, independent of the decompiler fleet. */
@@ -36,8 +36,9 @@ export default function KnowledgeDock({state,onRefresh}:{state:ConsolidatorState
   finally{setBusy(false)}
  }
  return <>
-  <section className="knowledge-dock" aria-label="Knowledge consolidation controls">
-   <div className="knowledge-dock-state">
+  <Panel title="Knowledge consolidation" subtitle="Independent DeepSeek service" className="knowledge-service-panel">
+   <div className="knowledge-service-body">
+    <div className="knowledge-dock-state">
     <span className={'status-dot '+(state?.active?'online':'offline')}/>
     <div><strong>Knowledge</strong><small>{state?.active?'ONLINE':state?.installed?'OFFLINE':'NOT CONFIGURED'}</small></div>
    </div>
@@ -50,8 +51,9 @@ export default function KnowledgeDock({state,onRefresh}:{state:ConsolidatorState
     <button type="button" disabled={!available||busy}
      onClick={()=>setEditing(true)}>Configure</button>
    </div>
-  </section>
-  {message&&<div className="knowledge-dock-message" role="status">{message}</div>}
+   </div>
+   {message&&<p className="subtle" role="status">{message}</p>}
+  </Panel>
   {editing&&<Drawer title="Knowledge consolidation" subtitle={state?.mode||'Independent DeepSeek service'} onClose={()=>setEditing(false)}>
    <p>Settings apply to the next consolidation cycle. Knowledge remains independent of agent launches.</p>
    <div className="settings-grid">

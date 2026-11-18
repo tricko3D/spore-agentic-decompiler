@@ -7,9 +7,9 @@ while providing a separately managed, interactive Collective Memory view.
 
 ## Application boundaries
 
-- dashboard_web/src/App.tsx: shell, shared telemetry polling and two persistent control bubbles.
-- dashboard_web/src/components/AgentDock.tsx: persistent decompiler launch/stop and view switch.
-- dashboard_web/src/components/KnowledgeDock.tsx: persistent independent consolidator control and settings.
+- dashboard_web/src/App.tsx: shell, shared telemetry polling and one permanent bottom command bar.
+- dashboard_web/src/components/AgentDock.tsx: permanent inline decompiler launch/stop controls.
+- dashboard_web/src/components/KnowledgeDock.tsx: consolidator control panel available in Brain view.
 - dashboard_web/src/views/Operations.tsx: existing worker fleet, byte metrics,
   function explorer, expedition controls, provisional planning, allowlist editor,
   claimed-user selection, attempt history and checker diagnostics.
@@ -53,7 +53,7 @@ large Windows/Chromium displays. The compact mode addresses this structurally:
   desktop displays, with scroll limited to necessary data areas.
 - Keeps 16 agent cards small and fixed-height instead of stretching the grid
   to the entire document's height.
-- The Spore-style Agent bubble and a separate Knowledge service bubble are both fixed to the bottom, in both views. Operations remains the default and the Agent bubble switches views.
+- One permanent Spore-style bottom bar shows SAD, Agents and Brain navigation, agent controls and actual backend connection status in that order. Consolidation controls are available inside Brain, not as a second bottom bubble.
 - Replaces the width-scaled SVG graph with a bounded, clickable source-link
   adjacency map. Selecting a technique reveals the investigations supporting
   that specific observation, with explicit access to full details.
@@ -81,7 +81,7 @@ cd ~/spore-agentic-decompiler
 python3 spore_agentic.py dashboard --control
 ~~~
 
-Open http://127.0.0.1:8765. Operations opens by default with the agent fleet. Both independent command bubbles stay visible in either view; switch via the Agent bubble.
+Open http://127.0.0.1:8765. Operations opens by default with the agent fleet. The single command bar remains present in both views, with Agents and Brain tabs, unchanged agent controls and the backend connection indicator.
 The old dashboard remains accessible at http://127.0.0.1:8765/legacy and
 is used automatically if the compiled frontend does not exist.
 
@@ -166,4 +166,4 @@ continue to work until the feature branch is validated and merged.
 
 ## Knowledge interaction performance
 
-Knowledge now has a single native scrolling owner. Its previously nested result-list scroll is removed, and Knowledge panels/cards have static opaque backgrounds, no backdrop blur and no expensive hover transitions. Controls remain mounted outside the scroll surface. CI validates builds and regression tests, but cannot measure actual Windows browser GPU frame time.
+Knowledge now has a single native scrolling owner. Its previously nested result-list scroll is removed, and Knowledge panels/cards have static opaque backgrounds, no backdrop blur and no expensive hover transitions. The single bottom command bar remains mounted outside the scroll surface. CI validates builds and regression tests, but cannot measure actual Windows browser GPU frame time.

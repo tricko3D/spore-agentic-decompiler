@@ -4,6 +4,7 @@ import {usePoll} from '../hooks';
 import {Drawer,ErrorText,Metric,Panel,Tag} from '../components/Panel';
 import BrainGraph from '../components/BrainGraph';
 import BrainSearch from '../components/BrainSearch';
+import KnowledgeDock from '../components/KnowledgeDock';
 import type {BrainGraph as Graph,Finding,FindingDetail,
   KnowledgeOverview,Paginated,Technique,TechniqueDetail} from '../types';
 
@@ -157,6 +158,7 @@ export default function Knowledge({active,overview,summaryError,refreshOverview}
     </Panel>
    </div>
    <div className="knowledge-side">
+    <KnowledgeDock state={overview?.consolidator||null} onRefresh={refreshOverview}/>
     <Panel title="Extraction pipeline" subtitle="Status of the independent, evidence-backed queue">
      <div className="queue-bars">
       {['done','claimed','pending','failed'].map(x=><div key={x} className="queue-row">

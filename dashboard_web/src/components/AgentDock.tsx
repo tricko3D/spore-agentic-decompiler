@@ -1,7 +1,7 @@
 import {useCallback,useEffect,useState} from 'react';
 import {controlsEnabled,get,post,query} from '../api';
 import {Drawer,ErrorText} from './Panel';
-import type {AllowList,Claimants,Plan,Snapshot,View} from '../types';
+import type {AllowList,Claimants,Plan,Snapshot} from '../types';
 
 type Launch={module:string;workers:number;max_inflight:number;passes:number;minutes:number;budget:number;claim_user:string};
 const START:Launch={module:'SPGonzago',workers:16,max_inflight:16,passes:3,minutes:20,budget:20,claim_user:''};
@@ -31,7 +31,7 @@ function AllowListEditor({onClose}:{onClose:()=>void}){
   <button className="primary" disabled={!controlsEnabled||saving||!doc} onClick={()=>void save()}>{saving?'Saving…':'Save allowlist'}</button>
  </Drawer>;
 }
-export default function AgentDock({snapshot,onUpdated,view,onViewSwitch}:{snapshot:Snapshot|null;onUpdated:()=>void;view:View;onViewSwitch:()=>void}){
+export default function AgentDock({snapshot,onUpdated}:{snapshot:Snapshot|null;onUpdated:()=>void}){
  const [form,setForm]=useState<Launch>(START),[busy,setBusy]=useState(false),[notice,setNotice]=useState('');
  const [preview,setPreview]=useState<Plan|null>(null),[claimants,setClaimants]=useState<Claimants|null>(null),[editor,setEditor]=useState(false);
  const running=Boolean(snapshot?.controller?.running||snapshot?.run?.state==='running');
@@ -65,8 +65,7 @@ export default function AgentDock({snapshot,onUpdated,view,onViewSwitch}:{snapsh
   })))}
   catch(e){setNotice((e as Error).message)}
  };
- return <><div className="control-dock">
-  <div className="dock-id"><span className="mini-orb">S</span><strong>SAD</strong><small>{running?'Expedition active':'Mission controls'}</small></div>
+ return <><div className="control-dock" aria-label="Agent controls">
   <div className="control-fields">
    <label>Module<select value={form.module} onChange={e=>update('module',e.target.value)}>
     <option value="SPGonzago">SPGonzago</option>
@@ -90,7 +89,6 @@ export default function AgentDock({snapshot,onUpdated,view,onViewSwitch}:{snapsh
    <button className={running?'danger':'primary'} disabled={!controlsEnabled||busy}
      onClick={()=>void toggle()}>{busy?'Working…':running?'Stop workers':'Launch'}</button>
   </div>
-  <button type="button" className="dock-knowledge" onClick={onViewSwitch} aria-label={view==='knowledge'?'Open Operations view':'Open Knowledge view'}>{view==='knowledge'?'Operations':'Knowledge'}</button>
  </div>
   {(notice||preview)&&<div className="dock-message" role="status">
    {notice||(String(preview?.eligible||0)+' eligible functions · '+String(preview?.workers||0)+' workers · provisional scope')}

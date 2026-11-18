@@ -1,10 +1,9 @@
 import {lazy,Suspense,useCallback,useEffect,useState} from 'react';
 import {usePoll} from './hooks';
 import AgentDock from './components/AgentDock';
-import KnowledgeDock from './components/KnowledgeDock';
 import type {KnowledgeOverview,Snapshot,View} from './types';
 
-// Views mount independently. Both control bubbles always stay mounted.
+// Only the selected workspace mounts. The bottom command bar never unmounts.
 const Operations=lazy(()=>import('./views/Operations'));
 const Knowledge=lazy(()=>import('./views/Knowledge'));
 function initialView():View{return window.location.hash==='#knowledge'?'knowledge':'operations'}
@@ -21,7 +20,7 @@ export default function App(){
   window.location.hash=next==='knowledge'?'knowledge':'operations';
   setView(next);
  },[]);
- const toggle=useCallback(()=>navigate(view==='knowledge'?'operations':'knowledge'),[view,navigate]);
+ const connection=snapshotError?'disconnected':snapshot?'connected':'connecting';
  return <div className="game-shell">
   <main className="view-content">
    <Suspense fallback={<div className="panel">Loading dashboard…</div>}>
@@ -30,9 +29,21 @@ export default function App(){
       :<Knowledge active overview={overview} summaryError={summaryError} refreshOverview={refreshOverview}/>}
    </Suspense>
   </main>
-  <div className="persistent-docks" aria-label="Persistent dashboard controls">
-   <AgentDock snapshot={snapshot} onUpdated={refreshSnapshot} view={view} onViewSwitch={toggle}/>
-   <KnowledgeDock state={overview?.consolidator||null} onRefresh={refreshOverview}/>
-  </div>
+  <footer className="bottom-hud" aria-label="SAD dashboard command bar">
+   <div className="hud-brand"><span className="mini-orb">S</span><strong>SAD</strong></div>
+   <nav className="hud-nav" aria-label="Dashboard views">
+    <button type="button" className={view==='operations'?'selected':''}
+     aria-current={view==='operations'?'page':undefined} onClick={()=>navigate('operations')}>Agents</button>
+    <button type="button" className={view==='knowledge'?'selected':''}
+     aria-current={view==='knowledge'?'page':undefined} onClick={()=>navigate('knowledge')}>Brain</button>
+   </nav>
+   <div className="hud-spacer" aria-hidden="true"/>
+   <AgentDock snapshot={snapshot} onUpdated={refreshSnapshot}/>
+   <div className="hud-spacer hud-spacer-end" aria-hidden="true"/>
+   <div className={'hud-connection '+connection} role="status" title={snapshotError||'Dashboard backend connection'}>
+    <span className={'status-dot '+(connection==='connected'?'online':'offline')}/>
+    <strong>{connection==='connected'?'CONNECTED':connection==='disconnected'?'DISCONNECTED':'CONNECTING'}</strong>
+   </div>
+  </footer>
  </div>;
 }
