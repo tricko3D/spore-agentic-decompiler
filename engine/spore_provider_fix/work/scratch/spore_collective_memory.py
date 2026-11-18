@@ -34,6 +34,7 @@ from pathlib import Path
 import re
 import socket
 import socketserver
+import stat
 import sqlite3
 import struct
 import sys
@@ -59,7 +60,17 @@ SCHEMA = 1
 def paths(repo):
     root = Path(repo).expanduser().resolve()
     folder = root / "work/scratch/codex-pass1/memory"
-    return root, folder, folder / "knowledge.sqlite3", folder / "memory.sock"
+    sock = folder / "memory.sock"
+    # SAD_SHORT_UNIX_SOCKET_V1: Linux sun_path fits at most 107 pathname bytes.
+    # Deep experiment clones exceed the limit. Use a per-user private /tmp
+    # socket directory, keyed by the fully resolved checkout identity.
+    if len(os.fsencode(str(sock))) >= 104:
+        private = Path("/tmp") / ("sad-memory-" + str(os.getuid()))
+        ident = hashlib.sha256(os.fsencode(str(root))).hexdigest()[:20]
+        sock = private / (ident + ".sock")
+        if len(os.fsencode(str(sock))) >= 104:
+            raise RuntimeError("Short memory socket path still exceeds Unix socket limit")
+    return root, folder, folder / "knowledge.sqlite3", sock
 
 
 def utc():
@@ -749,6 +760,15 @@ def serve(repo):
     _, folder, _, sock = paths(repo)
     folder.mkdir(parents=True, exist_ok=True)
     folder.chmod(0o700)
+    if sock.parent != folder:
+        # Do not expose the listener in world-writable /tmp, and never
+        # chmod a directory we did not create or do not own.
+        private = sock.parent
+        private.mkdir(mode=0o700, exist_ok=True)
+        info = private.lstat()
+        if (not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid()
+                or info.st_mode & 0o077):
+            raise RuntimeError("Unsafe private memory socket directory: " + str(private))
     # Refuse to steal a live service's socket.
     if sock.exists():
         if request(repo, {"method": "status"}, timeout=1) is not None:

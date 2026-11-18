@@ -69,6 +69,26 @@ The existing OpenRouter key's provider-side spending limit remains the actual ha
 
 The command runs exactly one randomized treatment each invocation. Before any paid request in a knowledge arm, a copied offline embedding service must reach ready status. It also refuses to resume an existing sandbox silently. There is no auto-purchasing from prepare, candidates, report, or the dry-run version of run-next.
 
+### Long Unix socket path in isolated benchmark copies
+
+The original Collective Memory daemon binds `work/scratch/codex-pass1/memory/memory.sock`. In a deep cloned trial directory the absolute socket pathname can exceed Linux's ~107-byte `AF_UNIX` filesystem socket limit. This triggers `OSError: AF_UNIX path too long` **before the paid model runs**.
+
+For checkouts where that socket path would be too long, the Brain now uses a deterministic, per-checkout socket such as `/tmp/sad-memory-1000/<20-hex-digit-hash>.sock`. The prefix directory must be owned by the current Unix user with mode `0700`. The socket is mode `0600`. It is derived from the canonical trial path so concurrent and sequential clones never connect to each other's socket. The original SQLite database path, model cache, embedding vectors and evidence are **unchanged**. Normal-length production checkout paths keep the existing socket location.
+
+The benchmark no longer assumes `memory.sock` is inside the clone when checking service readiness. It queries the memory service's `status` using the same patched path resolution as the agent. Short-path changes are applied to the **isolated memory code only**, leaving the installed live Spore checkout unchanged.
+
+Old benchmarks prepared before this fix can be repaired safely, without recopying the source or reinitializing SQLite:
+
+```bash
+cd ~/spore-agentic-decompiler
+git pull --ff-only
+python3 brain_ablation.py repair-seed --out ~/sad-brain-benchmark
+python3 brain_ablation.py retry-invalid --out ~/sad-brain-benchmark
+python3 brain_ablation.py run-next --out ~/sad-brain-benchmark
+```
+
+The last command is a dry run. The previous aborted attempts, including `trial-retry-b0f9ffcaa2c74a80`, remain archived and do not count against the experiment. `repair-seed` refuses to modify shared tooling after any real agent activity.
+
 ### Repairing the original seed after a launcher upgrade
 
 If a trial reports `can't open file .../brain_trial_entry.py`, its seed was prepared before the safe Python 3.14 launcher was introduced. Updating the SAD checkout does **not** retroactively update `~/sad-brain-benchmark/seed`. This makes repeated retries fail in exactly the same way.

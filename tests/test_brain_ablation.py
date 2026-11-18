@@ -4,6 +4,7 @@ from __future__ import annotations
 import importlib.util
 import json
 import subprocess
+import socket
 from pathlib import Path
 import sqlite3
 import sys
@@ -38,7 +39,11 @@ def run_one():
     if os.environ.get('SPORE_SQLITE_RUN_ID'):
         prompt += f\"\"\"PARALLEL\"\"\"
 """,encoding="utf-8")
-        (self.source/bench.MEMORY).write_text("# fake local memory agent\n",encoding="utf-8")
+        # Simulate an older installed Brain version with a long Unix-socket path.
+        self._make_legacy_memory(self.source/bench.MEMORY)
+        source_evidence=ROOT/"engine/spore_provider_fix/work/scratch/spore_memory_evidence.py"
+        (self.source/bench.MEMORY).with_name("spore_memory_evidence.py").write_bytes(
+            source_evidence.read_bytes())
         cpp=self.source/bench.slice_path(VA)
         cpp.parent.mkdir(parents=True)
         cpp.write_text(f"// @ {VA}\nint repaired() {{ return 123; }}\n",encoding="utf-8")
@@ -96,6 +101,77 @@ def run_one():
             db.execute("INSERT INTO compiler_technique_links VALUES(?,?,?,?)",
                        (10,1,f"Observed at {VA}","stack-frame mismatch"))
 
+    @staticmethod
+    def _make_legacy_memory(destination):
+        template=bench.MEMORY_TEMPLATE.read_text(encoding="utf-8")
+        start=template.index("def paths(repo):")
+        end=template.index("def utc():",start)
+        paths_old='''def paths(repo):
+    root = Path(repo).expanduser().resolve()
+    folder = root / "work/scratch/codex-pass1/memory"
+    return root, folder, folder / "knowledge.sqlite3", folder / "memory.sock"
+
+
+'''
+        template=template[:start]+paths_old+template[end:]
+        start=template.index("def serve(repo):")
+        end=template.index("    # Refuse to steal a live service's socket.",start)
+        old_serve='''def serve(repo):
+    _, folder, _, sock = paths(repo)
+    folder.mkdir(parents=True, exist_ok=True)
+    folder.chmod(0o700)
+'''
+        template=template[:start]+old_serve+template[end:]
+        template=template.replace("import stat\n","")
+        assert bench.SOCKET_MARKER not in template
+        destination.write_text(template,encoding="utf-8")
+
+    def test_short_socket_is_per_clone_and_bindable_under_linux(self):
+        import importlib.util
+        module_path=self.destination/"legacy-spore-memory.py"
+        module_path.parent.mkdir(parents=True)
+        # The module reads an explicit sibling, so preserve its real source filename.
+        source=ROOT/"engine/spore_provider_fix/work/scratch/spore_collective_memory.py"
+        evidence=source.with_name("spore_memory_evidence.py")
+        module_path=self.destination/"spore_collective_memory.py"
+        module_path.write_bytes(source.read_bytes())
+        (self.destination/"spore_memory_evidence.py").write_bytes(evidence.read_bytes())
+        spec=importlib.util.spec_from_file_location("test_spore_brain_socket",module_path)
+        memory=importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(memory)
+        root=self.destination/("depth"+"x"*120)
+        other=self.destination/("depth"+"y"*120)
+        _,folder,db,sock=memory.paths(root)
+        _,_,_,sock2=memory.paths(other)
+        self.assertGreater(len(str(folder/"memory.sock").encode()),107)
+        self.assertLess(len(str(sock).encode()),104)
+        self.assertNotEqual(sock,sock2)
+        self.assertEqual(db,folder/"knowledge.sqlite3")
+        self.assertEqual(sock.parent,Path("/tmp")/f"sad-memory-{__import__('os').getuid()}")
+        # Actually bind an AF_UNIX socket at the short path, no FastEmbed needed.
+        sock.parent.mkdir(mode=0o700,exist_ok=True)
+        if sock.parent.stat().st_mode & 0o077:
+            self.skipTest("Existing short socket folder permissions are too broad")
+        with socket.socket(socket.AF_UNIX,socket.SOCK_STREAM) as instance:
+            try:
+                instance.bind(str(sock))
+                self.assertTrue(sock.exists())
+            finally:
+                sock.unlink(missing_ok=True)
+
+    def test_preflight_rejects_old_seed_without_starting_or_copying(self):
+        bench.prepare(self.source,self.destination,repeats=1)
+        seed=self.destination/"seed"
+        self._make_legacy_memory(seed/bench.MEMORY)
+        with mock.patch.object(bench,"_clone",
+                               side_effect=AssertionError("old seed was cloned")):
+            with self.assertRaisesRegex(RuntimeError,"repair-seed"):
+                bench.run_next(self.destination,execute=True,budget=.5)
+        bench.repair_seed(self.destination)
+        bench._seed_tooling(self.destination,
+            json.loads((self.destination/"plan.json").read_text()))
+        self.assertIn(bench.SOCKET_MARKER,(seed/bench.MEMORY).read_text())
+
     def test_repair_old_seed_without_recopying_sqlite_or_trials(self):
         bench.prepare(self.source,self.destination,repeats=1)
         seed=self.destination/"seed"
@@ -107,6 +183,7 @@ def run_one():
         # Imitate the November 18 historical seed, created before the safe
         # root launcher existed, then retried without paid model activity.
         (seed/bench.ENTRY).unlink()
+        self._make_legacy_memory(seed/bench.MEMORY)
         runner=seed/bench.RUNNER
         runner.write_text(runner.read_text().replace(
             ".venv/bin/python brain_trial_entry.py query --text",
@@ -121,6 +198,7 @@ def run_one():
         item["invalid_history"]=[{"name":archived,"state":"error"}]
         bench.write_json(planpath,plan)
         original_cpp=(self.source/bench.slice_path(VA)).read_bytes()
+        memory_before=bench._tool_hash(seed/bench.MEMORY)
         database_before={str(p):bench._tool_hash(p) for p in [
             seed/bench.OPS,seed/bench.KNOW,
             self.destination/"archive/spore.sqlite3",
@@ -132,12 +210,14 @@ def run_one():
                 bench.repair_seed(self.destination)
         self.assertTrue((seed/bench.ENTRY).is_file())
         self.assertIn("brain_trial_entry.py query",(seed/bench.RUNNER).read_text())
+        self.assertIn(bench.SOCKET_MARKER,(seed/bench.MEMORY).read_text())
         self.assertNotIn("work/scratch/brain_trial_query.py --text",
                          (seed/bench.RUNNER).read_text())
         self.assertEqual(database_before,{str(p):bench._tool_hash(p) for p in [
             seed/bench.OPS,seed/bench.KNOW,
             self.destination/"archive/spore.sqlite3",
             self.destination/"archive/knowledge.sqlite3"]})
+        self.assertNotEqual(bench._tool_hash(seed/bench.MEMORY),memory_before)
         self.assertEqual((self.source/bench.slice_path(VA)).read_bytes(),original_cpp)
         self.assertTrue(old_log.exists())
         self.assertTrue(new_log.exists())

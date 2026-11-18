@@ -34,6 +34,8 @@ SOURCE_DIR = Path(__file__).resolve().parent
 RETRIEVAL_SOURCE = SOURCE_DIR / "brain_ablation_query.py"
 ENTRY = Path("brain_trial_entry.py")
 ENTRY_SOURCE = SOURCE_DIR / ENTRY.name
+MEMORY_TEMPLATE = SOURCE_DIR / "engine/spore_provider_fix/work/scratch/spore_collective_memory.py"
+SOCKET_MARKER = "SAD_SHORT_UNIX_SOCKET_V1"
 DEFAULT_BUDGET = 0.50
 
 
@@ -221,6 +223,53 @@ Focus on the current function. Do not edit unrelated files.
     path.write_text(source,encoding="utf-8")
 
 
+def _patch_memory_socket(path):
+    """Apply only the tested socket-path compatibility shim to the cloned Brain.
+
+    Never rewrite the live checkout. Preserve the installed memory retrieval
+    implementation, schema and embedding behavior. The fix is idempotent.
+    """
+    code=path.read_text(encoding="utf-8")
+    template=MEMORY_TEMPLATE.read_text(encoding="utf-8")
+    if SOCKET_MARKER not in template:
+        raise RuntimeError("SAD template does not contain the short-socket fix")
+    old_paths='''def paths(repo):
+    root = Path(repo).expanduser().resolve()
+    folder = root / "work/scratch/codex-pass1/memory"
+    return root, folder, folder / "knowledge.sqlite3", folder / "memory.sock"
+'''
+    old_serve='''def serve(repo):
+    _, folder, _, sock = paths(repo)
+    folder.mkdir(parents=True, exist_ok=True)
+    folder.chmod(0o700)
+    # Refuse to steal a live service's socket.'''
+    def section(s, start, end):
+        left=s.index(start)
+        right=s.index(end,left)
+        return s[left:right]
+    patched_paths=section(template,"def paths(repo):","def utc():")
+    patched_serve=section(template,"def serve(repo):",
+                           "    # Refuse to steal a live service's socket.")
+    if SOCKET_MARKER in code:
+        if ("Unsafe private memory socket directory" not in code
+                or "import stat" not in code):
+            raise RuntimeError("Memory socket shim is partially installed")
+        return False
+    if code.count(old_paths)!=1 or code.count(old_serve)!=1:
+        raise RuntimeError("Unexpected Collective Memory version: cannot safely patch Unix socket")
+    if code.count("import socketserver\n")!=1 or "import stat\n" in code:
+        raise RuntimeError("Unexpected Collective Memory import layout")
+    code=code.replace("import socketserver\n","import socketserver\nimport stat\n")
+    code=code.replace(old_paths,patched_paths)
+    code=code.replace(old_serve,patched_serve+"    # Refuse to steal a live service's socket.")
+    # Keep one atomic write only after all structural checks succeed.
+    tmp=path.with_name(path.name+".socket-repair.tmp")
+    tmp.write_text(code,encoding="utf-8")
+    tmp.chmod(path.stat().st_mode & 0o777)
+    tmp.replace(path)
+    return True
+
+
 def _mask_memory(dbpath, target, alias):
     """Mask direct target identity while retaining existing embedding rows."""
     with sqlite3.connect(dbpath) as con:
@@ -383,6 +432,7 @@ def prepare(repo, out, va=None, repeats=3, minimum=7, seed=20261118,
                 raise RuntimeError("Address anonymization collision")
         _mask_memory(seed_tree/KNOW,va,alias)
         _patch_runner(seed_tree/RUNNER)
+        _patch_memory_socket(seed_tree/MEMORY)
         shutil.copy2(RETRIEVAL_SOURCE,seed_tree/RETRIEVAL)
         shutil.copy2(ENTRY_SOURCE,seed_tree/ENTRY)
         rng=random.Random(seed)
@@ -399,7 +449,7 @@ def prepare(repo, out, va=None, repeats=3, minimum=7, seed=20261118,
             "repeats":repeats,"random_seed":seed,
             "model":"deepseek/deepseek-v4.1-flash-1017","provider":"sail-research",
             "tooling_sha256":{name.as_posix():_tool_hash(seed_tree/name)
-                              for name in (ENTRY,RUNNER,RETRIEVAL)},
+                              for name in (ENTRY,RUNNER,RETRIEVAL,MEMORY)},
             "arms":order,
             "notes":"No paid calls performed; each run creates an isolated tree."})
         print(f"Prepared {len(order)} randomized, isolated test slots for {va}.")
@@ -444,21 +494,22 @@ def _start_vectors(trial, python):
                                   cwd=trial,stdin=subprocess.DEVNULL,stdout=output,
                                   stderr=subprocess.STDOUT,start_new_session=True,
                                   env={**os.environ,"PYTHONDONTWRITEBYTECODE":"1"})
-    sock=trial/WORK/"memory/memory.sock"
+    # Only the Brain knows whether it selected a short socket for this clone.
+    # Read its status endpoint rather than guessing the old memory.sock path.
     for _ in range(60):
         if process.poll() is not None:
             raise _vector_start_failure(
                 logfile, f"Vector service exited during startup (exit {process.returncode})")
-        if sock.is_socket():
-            try:
-                check=subprocess.run([str(python),str(trial/ENTRY),"memory",
-                                      "--repo",str(trial),"status"],
-                                     cwd=trial,capture_output=True,text=True,timeout=5)
+        try:
+            check=subprocess.run([str(python),str(trial/ENTRY),"memory",
+                                  "--repo",str(trial),"status"],
+                                 cwd=trial,capture_output=True,text=True,timeout=5)
+            if check.returncode==0:
                 state=json.loads(check.stdout)
                 if state.get("service_online") and not state.get("restart_required"):
                     return process
-            except (OSError,ValueError,subprocess.TimeoutExpired):
-                pass
+        except (OSError,ValueError,subprocess.TimeoutExpired):
+            pass
         time.sleep(1)
     process.terminate()
     try:
@@ -482,7 +533,7 @@ def _tool_hash(path):
 def _seed_tooling(out, plan):
     """Fail before cloning or spending if the seed lacks its own safe launcher."""
     seed=out/"seed"
-    for name in (ENTRY,RUNNER,RETRIEVAL):
+    for name in (ENTRY,RUNNER,RETRIEVAL,MEMORY):
         file=seed/name
         if not file.is_file() or file.is_symlink():
             raise RuntimeError(
@@ -494,8 +545,12 @@ def _seed_tooling(out, plan):
         raise RuntimeError(
             "The benchmark seed contains the obsolete Brain query entrypoint. "
             "Run: python3 brain_ablation.py repair-seed --out "+str(out))
+    if SOCKET_MARKER not in (seed/MEMORY).read_text(encoding="utf-8"):
+        raise RuntimeError(
+            "The frozen Brain memory module needs the short socket shim. "
+            "Run: python3 brain_ablation.py repair-seed --out "+str(out))
     expected=plan.get("tooling_sha256",{})
-    for name in (ENTRY,RUNNER,RETRIEVAL):
+    for name in (ENTRY,RUNNER,RETRIEVAL,MEMORY):
         key=name.as_posix()
         if key in expected and _tool_hash(seed/name)!=expected[key]:
             raise RuntimeError(f"Benchmark seed tooling changed after preparation: {key}")
@@ -558,7 +613,7 @@ def repair_seed(out):
     runner=seed/RUNNER
     query=seed/RETRIEVAL
     launcher=seed/ENTRY
-    if any(p.is_symlink() for p in (runner,query,launcher)):
+    if any(p.is_symlink() for p in (runner,query,launcher,seed/MEMORY)):
         raise RuntimeError("Benchmark tooling must never be symlinks")
     code=runner.read_text(encoding="utf-8")
     old_cmd=".venv/bin/python work/scratch/brain_trial_query.py --text"
@@ -570,6 +625,9 @@ def repair_seed(out):
     if ("if os.environ.get('SAD_BENCH_ACTIVE')" not in code or
             code.count(new_cmd)!=1):
         raise RuntimeError("Runner lacks the expected benchmark prompt; refusing repair")
+    # Update the socket address selection in this clone only, leaving the
+    # independent memory DB, vectors and evidence exactly as archived.
+    _patch_memory_socket(seed/MEMORY)
     # Apply only benchmark-owned scripts. SQLite, user source, task/checker code,
     # archived evidence, seeds and existing trial data remain unchanged.
     tmp=runner.with_name(runner.name+".repair.tmp")
@@ -583,11 +641,11 @@ def repair_seed(out):
         shutil.copy2(src,tmp)
         tmp.replace(dst)
     plan["tooling_sha256"]={name.as_posix():_tool_hash(seed/name)
-                             for name in (ENTRY,RUNNER,RETRIEVAL)}
+                             for name in (ENTRY,RUNNER,RETRIEVAL,MEMORY)}
     plan["tooling_repair_utc"]=now()
     write_json(planpath,plan)
     _seed_tooling(out,plan)
-    print("Benchmark seed repaired: launcher installed and Brain query path updated.")
+    print("Benchmark seed repaired: short Unix socket, launcher and Brain query tools validated.")
     print("Frozen SQLite databases, treatment assignments and failed trial logs unchanged.")
     print("The next action is retry-invalid (no paid inference), then run-next.")
 
