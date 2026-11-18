@@ -18,6 +18,7 @@ EXEC = re.compile(
 FLAGS = re.compile(r"\[([^\]\n]{2,160})\]")
 OVERRIDE = re.compile(r"--flags\s+(?:['\"]([^'\"]+)['\"]|([^\s;&|]+))")
 SIZE = re.compile(r"\bsize\s*[:=]\s*(\d+)\s*/\s*(\d+)", re.I)
+SIZE_RETAIL = re.compile(r"\bsize\s+(\d+)\s*,\s*retail\s+(\d+)", re.I)
 DIFFS = re.compile(r"\b(?:diffs?|differences)\s*[:=]\s*(\d+)\b", re.I)
 OFFSETS = re.compile(r"\boffsets?\s*[:=]\s*([0-9a-fx,\s]+)", re.I)
 INLINE_DUPLICATE = re.compile(r"^(.*?)\s+\1$", re.I | re.S)
@@ -101,7 +102,7 @@ def parse_experiments(log_path, va, root, *, max_bytes=35_000_000, max_events=25
                 verdict = next((l.strip() for l in output.splitlines()
                                 if l.strip().startswith(("MATCH ", "NO MATCH ",
                                                          "COMPILE FAILED"))), "")
-                size = SIZE.search(output)
+                size = SIZE.search(output) or SIZE_RETAIL.search(output)
                 diff = DIFFS.search(output)
                 offsets = OFFSETS.search(output)
                 flags = OVERRIDE.search(command)
@@ -110,9 +111,13 @@ def parse_experiments(log_path, va, root, *, max_bytes=35_000_000, max_events=25
                 else:
                     f = FLAGS.search(verdict)
                     flags = f.group(1) if f else ""
-                # Preserve the verifier's own first substantive line; no
-                # fabricated attribution of improvements to source edits.
-                summary = _flat(verdict or output.strip().splitlines()[0], 380)
+                # The checker headline alone usually says only NO MATCH.
+                # Capture its concrete second-line reason, when present.
+                reason = next((v.strip() for v in output.splitlines()[1:6]
+                               if re.search(r"^\s*(?:bytes differ|size \d+, retail \d+|"
+                                            r"relocation at offset|COMPILE FAILED)", v, re.I)), "")
+                summary = _flat((verdict or output.strip().splitlines()[0]) +
+                                ((" | " + reason) if reason else ""), 380)
                 records.append({
                     "ordinal": len(records) + 1,
                     "command": _flat(command, 450),
