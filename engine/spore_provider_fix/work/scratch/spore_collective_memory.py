@@ -219,6 +219,11 @@ def ingest(repo, va, pass_number, status, *, note, checker, evidence_path="", lo
     verdict = _clean(checker, 650)
     observation = evidence.concise_summary(note, checker, 900)
     experiments = evidence.parse_experiments(log_path, va, repo) if log_path else []
+    # After improving the parser, discard previously imported false checker
+    # entries, even when the corrected parser finds zero genuine checks. Only
+    # replace evidence when its underlying local JSONL file is available.
+    log_file = (Path(repo).expanduser().resolve() / str(log_path)) if log_path else None
+    log_available = bool(log_file and log_file.is_file())
     brief = evidence.experiment_brief(experiments)
     matched_cpp = _matched_cpp_snippet(repo, va, safe) if status == "MATCH" else ""
     title = f"{va} {status} " + (observation or verdict)[:180]
@@ -239,7 +244,7 @@ def ingest(repo, va, pass_number, status, *, note, checker, evidence_path="", lo
             row = con.execute("SELECT id,source_hash FROM findings WHERE va=? AND pass_number=?",
                               (va, pass_number)).fetchone()
             if row and row["source_hash"] == digest:
-                if experiments:
+                if log_available:
                     _save_experiments(con, row["id"], experiments)
                 return False
             if row:
@@ -263,7 +268,7 @@ def ingest(repo, va, pass_number, status, *, note, checker, evidence_path="", lo
                         "VALUES(?,?,?,?)", (key, title, summary, details))
             con.execute("INSERT OR REPLACE INTO embedding_jobs(finding_id,changed_utc) "
                         "VALUES(?,?)", (key, utc()))
-            if experiments:
+            if log_available:
                 _save_experiments(con, key, experiments)
         return True
     finally:
@@ -468,16 +473,41 @@ def query(repo, text, limit=4, verified_only=False):
     return lexical(repo, text, limit, verified_only=verified_only)
 
 
-def print_findings(rows, *, max_chars=2000):
-    output = []
-    for r in rows:
-        label = ("VERIFIED MATCH" if r["verified_match"] else "UNMATCHED EXPERIMENT")
-        experiments = r.get("experiments") or []
-        proof = ("\n  Checks: " + " | ".join(experiments)[:400]) if experiments else ""
-        output.append(f"[{label}] {r['va']} pass {r['pass']}:\n"
-                      f"  {r['summary'][:330]}{proof}\n"
-                      f"  evidence: {r['evidence_path']}")
-    return ("\n\n".join(output) or "No relevant shared findings yet.")[:max_chars]
+def print_findings(rows, *, max_chars=2700):
+    """Keep every selected hit visible, even when entries have long notes.
+
+    Each hit receives its own character budget. No global truncation may cut
+    off the final result or the reference to its on-disk evidence. Agent-facing
+    callers can still request a smaller total budget.
+    """
+    if not rows:
+        return "No relevant shared findings yet."
+    budget = max(180, int(max_chars))
+    per_hit = max(1, (budget - 2 * (len(rows) - 1)) // len(rows))
+
+    def clipped(value, size):
+        text = str(value or "").strip()
+        if size < 4:
+            return ""
+        return text if len(text) <= size else text[:size - 3].rstrip() + "..."
+
+    result = []
+    for row in rows:
+        label = "VERIFIED MATCH" if row["verified_match"] else "UNMATCHED EXPERIMENT"
+        header = f"[{label}] {row['va']} pass {row['pass']}:\n"
+        footer = "\n  evidence: " + str(row.get("evidence_path") or "(not archived)")
+        remaining = max(0, per_hit - len(header) - len(footer) - 5)
+        experiments = row.get("experiments") or []
+        # Allocate enough room to convey the problem *and* its measured tests.
+        summary_budget = min(350, int(remaining * (0.62 if experiments else 1.0)))
+        summary = clipped(row.get("summary", ""), summary_budget)
+        checks = ""
+        if experiments:
+            checks_budget = max(0, remaining - len(summary) - 12)
+            if checks_budget > 15:
+                checks = "\n  Checks: " + clipped(" | ".join(experiments), checks_budget)
+        result.append(header + "  " + summary + checks + footer)
+    return "\n\n".join(result)
 
 
 class LocalEmbeddings:
