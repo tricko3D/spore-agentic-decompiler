@@ -312,8 +312,13 @@ def _candidate_rows(con, query, limit=40):
         return []
 
 
-def _combine(con, query, *, vectors=None, limit=4):
-    """Hybrid rank fusion with an explicit boost for independently proven MATCH."""
+def _combine(con, query, *, vectors=None, limit=4, verified_only=False):
+    """Fuse literal and semantic relevance; verified evidence wins close ties.
+
+    Deduplicate passes from the same function to expose distinct approaches.
+    Similarity is not proof: unrelated MATCH results should never be forced
+    into results when the query finds only relevant failed experiments.
+    """
     score = {}
     for order, row in enumerate(_candidate_rows(con, query)):
         score[row["id"]] = score.get(row["id"], 0) + 1.0 / (20 + order)
@@ -335,24 +340,55 @@ def _combine(con, query, *, vectors=None, limit=4):
                        ",".join("?" for _ in ids) + ")", ids).fetchall()
     for item in rows:
         if item["verified_match"]:
-            score[item["id"]] *= 1.25
+            score[item["id"]] *= 1.40
         if item["va"].lower() in query.lower():
             score[item["id"]] *= 1.20
-    best = sorted(rows, key=lambda item: (-score[item["id"]], -item["verified_match"],
-                                           -item["id"]))[:max(1, min(10, limit))]
-    return [{"va": row["va"], "pass": row["pass_number"], "status": row["status"],
-             "verified_match": bool(row["verified_match"]),
-             "summary": row["summary"][:450],
-             "evidence_path": row["evidence_path"],
-             "score": round(score[row["id"]], 6)} for row in best]
+    ordered = sorted(rows, key=lambda item: (-score[item["id"]],
+                                            -item["verified_match"], -item["id"]))
+    distinct = []
+    seen_va = set()
+    for item in ordered:
+        if verified_only and not item["verified_match"]:
+            continue
+        if item["va"] in seen_va:
+            continue
+        seen_va.add(item["va"])
+        distinct.append(item)
+        if len(distinct) >= max(1, min(10, limit)):
+            break
+    result = []
+    for row in distinct:
+        attempts = con.execute("""SELECT ordinal,flags,size_compiled,size_retail,
+                diff_bytes,result FROM finding_experiments
+                WHERE finding_id=? ORDER BY ordinal DESC LIMIT 3""",
+                               (row["id"],)).fetchall()
+        history = []
+        for e in reversed(attempts):
+            facts = []
+            if e["flags"]:
+                facts.append("flags " + e["flags"])
+            if e["size_compiled"] is not None and e["size_retail"] is not None:
+                facts.append(f"size {e['size_compiled']}/{e['size_retail']}")
+            if e["diff_bytes"] is not None:
+                facts.append(f"{e['diff_bytes']} different bytes")
+            if not facts:
+                facts.append(e["result"][:110])
+            history.append(f"#{e['ordinal']}: " + ", ".join(facts))
+        result.append({
+            "va": row["va"], "pass": row["pass_number"],
+            "status": row["status"], "verified_match": bool(row["verified_match"]),
+            "summary": row["summary"][:450], "experiments": history,
+            "evidence_path": row["evidence_path"],
+            "score": round(score[row["id"]], 6),
+        })
+    return result
 
-
-def lexical(repo, query, limit=4):
+def lexical(repo, query, limit=4, verified_only=False):
     con = connection(repo)
     if not con:
         return []
     try:
-        return _combine(con, query, limit=limit)
+        return _combine(con, query, limit=limit, verified_only=verified_only)
     finally:
         con.close()
 
@@ -385,22 +421,25 @@ def request(repo, payload, *, timeout=3):
     return None
 
 
-def query(repo, text, limit=4):
+def query(repo, text, limit=4, verified_only=False):
     text = _clean(text, 1800)
     if not text:
         return []
-    remote = request(repo, {"method": "query", "query": text, "top": limit})
+    remote = request(repo, {"method": "query", "query": text, "top": limit,
+                            "verified_only": bool(verified_only)})
     if remote is not None:
         return remote.get("results", [])
-    return lexical(repo, text, limit)
+    return lexical(repo, text, limit, verified_only=verified_only)
 
 
 def print_findings(rows, *, max_chars=2000):
     output = []
     for r in rows:
         label = ("VERIFIED MATCH" if r["verified_match"] else "UNMATCHED EXPERIMENT")
+        experiments = r.get("experiments") or []
+        proof = ("\n  Checks: " + " | ".join(experiments)[:400]) if experiments else ""
         output.append(f"[{label}] {r['va']} pass {r['pass']}:\n"
-                      f"  {r['summary'][:330]}\n"
+                      f"  {r['summary'][:330]}{proof}\n"
                       f"  evidence: {r['evidence_path']}")
     return ("\n\n".join(output) or "No relevant shared findings yet.")[:max_chars]
 
@@ -455,11 +494,11 @@ class Service:
         finally:
             con.close()
 
-    def search(self, text, limit):
+    def search(self, text, limit, verified_only=False):
         vector = self.embedder.encode([text[:1800]])[0]
         con = connection(self.repo, vectors=True)
         try:
-            return _combine(con, text, vectors=vector, limit=limit)
+            return _combine(con, text, vectors=vector, limit=limit, verified_only=verified_only)
         finally:
             con.close()
 
@@ -486,7 +525,8 @@ class Handler(socketserver.StreamRequestHandler):
             if method == "query":
                 text = str(req.get("query", ""))[:1800]
                 top = max(1, min(10, int(req.get("top", 4))))
-                result = {"results": self.server.service.search(text, top)}
+                result = {"results": self.server.service.search(
+                    text, top, verified_only=bool(req.get("verified_only", False)))}
             elif method == "status":
                 result = {"ok": True, "model": MODEL, "vector_dim": DIM}
             else:
@@ -554,6 +594,8 @@ def main(argv=None):
     query_cmd = command.add_parser("query", help="Retrieve reusable evidence from all functions")
     query_cmd.add_argument("--text", required=True)
     query_cmd.add_argument("--top", type=int, default=4)
+    query_cmd.add_argument("--verified-only", action="store_true",
+                           help="Retrieve only relevant independently verified matches")
     ingest_cmd = command.add_parser("ingest", help="Import an independently checked outcome")
     ingest_cmd.add_argument("--va", required=True)
     ingest_cmd.add_argument("--pass-number", type=int, required=True)
@@ -561,6 +603,7 @@ def main(argv=None):
     ingest_cmd.add_argument("--note", default="")
     ingest_cmd.add_argument("--checker", default="")
     ingest_cmd.add_argument("--evidence-path", default="")
+    ingest_cmd.add_argument("--log-path", default="")
     args = parser.parse_args(argv)
     if args.command == "init":
         initialize(args.repo)
@@ -576,12 +619,14 @@ def main(argv=None):
     elif args.command == "status":
         print(json.dumps(stats(args.repo), indent=2))
     elif args.command == "query":
-        print(print_findings(query(args.repo, args.text, args.top)))
+        print(print_findings(query(args.repo, args.text, args.top,
+                                 verified_only=args.verified_only)))
     elif args.command == "backfill":
         print(json.dumps(backfill(args.repo, args.limit)))
     elif args.command == "ingest":
         result = ingest(args.repo, args.va, args.pass_number, args.status,
-                        note=args.note, checker=args.checker, evidence_path=args.evidence_path)
+                        note=args.note, checker=args.checker, evidence_path=args.evidence_path,
+                        log_path=args.log_path)
         print("Stored" if result else "Unchanged or not installed")
 
 
