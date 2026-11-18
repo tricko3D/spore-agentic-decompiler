@@ -1,0 +1,170 @@
+"""Offline tests for matched-function study isolation and one-command execution."""
+from __future__ import annotations
+
+import contextlib
+import io
+import json
+from pathlib import Path
+import sqlite3
+import unittest
+from unittest import mock
+
+import brain_ablation as brain
+import brain_ablation_suite as suite
+from test_brain_ablation import BrainAblationTests, VA
+
+
+class SolvedSuiteTests(unittest.TestCase):
+    def setUp(self):
+        fixture=BrainAblationTests("test_dry_run_cannot_charge_or_start_agent")
+        fixture.setUp()
+        self.addCleanup(fixture.doCleanups)
+        self.base=fixture.base
+        self.source=fixture.source
+        self.destination=fixture.destination
+        self.original=fixture.original
+        self.targets=suite.TARGETS
+        self.out=self.base/"solved-suite"
+        (self.source/brain.TASK).parent.mkdir(parents=True,exist_ok=True)
+        (self.source/brain.TASK).write_text("""import os
+def main(va):
+    cl, prs = claims(max_age=0), open_prs(va)
+    if st != "byte-exact":
+        print("historical solutions")
+""")
+        with sqlite3.connect(self.source/brain.OPS) as db:
+            db.execute("DELETE FROM attempts")
+            db.execute("DELETE FROM queue")
+            db.execute("DELETE FROM agent_sessions")
+            for va in self.targets:
+                db.execute("INSERT INTO queue VALUES(?,?)",(va,128))
+                for i in range(4):
+                    db.execute("INSERT INTO attempts(va,status,note,utc) VALUES(?,?,?,?)",
+                               (va,"FAIL",f"Attempt {i}",brain.now()))
+                db.execute("INSERT INTO attempts(va,status,note,utc) VALUES(?,?,?,?)",
+                           (va,"MATCH","independently checker verified",brain.now()))
+        for va in self.targets:
+            cpp=self.source/brain.slice_path(va)
+            cpp.parent.mkdir(parents=True)
+            cpp.write_text(f"// @ {va}\nint solved_{va[2:]}() {{ return 42; }}\n")
+            (cpp.parent/"manifest.txt").write_text(
+                f"s{va[2:]}/s{va[2:]}.cpp  ?FUN_{va[2:]}@@YAXXZ  {va[2:]}  /O2 /MD\n")
+            (self.source/"work"/f"task_closed_{va[2:]}.json").write_text(
+                f'Solved {va}: return 42\n')
+        with sqlite3.connect(self.source/brain.KNOW) as db:
+            for i,va in enumerate(self.targets,start=2):
+                db.execute("INSERT INTO findings VALUES(?,?,?,?,?,?,?,?,?,?)",
+                           (i,va,5,"MATCH",1,f"Solution {va}","return 42",
+                            f"original C++ {va}","old-source-path","hash"))
+                db.execute("INSERT INTO findings_fts(rowid,title,summary,details) VALUES(?,?,?,?)",
+                           (i,f"Solution {va}","return 42",f"original C++ {va}"))
+                db.execute("INSERT INTO finding_vectors VALUES(?,?)",
+                           (i,f"secret-embedding-{va}"))
+                db.execute("INSERT INTO compiler_techniques VALUES(?,?,?,?,?,?,?)",
+                           (20+i,"Exact original solution","compiler",
+                            f"Derived from {va}","condition","intervention","result"))
+                db.execute("INSERT INTO compiler_techniques_fts(rowid,title,category,problem,conditions,intervention,observed_effect) VALUES(?,?,?,?,?,?,?)",
+                           (20+i,"Exact original solution","compiler",
+                            f"Derived from {va}","condition","intervention","result"))
+                db.execute("INSERT INTO compiler_technique_links VALUES(?,?,?,?)",
+                           (20+i,i,f"Solution reference {va}","observed match"))
+            # Add one unrelated finding and an unrelated technique that MUST survive.
+            db.execute("INSERT INTO findings VALUES(?,?,?,?,?,?,?,?,?,?)",
+                       (10,"0x00201020",1,"FAIL",0,"Unrelated ABI",
+                        "MSVC stack frame","not about test set","","otherhash"))
+            db.execute("INSERT INTO findings_fts(rowid,title,summary,details) VALUES(?,?,?,?)",
+                       (10,"Unrelated ABI","MSVC stack frame","not about test set"))
+            db.execute("INSERT INTO compiler_techniques VALUES(?,?,?,?,?,?,?)",
+                       (100,"Other technique","ABI","independent","x86","try","works"))
+            db.execute("INSERT INTO compiler_techniques_fts(rowid,title,category,problem,conditions,intervention,observed_effect) VALUES(?,?,?,?,?,?,?)",
+                       (100,"Other technique","ABI","independent","x86","try","works"))
+
+    def test_history_selects_only_failures_before_verified_match(self):
+        found={r["va"]:r for r in brain.known_solutions(self.source,3)}
+        self.assertEqual(set(found),set(self.targets))
+        self.assertTrue(all(r["failures"]==4 for r in found.values()))
+        with sqlite3.connect(self.source/brain.OPS) as db:
+            db.execute("UPDATE attempts SET status='DEFER' WHERE id=1")
+        self.assertEqual(brain.known_solutions(self.source,4)[0]["failures"],4)
+
+    def test_suite_prepare_isolation_wipes_all_three_holdouts(self):
+        with mock.patch.object(suite.brain,"_start_vectors",
+                               side_effect=AssertionError("preparation started vectors")):
+            suite.prepare(self.source,self.out,repeats=1)
+        plan=json.loads((self.out/"suite-plan.json").read_text())
+        self.assertEqual(len(plan["schedule"]),12)
+        self.assertEqual(set(plan["targets"]),set(self.targets))
+        for va in self.targets:
+            sub=suite._target_dir(self.out,va)
+            self.assertTrue((sub/"plan.json").is_file())
+            inner=json.loads((sub/"plan.json").read_text())
+            self.assertTrue(inner["solved_cohort"])
+            self.assertEqual(inner["holdouts"],sorted(self.targets))
+            self.assertEqual(inner["knowledge_pruning"]["removed_findings"],3)
+            self.assertEqual(inner["knowledge_pruning"]["removed_techniques"],3)
+            task=(sub/"seed"/brain.TASK).read_text()
+            self.assertIn(brain.TASK_MARKER,task)
+            self.assertIn("not os.environ.get",task)
+            for held in self.targets:
+                self.assertNotIn("return 42",
+                                 (sub/"seed"/brain.slice_path(held)).read_text())
+                self.assertIn("Controlled blank-slate experiment",
+                              (sub/"seed"/brain.slice_path(held)).read_text())
+                manifest=(sub/"seed"/brain.slice_path(held)).parent/"manifest.txt"
+                self.assertNotIn(held[2:],manifest.read_text())
+                self.assertFalse((sub/"seed"/"work"/f"task_closed_{held[2:]}.json").exists())
+            with sqlite3.connect(sub/"seed"/brain.KNOW) as db:
+                self.assertEqual(db.execute("SELECT COUNT(*) FROM findings").fetchone()[0],2)
+                self.assertEqual(db.execute("SELECT COUNT(*) FROM compiler_techniques").fetchone()[0],2)
+                self.assertEqual(db.execute("SELECT COUNT(*) FROM finding_vectors").fetchone()[0],1)
+                fts=db.execute("SELECT COUNT(*) FROM findings_fts").fetchone()[0]
+                self.assertEqual(fts,2)
+            with sqlite3.connect(sub/"seed"/brain.OPS) as db:
+                self.assertEqual(db.execute("SELECT COUNT(*) FROM attempts").fetchone()[0],0)
+            self.assertEqual((sub/"archive/original-target.cpp").read_text(),
+                             (self.source/brain.slice_path(va)).read_text())
+        self.assertIn("return 42",(self.source/brain.slice_path(self.targets[0])).read_text())
+
+    def test_one_command_runs_every_arm_and_resumes_without_paying_again(self):
+        def fake_paid(out,execute,budget,minutes):
+            self.assertTrue(execute)
+            self.assertEqual(budget,.5)
+            plan=json.loads((out/"plan.json").read_text())
+            item=next(r for r in plan["arms"] if r["state"]=="prepared")
+            trial=out/"trials"/item["name"]
+            brain._clone(out/"seed",trial)
+            with sqlite3.connect(trial/brain.OPS) as db:
+                db.execute("INSERT INTO attempts(va,status,note,utc) VALUES(?,?,?,?)",
+                           (plan["target"],"MATCH","independent byte-exact verification",brain.now()))
+            item["state"]="completed"
+            brain.write_json(out/"plan.json",plan)
+        with mock.patch.object(suite.brain,"run_next",side_effect=fake_paid) as fake:
+            result=suite.run(self.source,self.out,repeats=1,execute=True,budget=.5)
+            self.assertEqual(fake.call_count,12)
+            self.assertEqual(sum(int(t["match"]) for t in result["trials"]),12)
+            second=suite.run(self.source,self.out,repeats=1,execute=True,budget=.5)
+            self.assertEqual(fake.call_count,12)
+            self.assertEqual(sum(int(t["match"]) for t in second["trials"]),12)
+        self.assertTrue((self.out/"suite-results.csv").exists())
+        self.assertTrue((self.out/"suite-report.json").exists())
+        self.assertEqual(len(result["trials"]),12)
+        self.assertEqual({r["arm"] for r in result["trials"]},set(brain.ARMS))
+
+    def test_default_run_only_prepares_and_never_calls_agent(self):
+        with mock.patch.object(suite.brain,"run_next",
+                               side_effect=AssertionError("agent was invoked")):
+            result=suite.run(self.source,self.out,repeats=1)
+        self.assertEqual(len(result["trials"]),12)
+        self.assertTrue(all(not x["valid"] for x in result["trials"]))
+
+    def test_missing_match_history_fails_before_preparation(self):
+        with sqlite3.connect(self.source/brain.OPS) as db:
+            db.execute("DELETE FROM attempts WHERE va=? AND status='MATCH'",
+                       (self.targets[0],))
+        with self.assertRaisesRegex(RuntimeError,"lack >=3 failures"):
+            suite.prepare(self.source,self.out,repeats=1)
+        self.assertFalse((self.out/"functions").exists())
+
+
+if __name__=="__main__":
+    unittest.main()

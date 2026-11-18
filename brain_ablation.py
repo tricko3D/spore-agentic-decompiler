@@ -28,6 +28,8 @@ OPS = WORK / "spore.sqlite3"
 KNOW = WORK / "memory/knowledge.sqlite3"
 RUNNER = Path("work/scratch/spore_first_pass_sqlite.py")
 PROMPT = Path("work/scratch/spore_first_pass_prompt.txt")
+TASK = Path("tools/contrib/task.py")
+TASK_MARKER = "SAD_HELDOUT_TASK_NO_HISTORY_V1"
 PROMPT_SOURCE = Path(__file__).resolve().parent / "brain_ablation_prompt.txt"
 PROTOCOL_VERSION = 2
 PROTOCOL_MARKER = "SAD_BRAIN_ABLATION_OWN_CLAIM_V2"
@@ -94,6 +96,141 @@ def candidates(repo, minimum=7):
     return [{"va":va,"size":size,"failures":n,"source":str(slice_path(va))}
             for va,size,n,matched in rows if n>=minimum and not matched
             and (repo/slice_path(va)).is_file()]
+
+
+def known_solutions(repo, minimum=3):
+    """Verified-attempt history: N failures *before* the first accepted MATCH."""
+    if minimum<1:
+        raise ValueError("minimum must be positive")
+    with sqlite3.connect(f"file:{(repo/OPS).resolve()}?mode=ro",uri=True) as db:
+        rows=db.execute("""
+            SELECT a.va, q.size, a.status
+            FROM attempts a JOIN queue q ON q.va=a.va
+            LEFT JOIN attempt_reviews r ON r.attempt_id=a.id
+            WHERE r.attempt_id IS NULL
+            ORDER BY a.va, a.id
+        """).fetchall()
+    found={}
+    for va,size,status in rows:
+        entry=found.setdefault(va,{"va":va,"size":size,"failures":0,"matched":False})
+        if entry["matched"]:
+            continue
+        if status=="MATCH":
+            entry["matched"]=True
+        elif status in ("FAIL","DEFER"):
+            entry["failures"]+=1
+    return [
+        {**v,"source":str(slice_path(va))}
+        for va,v in found.items()
+        if v["matched"] and v["failures"]>=minimum and
+           (repo/slice_path(va)).is_file()
+    ]
+
+
+def _manifest_files(root):
+    for base in (root/"match/slices",root/"src/game"):
+        if base.is_dir():
+            yield from base.rglob("manifest.txt")
+            yield from base.rglob("*.manifest.txt")
+
+
+def _holdout_manifest(path, addresses):
+    """Remove only exact manifest VA rows, preserve all unrelated manifest rows."""
+    content=path.read_text(encoding="utf-8")
+    lines=content.splitlines(keepends=True)
+    removed=set()
+    retained=[]
+    for line in lines:
+        parts=line.split("#",1)[0].split()
+        if len(parts)>=3 and re.fullmatch(r"[0-9a-fA-F]{8}",parts[2]):
+            va="0x"+parts[2].lower()
+            if va in addresses:
+                removed.add(va)
+                continue
+        retained.append(line)
+    if removed:
+        path.write_text("".join(retained),encoding="utf-8")
+    return removed
+
+
+def _patch_heldout_task(path):
+    """Prevent task.py from revealing historical PR notes or merged source.
+
+    The task card still shows the target assembly, flags and current blank
+    source. Skip live claim discovery and historical closed-PR lookups.
+    """
+    if not path.is_file() or path.is_symlink():
+        raise RuntimeError("Cannot safely patch task.py in isolated checkout")
+    text=path.read_text(encoding="utf-8")
+    if TASK_MARKER in text:
+        return
+    original="cl, prs = claims(max_age=0), open_prs(va)"
+    if text.count(original)!=1:
+        raise RuntimeError("Unknown task.py claim lookup, refusing heldout suite")
+    text=text.replace(original,
+        "cl, prs = ({}, []) if os.environ.get('SAD_BENCH_ACTIVE') "
+        "else (claims(max_age=0), open_prs(va))")
+    rule='if st != "byte-exact":'
+    if text.count(rule)!=1:
+        raise RuntimeError("Unknown task.py history display, refusing heldout suite")
+    text=text.replace(rule,rule[:-1]+
+        ' and not os.environ.get("SAD_BENCH_ACTIVE"):')
+    text="# "+TASK_MARKER+"\n"+text
+    tmp=path.with_name(path.name+".task-repair.tmp")
+    tmp.write_text(text,encoding="utf-8")
+    tmp.chmod(path.stat().st_mode & 0o777)
+    tmp.replace(path)
+
+
+def _mask_solved_targets(seed, addresses):
+    """Erase verified source and success manifests *only* in a cloned seed."""
+    addresses=tuple(addresses)
+    removed=set()
+    for manifest in _manifest_files(seed):
+        removed.update(_holdout_manifest(manifest,set(addresses)))
+    if removed!=set(addresses):
+        raise RuntimeError("Not all matched holdouts had manifest rows; refusing leaked benchmark")
+    for va in addresses:
+        source=seed/slice_path(va)
+        if not source.is_file() or source.is_symlink():
+            raise RuntimeError(f"Missing independently isolated source for {va}")
+        markers=re.findall(r"(?mi)^\s*//\s*@\s*(0x[0-9a-f]{8})",source.read_text())
+        if markers!=[va]:
+            raise RuntimeError(f"Holdout {va} shares its source or lacks exactly one marker: {markers}")
+        source.write_text(f"// @ {va}\n"
+                          "// Controlled blank-slate experiment. Rebuild using task.py and check.py.\n",
+                          encoding="utf-8")
+        # A "closed PR" cache contains prior code and explanations; never
+        # let task.py import it into a heldout test.
+        for candidate in (seed/"work"/f"task_closed_{va[2:]}.json",
+                          seed/"work"/f"task_closed_{va[2:].upper()}.json"):
+            candidate.unlink(missing_ok=True)
+    for manifest in _manifest_files(seed):
+        content=manifest.read_text(encoding="utf-8",errors="replace")
+        for line in content.splitlines():
+            parts=line.split("#",1)[0].split()
+            if len(parts)>=3 and re.fullmatch(r"[0-9a-fA-F]{8}",parts[2]):
+                if "0x"+parts[2].lower() in addresses:
+                    raise RuntimeError("Heldout match still present in seed manifest")
+
+
+def _prune_solved_knowledge(seed, holdouts):
+    """Use offline sqlite-vec venv to remove historical holdout text and vectors."""
+    if not holdouts:
+        return {"removed_findings":0,"removed_techniques":0}
+    helper=SOURCE_DIR/"brain_ablation_prune.py"
+    if not helper.is_file():
+        raise RuntimeError("Missing holdout evidence-pruning script")
+    embed_python=seed/WORK/"memory/.venv/bin/python"
+    executable=str(embed_python if embed_python.is_file() else sys.executable)
+    cmd=[executable,str(helper),"--db",str(seed/KNOW)]
+    for va in holdouts:
+        cmd+=["--holdout",va]
+    p=subprocess.run(cmd,cwd=seed,capture_output=True,text=True,timeout=120)
+    if p.returncode:
+        raise RuntimeError("Offline holdout knowledge scrub failed; no trials started: "+
+                           (p.stderr or p.stdout)[-1300:])
+    return json.loads(p.stdout)
 
 
 def _copy_ignore(base):
@@ -422,7 +559,7 @@ def _clone(seed, destination):
 
 
 def prepare(repo, out, va=None, repeats=3, minimum=7, seed=20261118,
-            resume_partial=False):
+            resume_partial=False, *, solved=False, holdouts=()):
     repo=repo.resolve();out=out.resolve()
     if out==repo or out.is_relative_to(repo) or repo.is_relative_to(out):
         raise ValueError("Experiment directory must be outside the live repo and its ancestors")
@@ -430,12 +567,37 @@ def prepare(repo, out, va=None, repeats=3, minimum=7, seed=20261118,
         raise FileExistsError("Output directory exists; refusing to overwrite a previous experiment")
     if not out.exists() and resume_partial:
         raise FileNotFoundError("No partial benchmark directory to resume")
-    found=candidates(repo,minimum)
+    found=known_solutions(repo,minimum) if solved else candidates(repo,minimum)
+    if solved:
+        if resume_partial:
+            raise ValueError("Solved-suite preparation cannot resume a partial seed; use a fresh output")
+        if not va:
+            raise ValueError("Solved-suite preparation requires explicit --va")
+        holdouts=tuple(sorted({canonical(v) for v in (holdouts or (va,))}))
+        if canonical(va) not in holdouts:
+            raise ValueError("Selected function must be included in frozen holdout cohort")
+        matched={c["va"] for c in known_solutions(repo,minimum)}
+        if not set(holdouts)<=matched:
+            raise ValueError("All held-out functions must have recorded MATCH and enough preceding failures")
+        for target in holdouts:
+            original_source=(repo/slice_path(target)).read_text(encoding="utf-8",errors="replace")
+            if re.findall(r"(?mi)^\s*//\s*@\s*(0x[0-9a-f]{8})",original_source)!=[target]:
+                raise ValueError(f"Holdout {target} is not an isolated dedicated slice")
+        manifests=set()
+        for path in _manifest_files(repo):
+            for line in path.read_text(encoding="utf-8",errors="replace").splitlines():
+                parts=line.split("#",1)[0].split()
+                if len(parts)>=3 and re.fullmatch(r"[0-9a-fA-F]{8}",parts[2]):
+                    manifests.add("0x"+parts[2].lower())
+        if not set(holdouts)<=manifests:
+            raise ValueError("Holdout not in a MATCH manifest; cannot establish known solution")
+    elif holdouts:
+        raise ValueError("Holdouts require solved=True")
     if va:
         va=canonical(va)
         choice=next((x for x in found if x["va"]==va),None)
         if choice is None:
-            raise ValueError("Chosen VA is not a failed, isolated slice with enough attempts")
+            raise ValueError("Chosen VA is not an eligible isolated slice with enough pre-MATCH failures")
     elif found:
         choice=found[0]
         va=choice["va"]
@@ -492,10 +654,17 @@ def prepare(repo, out, va=None, repeats=3, minimum=7, seed=20261118,
                    "// Controlled blank-slate experiment. Rebuild using task.py and check.py.\n")
             (seed_tree/slice_path(va)).write_text(blank,encoding="utf-8")
             _clean_operational(seed_tree/OPS,va)
+            if solved:
+                _mask_solved_targets(seed_tree,holdouts)
+                _patch_heldout_task(seed_tree/TASK)
+                prune_metrics=_prune_solved_knowledge(seed_tree,holdouts)
+            else:
+                prune_metrics=None
             with sqlite3.connect(seed_tree/KNOW) as con:
                 if con.execute("SELECT 1 FROM findings WHERE va=?",(alias,)).fetchone():
                     raise RuntimeError("Address anonymization collision")
-            _mask_memory(seed_tree/KNOW,va,alias)
+            if not solved:
+                _mask_memory(seed_tree/KNOW,va,alias)
             _patch_runner(seed_tree/RUNNER)
         else:
             print("Recovering post-database, pre-plan seed; leaving frozen SQLite unchanged.",flush=True)
@@ -514,11 +683,15 @@ def prepare(repo, out, va=None, repeats=3, minimum=7, seed=20261118,
             "version":1,"protocol_version":PROTOCOL_VERSION,
             "created":now(),"source":str(repo),
             "target":va,"alias":alias,"original_failures":choice["failures"],
+            "solved_cohort":bool(solved),
+            "holdouts":list(holdouts) if solved else [],
+            "knowledge_pruning":prune_metrics,
             "original_cpp_sha256":hashlib.sha256(original.encode()).hexdigest(),
             "repeats":repeats,"random_seed":seed,
             "model":"deepseek/deepseek-v4.1-flash-1017","provider":"sail-research",
             "tooling_sha256":{name.as_posix():_tool_hash(seed_tree/name)
-                              for name in (ENTRY,RUNNER,RETRIEVAL,MEMORY,PROMPT)},
+                              for name in ((ENTRY,RUNNER,RETRIEVAL,MEMORY,PROMPT,TASK)
+                                           if solved else (ENTRY,RUNNER,RETRIEVAL,MEMORY,PROMPT))},
             "arms":order,
             "notes":"No paid calls performed; each run creates an isolated tree."})
         print(f"Prepared {len(order)} randomized, isolated test slots for {va}.")
@@ -608,6 +781,23 @@ def _seed_tooling(out, plan):
             raise RuntimeError(
                 f"Benchmark seed missing an isolated tool: {name}. "
                 "Run: python3 brain_ablation.py repair-seed --out "+str(out))
+    if plan.get("solved_cohort"):
+        holdouts=tuple(plan.get("holdouts") or ())
+        if TASK_MARKER not in (seed/TASK).read_text(encoding="utf-8"):
+            raise RuntimeError("Heldout task-card history suppression is missing")
+        if not holdouts or plan["target"] not in holdouts or not plan.get("knowledge_pruning"):
+            raise RuntimeError("Incomplete held-out solution validation in suite seed")
+        for va in holdouts:
+            source=seed/slice_path(va)
+            if (not source.is_file() or
+                    "Controlled blank-slate experiment" not in source.read_text(encoding="utf-8")):
+                raise RuntimeError("A solved function's original C++ leaked into the seed")
+        for manifest in _manifest_files(seed):
+            for line in manifest.read_text(encoding="utf-8").splitlines():
+                parts=line.split("#",1)[0].split()
+                if len(parts)>=3 and re.fullmatch(r"[0-9a-fA-F]{8}",parts[2]):
+                    if "0x"+parts[2].lower() in holdouts:
+                        raise RuntimeError("Old MATCH manifest leaked into suite seed")
     runner=(seed/RUNNER).read_text(encoding="utf-8")
     if ("brain_trial_entry.py query" not in runner or
             ".venv/bin/python work/scratch/brain_trial_query.py --text" in runner):
@@ -624,7 +814,7 @@ def _seed_tooling(out, plan):
             "The experiment uses an obsolete claim/skip protocol. "
             "Prepare a NEW randomized experiment with a different --out path.")
     expected=plan.get("tooling_sha256",{})
-    for name in (ENTRY,RUNNER,RETRIEVAL,MEMORY,PROMPT):
+    for name in (ENTRY,RUNNER,RETRIEVAL,MEMORY,PROMPT,TASK):
         key=name.as_posix()
         if key in expected and _tool_hash(seed/name)!=expected[key]:
             raise RuntimeError(f"Benchmark seed tooling changed after preparation: {key}")

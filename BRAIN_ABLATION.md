@@ -1,3 +1,33 @@
+## One-command known-solvable suite
+
+**Main experiment, separate from the unsolved-function pilot.** The study uses three previously matched functions: 0x00c45760, 0x00c2f1f0, and 0x00b8d190. Each had four failures before an independently accepted MATCH in the locally reported history. The suite verifies this chronology against the source checkout's SQLite history. It creates four conditions (baseline, raw findings, consolidated findings/techniques, unrelated placebo evidence), three repetitions per function, and 36 total trials.
+
+To execute the entire suite locally with one command, including preparation, execution and final comparison:
+
+~~~bash
+cd ~/spore-agentic-decompiler
+git pull --ff-only
+python3 brain_ablation_suite.py run --repo ~/spore-decomp \
+  --out ~/sad-known-solved-suite --repeats 3 --execute --budget 0.50
+~~~
+
+The suite deliberately does **not** run paid agents without --execute. Without that flag it prepares all three heldout sources, randomized arms, frozen knowledge and a unified report, and then exits after a dry run. The per-trial soft guard is USD 0.50, so the sum of 36 per-trial budgets is USD 18. This is not a guaranteed total billing ceiling. The execution happens in the invoking local terminal, it is not an asynchronous service.
+
+To regenerate the comparison from the recorded trials, offline and without further model use:
+
+~~~bash
+python3 brain_ablation_suite.py compare --out ~/sad-known-solved-suite
+~~~
+
+Outputs: suite-results.csv (all trials, evidence and metrics), suite-report.json (full data), and one sub-benchmark in functions/<address>/ per known-solvable function. Each sub-benchmark has frozen source history and trial logs. The global schedule deterministically interleaves the three targets while preserving random arm order within each target. On a blocked, invalid, or interrupted trial, the command stops rather than silently replacing the observation. Re-running the same command skips completed trials, and requires an audit before advancing past an invalid attempt.
+
+**Primary endpoint:** independently verified byte-perfect MATCH rate by function and arm. Checker calls, tokens, and spending are secondary; fewer tokens for a NO MATCH are not counted as evidence of better decompilation. This is a small pilot, not a statistically powered experiment.
+
+**Holdout safeguards:** Preparation checks for an accepted MATCH after at least three failures, an isolated source file, and an existing MATCH manifest entry for every target. All three original solved C++ bodies are blanked from every experimental seed, and their prior manifest entries are removed **in the copies only** so the runner will investigate rather than skip. All prior attempts and sessions are cleared in every experimental SQLite copy. The cloned task.py is patched to suppress prior notes and closed pull request summaries that could reveal solutions. The cloned knowledge DB is pruned of these targets' own findings, linked compiler techniques, full-text entries and vector embeddings. Unrelated knowledge remains; live source and archived originals remain unchanged.
+
+Because OpenCode's agent tools can access the broader filesystem and public networks, this is not a fully adversarially isolated, blinded experimental environment. The controlled prompt prohibits looking up public historical solutions and the ordinary local leakage paths are removed. Unexpected easy MATCHes should still trigger a review of agent tool logs.
+
+
 # SAD Brain ablation benchmark
 
 ## Research question
