@@ -99,12 +99,32 @@ def parse_experiments(log_path, va, root, *, max_bytes=35_000_000, max_events=25
                 if fingerprint in seen:
                     continue
                 seen.add(fingerprint)
-                verdict = next((l.strip() for l in output.splitlines()
-                                if l.strip().startswith(("MATCH ", "NO MATCH ",
-                                                         "COMPILE FAILED"))), "")
-                size = SIZE.search(output) or SIZE_RETAIL.search(output)
-                diff = DIFFS.search(output)
-                offsets = OFFSETS.search(output)
+                # Seeing check.py in a shell command is not sufficient:
+                # piped grep/assembly output or "(no output)" is not a
+                # verified checker result. Require check.py's target-specific
+                # status headline before recording an experiment.
+                lines = output.splitlines()
+                header = ""
+                for line in lines[:20]:
+                    value = line.strip()
+                    matched = re.match(
+                        r"^(?:MATCH|NO MATCH)\s+(0x[0-9a-f]{8})\b", value, re.I)
+                    if matched and matched.group(1).lower() == va.lower():
+                        header = value
+                        break
+                    if re.match(r"^COMPILE FAILED\s*\(", value, re.I):
+                        header = value
+                        break
+                if not header:
+                    continue
+                # Read numbers only from the checker preamble. The following
+                # instruction diff can contain arbitrary unrelated numbers.
+                head = output.split("instruction diff (original | yours):", 1)[0]
+                head = "\n".join(head.splitlines()[:20])
+                verdict = header
+                size = SIZE.search(head) or SIZE_RETAIL.search(head)
+                diff = DIFFS.search(head)
+                offsets = OFFSETS.search(head)
                 flags = OVERRIDE.search(command)
                 if flags:
                     flags = flags.group(1) or flags.group(2)
@@ -113,7 +133,7 @@ def parse_experiments(log_path, va, root, *, max_bytes=35_000_000, max_events=25
                     flags = f.group(1) if f else ""
                 # The checker headline alone usually says only NO MATCH.
                 # Capture its concrete second-line reason, when present.
-                reason = next((v.strip() for v in output.splitlines()[1:6]
+                reason = next((v.strip() for v in head.splitlines()[1:10]
                                if re.search(r"^\s*(?:bytes differ|size \d+, retail \d+|"
                                             r"relocation at offset|COMPILE FAILED)", v, re.I)), "")
                 summary = _flat((verdict or output.strip().splitlines()[0]) +
