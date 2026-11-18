@@ -798,7 +798,7 @@ function allowMessage(message,kind='info'){
  const el=$('allowListMessage');el.textContent=message;el.dataset.kind=kind;
 }
 function allowCanWrite(){
- return CONTROL&&!allowBusy&&!mutating&&!runCoordinatorActive(lastSnapshot)
+ return !!allowDoc&&CONTROL&&!allowBusy&&!mutating&&!runCoordinatorActive(lastSnapshot)
   &&!['starting','stopping','running'].includes(commandPhase);
 }
 function parseAllowJson(raw){
