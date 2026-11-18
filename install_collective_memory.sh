@@ -46,6 +46,8 @@ SCRIPT="$REPO/work/scratch/spore_collective_memory.py"
 mkdir -p "$HOME_DIR"
 chmod 700 "$HOME_DIR"
 "$PYTHON_BIN" "$SCRIPT" --repo "$REPO" init
+echo "Importing historical independent checker findings (read-only operational DB)..."
+"$PYTHON_BIN" "$SCRIPT" --repo "$REPO" backfill
 
 if ((NO_MODEL)); then
   echo "FTS5-only installation complete. No embedding server started."
