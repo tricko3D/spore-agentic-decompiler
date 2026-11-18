@@ -6,7 +6,10 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import os
+import urllib.error
+import urllib.request
 import tempfile
 import sqlite3
 from pathlib import Path
@@ -342,6 +345,54 @@ print(json.dumps({
             'No saved OpenRouter key matches the spending baseline. '
             'Run python3 spore_agentic.py rotate-key with the replacement key.')
 
+    @staticmethod
+    def _provider_key_preflight(env,run_budget):
+        """Check the *provider* key limit before any coordinator/worker starts.
+
+        This endpoint retrieves account limits only. It does not purchase
+        inference or modify cumulative budget history. The run budget remains
+        independent of the provider's own spending allowance.
+        """
+        if run_budget < 0.10:
+            raise ValueError(
+                f'Run budget ${run_budget:.2f} is below the $0.10 minimum '
+                'inference reserve. Increase the run budget.')
+        from spore_agentic import KEY_FILE
+        key=env.get('OPENROUTER_API_KEY','').strip()
+        if not key and KEY_FILE.is_file():
+            key=KEY_FILE.read_text(encoding='utf-8').strip()
+        if not key:
+            raise ValueError('No OpenRouter API key is configured for this launch.')
+        req=urllib.request.Request(
+            'https://openrouter.ai/api/v1/key',
+            headers={'Authorization':'Bearer '+key, 'Accept':'application/json'})
+        try:
+            with urllib.request.urlopen(req,timeout=20) as response:
+                data=json.load(response)
+        except urllib.error.HTTPError as exc:
+            raise ValueError(
+                f'Could not verify OpenRouter key allowance (HTTP {exc.code}). '
+                'No workers were started.') from None
+        except (OSError,ValueError,TimeoutError) as exc:
+            raise ValueError(
+                'Could not verify OpenRouter key allowance ('+
+                type(exc).__name__+'). No workers were started.') from None
+        details=data.get('data') if isinstance(data,dict) else None
+        if not isinstance(details,dict):
+            raise ValueError('OpenRouter key allowance response was invalid. No workers were started.')
+        remaining=details.get('limit_remaining')
+        if remaining is not None:
+            if isinstance(remaining,bool) or not isinstance(remaining,(int,float)) or not math.isfinite(remaining):
+                raise ValueError('OpenRouter key allowance was invalid. No workers were started.')
+            if float(remaining)+1e-7 < 0.10:
+                raise ValueError(
+                    f'OpenRouter API key limit has only ${float(remaining):.4f} remaining. '
+                    'SAD needs at least $0.10 for its inference reserve. '
+                    f'The ${run_budget:.2f} run budget is correctly set, but it '
+                    'does not increase the OpenRouter key allowance. '
+                    'Increase the API key spending limit or available provider credit.')
+        return remaining
+
     def start(self,data):
         if not self.enabled:raise PermissionError('Controls disabled')
         if not isinstance(data,dict):raise ValueError('Invalid settings')
@@ -364,6 +415,9 @@ print(json.dumps({
             self.process=None  # Do not replay a previous launch failure after a new attempt.
             selected=self._retry_allowlist(module)
             launch_env=self._launch_environment()
+            # Fail before expanding queue or spawning workers if the provider
+            # key cannot fund a single inference. This is an unpaid /key GET.
+            self._provider_key_preflight(launch_env,values['budget'])
             if selected:
                 launch_env['SPORE_RETRY_ALLOWLIST']=selected['path']
             # Scope selection can add functions but never deletes historical work.
