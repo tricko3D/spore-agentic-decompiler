@@ -446,10 +446,14 @@ def call_deepseek(key, user, *, timeout=95):
                      "max_price": {"prompt": 0.50, "completion": 1.00}},
         "messages": [{"role":"system","content":SYSTEM}, {"role":"user","content":user}],
         "temperature": 0,
-        # OpenRouter counts reasoning AND visible text against max_tokens.
-        # Cap reasoning to keep enough budget for the required JSON answer.
-        "reasoning": {"effort": "low"},
-        "max_tokens": 2800,
+        # DeepSeek V4.1 Flash can spend the entire output budget reasoning
+        # even with effort="low" (observed: 2800/2800 reasoning tokens).
+        # This stage extracts compact, evidence-quoted JSON, not long-form
+        # problem solving. Explicitly turn thinking off and reserve sufficient
+        # output for 0-3 structured proposals. Provider may not honor the hint,
+        # so retain strict empty-content/JSON validation and retry backoff.
+        "reasoning": {"enabled": False},
+        "max_tokens": 6144,
         "response_format": {"type":"json_object"},
         "usage": {"include": True},
         "stream": False,

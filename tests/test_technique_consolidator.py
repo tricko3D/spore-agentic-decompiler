@@ -254,11 +254,32 @@ class ConsolidationTests(unittest.TestCase):
         self.assertEqual(sent["provider"]["only"],["sail-research"])
         self.assertFalse(sent["provider"]["allow_fallbacks"])
         self.assertEqual(sent["response_format"]["type"],"json_object")
-        self.assertEqual(sent["reasoning"]["effort"],"low")
-        self.assertGreaterEqual(sent["max_tokens"], 2000)
+        # "low" reasoning exhausted all 2800 tokens in production, leaving
+        # no final JSON. Extract evidence without hidden thinking and allow
+        # enough room for the full validated structured response.
+        self.assertEqual(sent["reasoning"],{"enabled":False})
+        self.assertNotIn("effort",sent["reasoning"])
+        self.assertEqual(sent["max_tokens"],6144)
         self.assertEqual(out,{"techniques":[]})
         self.assertEqual(usage["cost"],0.001)
         self.assertNotIn("TOP-SECRET-TEST-KEY",str(sent))
+
+    def test_no_reasoning_config_is_sent_even_for_complex_findings(self):
+        large_evidence = ("ABI register differences; retail frame uses EBP. " * 180)
+        payload = {"choices":[{"finish_reason":"stop",
+                    "message":{"content":'{"techniques":[]}'}}],
+                   "usage":{"cost":0.0006,"completion_tokens":32,
+                            "completion_tokens_details":{"reasoning_tokens":0}}}
+        sent = []
+        def opener(req, timeout):
+            sent.append(json.loads(req.data))
+            return io.BytesIO(json.dumps(payload).encode())
+        with mock.patch.object(tech.urllib.request,"urlopen",side_effect=opener):
+            output, usage = tech.call_deepseek("test-key",large_evidence)
+        self.assertEqual(output,{"techniques":[]})
+        self.assertEqual(sent[0]["reasoning"],{"enabled":False})
+        self.assertEqual(sent[0]["max_tokens"],6144)
+        self.assertEqual(usage["reasoning_tokens"],0)
 
     def test_empty_reasoning_only_response_has_safe_diagnostics_and_real_cost(self):
         response = {
