@@ -1,4 +1,4 @@
-import {useState} from 'react';
+import {useState,type FormEvent} from 'react';
 import {get,query} from '../api';
 import {Panel,Tag} from './Panel';
 
@@ -12,7 +12,7 @@ export default function BrainSearch({onTechnique,onFinding}:{
 }){
  const [text,setText]=useState(''),[querying,setQuerying]=useState(false),
  [result,setResult]=useState<SearchResults|null>(null),[error,setError]=useState('');
- async function search(event:React.FormEvent<HTMLFormElement>){
+ async function search(event:FormEvent<HTMLFormElement>){
   event.preventDefault();
   if(text.trim().length<2)return;
   setQuerying(true);setError('');
