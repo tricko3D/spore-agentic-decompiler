@@ -39,6 +39,7 @@ import struct
 import sys
 import threading
 import time
+import spore_memory_evidence as evidence
 
 MODEL = "BAAI/bge-small-en-v1.5"
 DIM = 384
@@ -113,6 +114,20 @@ def initialize(repo, *, vectors=False):
                 finding_id INTEGER PRIMARY KEY REFERENCES findings(id) ON DELETE CASCADE,
                 changed_utc TEXT NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS finding_experiments (
+                finding_id INTEGER NOT NULL REFERENCES findings(id) ON DELETE CASCADE,
+                ordinal INTEGER NOT NULL,
+                command TEXT NOT NULL,
+                flags TEXT NOT NULL,
+                size_compiled INTEGER,
+                size_retail INTEGER,
+                diff_bytes INTEGER,
+                offsets TEXT NOT NULL,
+                result TEXT NOT NULL,
+                PRIMARY KEY(finding_id, ordinal)
+            );
+            CREATE INDEX IF NOT EXISTS finding_experiments_diff
+              ON finding_experiments(diff_bytes);
         """)
         if vectors:
             con.execute("CREATE VIRTUAL TABLE IF NOT EXISTS finding_vectors "
@@ -143,7 +158,7 @@ def _within_repo(repo, raw):
     return None
 
 
-def ingest(repo, va, pass_number, status, *, note, checker, evidence_path=""):
+def ingest(repo, va, pass_number, status, *, note, checker, evidence_path="", log_path=None):
     """Append independent pass evidence, never an unverified model MATCH claim.
 
     Caller MUST supply status after its own independent checker verdict.
@@ -170,11 +185,18 @@ def ingest(repo, va, pass_number, status, *, note, checker, evidence_path=""):
             else:
                 diff = snippet
     verdict = _clean(checker, 650)
-    observation = _clean(note, 900)
-    title = f"{va} {status} " + verdict[:160]
-    details = _clean(f"Verified checker: {verdict}\nAgent note: {observation}\n"
-                     f"Selected hypotheses: {kept}\nSource delta: {diff}", MAX_DOC)
-    summary = _clean(verdict + " " + observation, 800)
+    observation = evidence.concise_summary(note, checker, 900)
+    experiments = evidence.parse_experiments(log_path, va, repo) if log_path else []
+    brief = evidence.experiment_brief(experiments)
+    title = f"{va} {status} " + (observation or verdict)[:180]
+    # A duplicated note is not additional evidence. Emphasize real checker
+    # commands, observed metrics and hypotheses, not the previous transcript.
+    details = _clean(
+        f"Outcome: {status}. Observation: {observation}. "
+        f"Independent checker: {verdict}. "
+        f"Actual checker experiments: {brief}. "
+        f"Curated hypotheses: {kept}. Source delta: {diff}", MAX_DOC)
+    summary = observation or verdict
     digest = hashlib.sha256((title + summary + details).encode("utf-8")).hexdigest()
     rel = str(safe.relative_to(Path(repo).expanduser().resolve())) if safe else ""
     con = connection(repo)
@@ -183,6 +205,8 @@ def ingest(repo, va, pass_number, status, *, note, checker, evidence_path=""):
             row = con.execute("SELECT id,source_hash FROM findings WHERE va=? AND pass_number=?",
                               (va, pass_number)).fetchone()
             if row and row["source_hash"] == digest:
+                if experiments:
+                    _save_experiments(con, row["id"], experiments)
                 return False
             if row:
                 key = row["id"]
@@ -205,9 +229,26 @@ def ingest(repo, va, pass_number, status, *, note, checker, evidence_path=""):
                         "VALUES(?,?,?,?)", (key, title, summary, details))
             con.execute("INSERT OR REPLACE INTO embedding_jobs(finding_id,changed_utc) "
                         "VALUES(?,?)", (key, utc()))
+            if experiments:
+                _save_experiments(con, key, experiments)
         return True
     finally:
         con.close()
+
+
+
+def _save_experiments(con, finding_id, experiments):
+    """Replace only completed checker executions. No model-invented results."""
+    con.execute("DELETE FROM finding_experiments WHERE finding_id=?", (finding_id,))
+    con.executemany("""INSERT INTO finding_experiments (
+        finding_id, ordinal, command, flags, size_compiled, size_retail,
+        diff_bytes, offsets, result
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""", [
+        (finding_id, item["ordinal"], item["command"], item["flags"],
+         item["size_compiled"], item["size_retail"], item["diff_bytes"],
+         item["offsets"], item["result"])
+        for item in experiments
+    ])
 
 
 def backfill(repo, limit=10000):
@@ -225,7 +266,9 @@ def backfill(repo, limit=10000):
     src.row_factory = sqlite3.Row
     imported = skipped = 0
     try:
-        rows = src.execute("""SELECT a.va,a.pass_number,a.status,a.note
+        columns = {item["name"] for item in src.execute("PRAGMA table_info(attempts)")}
+        log_column = "a.log_path" if "log_path" in columns else "NULL AS log_path"
+        rows = src.execute(f"""SELECT a.va,a.pass_number,a.status,a.note,{log_column}
             FROM attempts a
             WHERE NOT EXISTS (SELECT 1 FROM attempt_reviews v
                               WHERE v.attempt_id=a.id)
@@ -246,7 +289,8 @@ def backfill(repo, limit=10000):
             evidence = (Path("work/scratch/codex-pass1/investigations") / va).as_posix()
             try:
                 imported += int(ingest(repo, va, int(row["pass_number"]), status,
-                                       note=note, checker=checker, evidence_path=evidence))
+                                       note=note, checker=checker, evidence_path=evidence,
+                                       log_path=row["log_path"]))
             except (sqlite3.Error, OSError, ValueError):
                 skipped += 1
         return {"imported": imported, "skipped": skipped}
