@@ -687,7 +687,7 @@ html,body,.grid,.table-scroll,.drawer,.timeline,.control-status{
  <div class="metric metric-defer"><span class="small">Deferred functions</span><strong id="defers">—</strong><small id="deferBytes">Deferred bytes</small></div>
  <div class="metric"><span class="small">Pending functions</span><strong id="pending">—</strong><small id="pendingBytes">Untouched bytes</small></div>
  <div class="metric"><span class="small">Inference capacity</span><strong id="cap">—</strong><small id="cooldown">Adaptive</small></div>
- <div class="metric"><span class="small">OpenRouter spend</span><strong id="spend">—</strong><small id="reserved">Reserved amount</small></div>
+ <div class="metric"><span class="small">This run's spend</span><strong id="spend">—</strong><small id="reserved">Run budget</small></div>
 </section>
 <main class="workspace">
  <div class="content-column">
@@ -768,7 +768,7 @@ html,body,.grid,.table-scroll,.drawer,.timeline,.control-status{
       <label class="dock-field dock-number"><span>In flight</span><input id="inflightInput" aria-label="Maximum inflight" type="number" min="1" max="32" value="16"></label>
       <label class="dock-field dock-number"><span>Passes</span><input id="passesInput" aria-label="Additional passes" title="Additional valid attempts per eligible function each launch" type="number" min="1" max="24" value="3"></label>
       <label class="dock-field dock-number"><span>Idle</span><input id="minutesInput" aria-label="Idle timeout in minutes" title="Stops after inactivity, not total runtime" type="number" min="15" max="120" value="20"></label>
-      <label class="dock-field dock-budget"><span>Budget $</span><input id="budgetInput" aria-label="Budget in USD" type="number" min="0.01" step="0.01" value="20"></label>
+      <label class="dock-field dock-budget"><span>Run budget $</span><input id="budgetInput" aria-label="Per-run budget in USD" title="A new spending limit for this run, not cumulative spending since the first API key use. OpenRouter key limits still apply." type="number" min="0.01" step="0.01" value="20"></label>
       <button class="primary" type="submit" id="runToggle" data-mode="launch" aria-label="Launch decompilation">Launch</button>
       <span class="dock-action-feedback" id="actionFeedback" data-state="idle" aria-live="polite">Ready</span>
     </form>
@@ -1033,7 +1033,7 @@ function renderMission(d){
   (workers||'—')+' workers',
   inflight?'max '+inflight+' simultaneous':'adaptive concurrency',
   idle?idle+' min inactivity limit':null,
-  Number.isFinite(budget)?'$'+budget+' budget':null
+  Number.isFinite(budget)?'$'+budget+' per-run budget':null
  ].filter(Boolean).join(' · ');
  set('missionResources',resources);
  const allow=assigned?controller.settings?.allowlist_active:
@@ -1242,7 +1242,12 @@ if(typeof ResizeObserver!=='undefined'){
 window.addEventListener('resize',arrangeWorkers);
 function render(d){
  const c=d.counters||{},r=d.run||{},a=d.adaptive||{},b=d.budget||{},sz=d.bytes||{};
- set('matches',c.matches??0);set('fails',c.fails??0);set('defers',c.deferred??0);set('pending',c.pending??0);set('spend',fmt(b.spend));set('reserved',fmt(b.inflight)+' reserved');
+ set('matches',c.matches??0);set('fails',c.fails??0);set('defers',c.deferred??0);set('pending',c.pending??0);
+ set('spend',b.run_spend==null?'—':fmt(b.run_spend));
+ set('reserved',b.run_limit==null?'No run budget recorded':
+  'of '+fmt(b.run_limit)+' budget · '+fmt(b.inflight||0)+' reserved');
+ $('spend').title='Cumulative project spend: '+(b.spend==null?'not recorded':fmt(b.spend))+
+  '. This run has a separate spending baseline.';
   [['matchBytes','MATCH'],['failBytes','FAIL'],['deferBytes','DEFER'],['pendingBytes','PENDING']].forEach(([id,k])=>set(id,bytes(sz[k]||0)+' of '+bytes(sz.queue||0)));
  set('cap',a.concurrency!=null?a.concurrency+' / '+a.ceiling:'—');set('cooldown',a.cooldown_seconds>0?'Cooldown '+a.cooldown_seconds+'s':'No provider cooldown');set('runId',r.id||'No run');
  const portions=[['MATCH',c.matches||0,'#65cda2'],['FAIL',c.fails||0,'#dd8995'],['DEFER',c.deferred||0,'#dfba7b'],['SKIP',c.skips||0,'#aaa9e5'],['PENDING',c.pending||0,'#42536c']];let denom=c.queue||1;
