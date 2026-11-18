@@ -593,63 +593,56 @@ html,body,.grid,.table-scroll,.drawer,.timeline,.control-status{
 }
 @media(max-width:500px){.mission-facts{grid-template-columns:1fr}}
 
-/* Allow list, the same blue in-game panel vocabulary as the SAD command deck. */
-.allowlist-overlay{
- position:fixed;inset:0;z-index:30;
- display:flex;align-items:center;justify-content:center;
+/* JSON-only allow list editor: a single native-scrolling text surface.
+   No per-address DOM rows or updates on scroll. */
+.allowlist-overlay {
+ position:fixed;inset:0;z-index:30;display:flex;
+ align-items:center;justify-content:center;
  padding:16px;background:rgba(1,9,23,.83);
  backdrop-filter:blur(6px);
 }
 .allowlist-overlay[hidden]{display:none!important}
-.allowlist-panel{
+.allowlist-panel {
  display:flex;flex-direction:column;gap:11px;min-width:0;
- width:min(760px,96vw);max-height:min(92dvh,930px);
- padding:17px 18px;
- border:2px solid #8bbbd3;border-radius:20px;
+ width:min(800px,96vw);height:min(86dvh,860px);min-height:300px;
+ padding:16px 18px;
+ border:2px solid #8bbbd3;border-radius:19px;
  background:linear-gradient(150deg,#345d7a,#1e3e5b 13%,#10263d 83%,#153350);
  color:#e8f7ff;
  box-shadow:inset 0 2px #d2f4ff77,inset 0 -4px 7px #051628,0 18px 60px #000d;
 }
-.allowlist-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px}
+.allowlist-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex:none}
 .allowlist-title{display:flex;align-items:center;gap:10px;min-width:0}
 .allowlist-title>div{min-width:0}
 .allowlist-title h2{font-size:19px;margin:0 0 3px}
-.allowlist-path{color:#9ebfd1;font-size:10px;overflow-wrap:anywhere;max-width:620px}
-.allowlist-description{font-size:12px;color:#c8e1ef;line-height:1.4}
-.allowlist-toolbar{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
-.allowlist-toolbar input{flex:1 1 200px;min-width:120px}
-.allowlist-count{margin-right:auto;font-size:11px;color:#b0ccdc;white-space:nowrap}
-.allowlist-scroll{
- flex:1 1 auto;min-height:190px;
- overflow:auto;padding:7px;scrollbar-gutter:stable;
- border:1px solid #557b99;border-radius:12px;
- background:#081d32;box-shadow:inset 0 2px 6px #0007;
-}
-.allowlist-row{display:flex;align-items:center;gap:9px;padding:4px 5px;border-bottom:1px solid #264864}
-.allowlist-row:last-child{border-bottom:0}
-.allowlist-row .allowlist-index{flex:0 0 40px;color:#7da0b9;text-align:right;font:11px var(--numbers)}
-.allowlist-row input{flex:1 1 auto;min-width:0;height:31px;border-radius:7px;padding:5px 8px;font:12px var(--numbers)}
-.allowlist-row button{flex:0 0 auto;font-size:11px;padding:5px 11px!important;border-radius:12px!important}
-.allowlist-row .remove-entry{border-color:#ad7180!important;color:#ffd2d7!important}
+.allowlist-path{color:#9ebfd1;font-size:10px;overflow-wrap:anywhere;max-width:630px}
 .allowlist-json{
- flex:1 1 auto;display:block;width:100%;min-height:250px;resize:vertical;
- padding:12px;border:1px solid #658ea9;border-radius:12px;
- background:#071c30;color:#d2edf9;
- font:12px/1.52 var(--numbers);tab-size:2;
+ display:block;flex:1 1 auto;width:100%;min-height:0;max-height:none;
+ padding:12px 14px;resize:none;overflow:auto;overscroll-behavior:contain;
+ border:1px solid #658ea9;border-radius:12px;
+ background:#071c30;color:#d2edf9;caret-color:#d4f4ff;
+ font:12px/1.55 "Cascadia Code",Consolas,monospace;
+ tab-size:2;white-space:pre;
+ scrollbar-color:#83bad5 #0a2641;scrollbar-width:thin;
 }
-.allowlist-json[hidden]{display:none!important}
-.allowlist-foot{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}
-.allowlist-message{font-size:11px;color:#bbd7e9;line-height:1.4;flex:1 1 260px;overflow-wrap:anywhere}
+.allowlist-json:focus-visible{outline:2px solid #a5e3fa;outline-offset:1px}
+.allowlist-foot{
+ display:flex;align-items:center;justify-content:space-between;
+ gap:10px;flex-wrap:wrap;flex:none;
+}
+.allowlist-message{
+ font-size:11px;color:#bbd7e9;line-height:1.4;
+ flex:1 1 200px;overflow-wrap:anywhere;
+}
 .allowlist-message[data-kind="error"]{color:#ffb1bb}
 .allowlist-message[data-kind="saved"]{color:#b6ee9e}
 .allowlist-actions{display:flex;align-items:center;gap:8px;margin-left:auto}
-.allowlist-panel button:disabled,.allowlist-panel input:disabled,.allowlist-panel textarea:disabled{opacity:.5;cursor:not-allowed}
+.allowlist-panel button:disabled,.allowlist-panel textarea:disabled{opacity:.5;cursor:not-allowed}
 @media(max-width:600px){
- .allowlist-panel{padding:12px;max-height:95dvh}
+ .allowlist-overlay{padding:6px}
+ .allowlist-panel{padding:10px 12px;width:100%;height:94dvh;min-height:0;gap:8px}
  .allowlist-path{font-size:9px}
- .allowlist-row{gap:5px}
- .allowlist-row .allowlist-index{flex-basis:25px}
- .allowlist-row button{padding:5px 7px!important}
+ .allowlist-json{font-size:11px;padding:9px}
 }
 </style></head>
 <body>
@@ -756,15 +749,7 @@ html,body,.grid,.table-scroll,.drawer,.timeline,.control-status{
    </div>
    <button type="button" id="allowListClose" aria-label="Close allow list">Close</button>
   </header>
-  <p class="allowlist-description">Only the functions in this JSON list can be assigned when running all modules. Remove or edit addresses, then save. Changes apply to the next launch.</p>
-  <div class="allowlist-toolbar">
-   <input id="allowListFilter" type="search" placeholder="Find address" aria-label="Filter addresses">
-   <span class="allowlist-count" id="allowListCount">Loading…</span>
-   <button id="allowListAdd" type="button">Add address</button>
-   <button id="allowListMode" type="button">Edit JSON</button>
-  </div>
-  <div class="allowlist-scroll" id="allowListRows" aria-label="Allow list addresses"></div>
-  <textarea class="allowlist-json mono" id="allowListJson" aria-label="Raw allow list JSON" spellcheck="false" hidden></textarea>
+  <textarea class="allowlist-json" id="allowListJson" aria-label="Allow list JSON" spellcheck="false" autocapitalize="off" autocomplete="off" wrap="off" placeholder='["0x01213b70", "0x01213be0"]'></textarea>
   <div class="allowlist-foot">
    <div class="allowlist-message" id="allowListMessage" role="status" aria-live="polite"></div>
    <div class="allowlist-actions">
@@ -792,10 +777,12 @@ function openDrawer(type,id){selected={type,id};$('backdrop').classList.add('ope
 function closeDrawer(){selected=null;$('backdrop').classList.remove('open');$('drawer').classList.remove('open')}
 async function json(path){const r=await fetch(path,{cache:'no-store'});const j=await r.json();if(!r.ok||j.error)throw Error(j.error||'HTTP '+r.status);return j}
 
-/* Explicit allow-list editor. Only the known configured JSON path is writable. */
-let allowDoc=null,allowEntries=[],allowMode='rows',allowBusy=false,allowDirty=false,allowLocked=null;
+/* JSON-only allow list editor. One textarea, one file, no address list DOM. */
+let allowDoc=null,allowBusy=false,allowDirty=false,allowLocked=null;
 function allowMessage(message,kind='info'){
- const el=$('allowListMessage');el.textContent=message;el.dataset.kind=kind;
+ const el=$('allowListMessage');
+ el.textContent=message;
+ el.dataset.kind=kind;
 }
 function allowCanWrite(){
  return !!allowDoc&&CONTROL&&!allowBusy&&!mutating&&!runCoordinatorActive(lastSnapshot)
@@ -804,165 +791,134 @@ function allowCanWrite(){
 function parseAllowJson(raw){
  let values;
  try{values=JSON.parse(raw)}catch(e){throw Error('Invalid JSON: '+e.message)}
- if(!Array.isArray(values)||!values.length)throw Error('Allow list must contain at least one function address.');
+ if(!Array.isArray(values)||!values.length){
+  throw Error('Allow list must contain at least one function address.');
+ }
  if(values.length>12000)throw Error('Allow list exceeds 12,000 addresses.');
  const found=new Set();
- return values.map((entry,i)=>{
+ for(let i=0;i<values.length;i++){
+  const entry=values[i];
   if(typeof entry!=='string'||!/^0x[0-9a-fA-F]{1,8}$/.test(entry)){
    throw Error('Entry '+(i+1)+' must be a hex address beginning with 0x.');
   }
   const value='0x'+parseInt(entry,16).toString(16).padStart(8,'0');
   if(found.has(value))throw Error('Duplicate address: '+value);
-  found.add(value);return value;
- });
+  found.add(value);
+ }
+ return values.length;
 }
 function allowUpdateLock(){
  if($('allowListOverlay').hidden)return;
- const enabled=allowCanWrite();
- for(const id of ['allowListSave','allowListAdd'])$(id).disabled=!enabled;
- $('allowListJson').disabled=!enabled;
- $('allowListRows').querySelectorAll('input,button').forEach(el=>el.disabled=!enabled);
- if(allowLocked!==!enabled){
-  allowLocked=!enabled;
-  if(!enabled&&!allowBusy)allowMessage('Read-only while a decompiler run is starting or active. Stop the run to edit.');
+ const canEdit=allowCanWrite();
+ $('allowListSave').disabled=!canEdit;
+ $('allowListJson').disabled=!canEdit;
+ if(allowLocked!==!canEdit){
+  allowLocked=!canEdit;
+  if(!canEdit&&!allowBusy&&allowDoc){
+   allowMessage('Read-only while a run is active. Stop the run to edit.');
+  }
  }
 }
-function allowRenderRows(){
- const q=$('allowListFilter').value.trim().toLowerCase();
- const indices=allowEntries.map((address,i)=>({address,i}))
-  .filter(entry=>!q||entry.address.toLowerCase().includes(q));
- $('allowListCount').textContent=allowEntries.length+' addresses'+(q?' · '+indices.length+' shown':'')+(allowDirty?' · unsaved':'');
- $('allowListRows').innerHTML=indices.length?
-  indices.map(entry=>'<div class="allowlist-row"><span class="allowlist-index">'+(entry.i+1)+'</span>'+
-   '<input type="text" spellcheck="false" aria-label="Function address '+(entry.i+1)+'" data-entry="'+entry.i+
-   '" value="'+esc(entry.address)+'"><button type="button" class="remove-entry" data-remove="'+entry.i+'">Remove</button></div>').join(''):
-  '<div class="empty">'+(q?'No matching addresses':'No addresses. Add at least one before saving.')+'</div>';
+function allowDisplayDocument(doc){
+ allowDoc=doc;
+ allowDirty=false;
+ allowLocked=null;
+ $('allowListPath').textContent=doc.path+
+  (doc.source==='SPORE_RETRY_ALLOWLIST'?' (environment override)':'');
+ // Only one text node is created, even for thousands of JSON addresses.
+ const editor=$('allowListJson');
+ editor.value=doc.content||'[]';
+ editor.scrollTop=0;
+ allowMessage(doc.valid?
+  doc.count+' addresses loaded. Changes apply to the next run.':
+  (doc.validation_error||'Repair the JSON before saving.'),
+  doc.valid?'info':'error');
  allowUpdateLock();
-}
-function allowDisplayDocument(result){
- allowDoc=result;allowEntries=(result.addresses||[]).slice();
- allowMode=(result.valid||!result.exists)?'rows':'json';allowDirty=false;allowLocked=null;
- $('allowListPath').textContent=result.path+(result.source==='SPORE_RETRY_ALLOWLIST'?' (environment override)':'');
- $('allowListFilter').value='';
- $('allowListJson').value=result.content||'[]';
- allowSetMode();
- allowMessage(result.valid?
-  'Loaded '+result.count+' addresses. Changes apply to the next run.':
-  (result.validation_error||'The JSON needs to be repaired before saving.'),
-  result.valid?'info':'error');
-}
-function allowSetMode(){
- const raw=allowMode==='json';
- $('allowListRows').hidden=raw;
- $('allowListFilter').hidden=raw;
- $('allowListJson').hidden=!raw;
- $('allowListMode').textContent=raw?'Addresses':'Edit JSON';
- $('allowListAdd').hidden=raw;
- if(raw){
-  $('allowListCount').textContent=allowDirty?'JSON editor · unsaved':'JSON editor';
- }else{
-  allowRenderRows();
- }
- allowUpdateLock();
-}
-function allowMarkDirty(){
- allowDirty=true;
- if(allowMode==='rows')$('allowListCount').textContent=allowEntries.length+' addresses · unsaved';
- else $('allowListCount').textContent='JSON editor · unsaved';
- allowMessage('Unsaved changes. Save to update the active allow list.');
 }
 async function allowReload(force=false){
- if(!force&&allowDirty&&!confirm('Discard unsaved allow list changes?'))return;
- allowBusy=true;allowUpdateLock();
+ if(!force&&allowDirty&&!confirm('Discard unsaved JSON changes?'))return;
+ allowBusy=true;
+ allowUpdateLock();
  try{
-  const result=await json('/api/allowlist');
-  allowDisplayDocument(result);
- }catch(e){allowMessage(e.message||'Could not load allow list.','error')}
- finally{allowBusy=false;allowUpdateLock()}
+  const doc=await json('/api/allowlist');
+  allowDisplayDocument(doc);
+ }catch(e){
+  allowMessage(e.message||'Could not load allow list.','error');
+ }finally{
+  allowBusy=false;
+  allowUpdateLock();
+ }
 }
 async function openAllowList(){
  $('allowListOverlay').hidden=false;
- allowDoc=null;allowEntries=[];allowDirty=false;allowMode='rows';allowLocked=null;
- $('allowListRows').innerHTML='<div class="empty">Loading allow list…</div>';
+ allowDoc=null;
+ allowDirty=false;
+ allowLocked=null;
  $('allowListPath').textContent='Loading…';
- $('allowListCount').textContent='Loading…';
+ $('allowListJson').value='';
  $('allowListPanel').focus();
  await allowReload(true);
 }
 function closeAllowList(){
  if(allowBusy)return;
- if(allowDirty&&!confirm('Close without saving allow list changes?'))return;
+ if(allowDirty&&!confirm('Close without saving JSON changes?'))return;
  $('allowListOverlay').hidden=true;
  $('module').focus();
 }
-
 $('allowListClose').addEventListener('click',closeAllowList);
-$('allowListOverlay').addEventListener('click',e=>{if(e.target===$('allowListOverlay'))closeAllowList()});
+$('allowListOverlay').addEventListener('click',e=>{
+ if(e.target===$('allowListOverlay'))closeAllowList();
+});
 $('allowListReload').addEventListener('click',()=>allowReload());
-$('allowListFilter').addEventListener('input',allowRenderRows);
-$('allowListRows').addEventListener('input',e=>{
- const el=e.target;if(!el.matches('input[data-entry]')||!allowCanWrite())return;
- const i=Number(el.dataset.entry);
- if(!Number.isInteger(i)||i<0||i>=allowEntries.length)return;
- allowEntries[i]=el.value.trim();allowMarkDirty();
-});
-$('allowListRows').addEventListener('click',e=>{
- const button=e.target.closest('button[data-remove]');
- if(!button||!allowCanWrite())return;
- const i=Number(button.dataset.remove);
- if(!Number.isInteger(i)||i<0||i>=allowEntries.length)return;
- allowEntries.splice(i,1);allowMarkDirty();allowRenderRows();
-});
-$('allowListAdd').addEventListener('click',()=>{
- if(!allowCanWrite())return;
- $('allowListFilter').value='';
- allowMode='rows';allowEntries.push('0x');allowMarkDirty();allowRenderRows();
- const input=$('allowListRows').querySelector('input[data-entry="'+(allowEntries.length-1)+'"]');
- if(input){input.focus();input.select()}
-});
-$('allowListMode').addEventListener('click',()=>{
- if(allowMode==='rows'){
-  $('allowListJson').value=JSON.stringify(allowEntries,null,2)+'\n';
-  allowMode='json';
- }else{
-  try{allowEntries=parseAllowJson($('allowListJson').value)}
-  catch(e){allowMessage(e.message,'error');return}
-  allowMode='rows';
- }
- allowSetMode();
-});
 $('allowListJson').addEventListener('input',()=>{
  if(!allowCanWrite())return;
- allowMarkDirty();
+ allowDirty=true;
+ allowMessage('Unsaved JSON changes.');
 });
 $('allowListSave').addEventListener('click',async()=>{
- if(!allowDoc||!allowCanWrite())return;
- const raw=allowMode==='json'?
-  $('allowListJson').value:JSON.stringify(allowEntries,null,2)+'\n';
- let entries;
- try{entries=parseAllowJson(raw)}
+ if(!allowCanWrite())return;
+ const raw=$('allowListJson').value;
+ let count;
+ try{count=parseAllowJson(raw)}
  catch(e){allowMessage(e.message,'error');return}
- allowBusy=true;allowUpdateLock();
- allowMessage('Saving '+entries.length+' addresses…');
+ if(new TextEncoder().encode(raw).length>256000){
+  allowMessage('JSON exceeds the 256 KB limit.','error');
+  return;
+ }
+ allowBusy=true;
+ allowUpdateLock();
+ allowMessage('Saving '+count+' addresses…');
  try{
   const response=await fetch('/api/allowlist',{
-   method:'POST',headers:{'Content-Type':'application/json','X-Spore-Token':TOKEN},
+   method:'POST',
+   headers:{'Content-Type':'application/json','X-Spore-Token':TOKEN},
    body:JSON.stringify({content:raw,revision:allowDoc.revision})
   });
-  const data=await response.json();
-  if(!response.ok||data.error)throw Error(data.error||'Save failed (HTTP '+response.status+')');
-  allowDisplayDocument(data);
-  allowMessage('Saved '+data.count+' addresses. The next launch will use this list.','saved');
+  const saved=await response.json();
+  if(!response.ok||saved.error){
+   throw Error(saved.error||'Save failed (HTTP '+response.status+')');
+  }
+  allowDisplayDocument(saved);
+  allowMessage('Saved '+saved.count+' addresses. Next launch uses this JSON.','saved');
   previewKey='';previewState=null;scheduleMissionPreview();
- }catch(e){allowMessage(e.message||'Could not save allow list.','error')}
- finally{allowBusy=false;allowUpdateLock()}
-});
-document.addEventListener('keydown',e=>{
- if(e.key==='Escape'&&!$('allowListOverlay').hidden){
-  e.stopPropagation();e.preventDefault();closeAllowList();
+ }catch(e){
+  allowMessage(e.message||'Could not save allow list.','error');
+ }finally{
+  allowBusy=false;
+  allowUpdateLock();
  }
 });
-
+document.addEventListener('keydown',e=>{
+ if($('allowListOverlay').hidden)return;
+ if(e.key==='Escape'){
+  e.stopPropagation();
+  e.preventDefault();
+  closeAllowList();
+ }else if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==='s'){
+  e.preventDefault();
+  if(allowCanWrite())$('allowListSave').click();
+ }
+});
 function missionSelection(){
  return {
   // Use the remembered valid module if a keyboard or programmatic select
