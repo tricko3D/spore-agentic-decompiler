@@ -101,6 +101,11 @@ def init_schema():
           va TEXT NOT NULL REFERENCES queue(va),
           reason TEXT NOT NULL, created_utc TEXT NOT NULL,
           PRIMARY KEY(run_id,va));
+        CREATE TABLE IF NOT EXISTS run_attempt_limits(
+          run_id TEXT NOT NULL REFERENCES runs(run_id),
+          va TEXT NOT NULL REFERENCES queue(va),
+          max_attempts INTEGER NOT NULL,
+          PRIMARY KEY(run_id,va));
         CREATE TABLE IF NOT EXISTS run_delays(
           run_id TEXT NOT NULL REFERENCES runs(run_id),
           va TEXT NOT NULL REFERENCES queue(va),
@@ -304,11 +309,35 @@ def create_run(run_id,workers,passes,assignments,group_keys=None):
                        (run_id,workers,passes,utc()))
             db.executemany('INSERT INTO assignments(run_id,va,worker_idx,group_key) VALUES(?,?,?,?)',
                            ((run_id,va,i,(group_keys or {}).get(va,va)) for va,i in assignments.items()))
+            # Snapshot valid FAIL/DEFER counts before workers start. Every assignment
+            # receives exactly 'passes' new attempts even after prior exhausted runs.
+            db.execute("""
+                INSERT INTO run_attempt_limits(run_id,va,max_attempts)
+                SELECT ?,a.va,? + (
+                  SELECT COUNT(*) FROM attempts t
+                  LEFT JOIN attempt_reviews r ON r.attempt_id=t.id
+                  WHERE t.va=a.va AND t.status IN ('FAIL','DEFER')
+                    AND r.attempt_id IS NULL
+                )
+                FROM assignments a WHERE a.run_id=?
+            """, (run_id,passes,run_id))
             db.execute("INSERT OR REPLACE INTO metadata(key,value) VALUES('pass_limit',?)",(str(passes),))
             db.execute('COMMIT')
         except Exception:
             db.execute('ROLLBACK')
             raise
+
+
+def run_attempt_limit(run_id, va):
+    """Cumulative ceiling captured when this run was created; never reset history."""
+    with connect() as db:
+        row = db.execute(
+            'SELECT max_attempts FROM run_attempt_limits WHERE run_id=? AND va=?',
+            (run_id, va)
+        ).fetchone()
+        if row is None:
+            raise RuntimeError(f'Missing run attempt ceiling for {run_id} {va}')
+        return int(row['max_attempts'])
 
 
 def finish_run(run_id):
@@ -411,6 +440,7 @@ def claim_next(run_id, worker_idx, passes):
             chosen = db.execute("""
                 SELECT q.va FROM assignments a
                 JOIN queue q ON q.va=a.va
+                JOIN run_attempt_limits cap ON cap.run_id=a.run_id AND cap.va=a.va
                 LEFT JOIN claims held ON held.va=q.va
                 LEFT JOIN run_exclusions excluded ON excluded.va=q.va AND excluded.run_id=a.run_id
                 LEFT JOIN run_delays delayed ON delayed.va=q.va AND delayed.run_id=a.run_id
@@ -424,13 +454,13 @@ def claim_next(run_id, worker_idx, passes):
                   AND (SELECT COUNT(*) FROM attempts t
                        LEFT JOIN attempt_reviews r ON r.attempt_id=t.id
                        WHERE t.va=q.va AND t.status IN ('FAIL','DEFER')
-                         AND r.attempt_id IS NULL) < ?
+                         AND r.attempt_id IS NULL) < cap.max_attempts
                   AND NOT EXISTS(
                        SELECT 1 FROM claims locked
                        JOIN assignments same ON same.va=locked.va AND same.run_id=a.run_id
                        WHERE same.group_key=a.group_key)
                 ORDER BY q.position LIMIT 1
-            """, (run_id, time.time(), passes)).fetchone()
+            """, (run_id, time.time())).fetchone()
             if chosen:
                 va = chosen['va']
                 db.execute("""INSERT INTO claims
