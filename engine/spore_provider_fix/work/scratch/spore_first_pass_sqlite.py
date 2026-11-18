@@ -6,6 +6,7 @@ import spore_sqlite_store as store
 from spore_provider_log import provider_only, provider_pressure
 import spore_adaptive as adaptive_ctl
 import spore_progress_watch as progress_watch
+import spore_investigation as investigation
 import fcntl
 from contextlib import contextmanager
 import glob
@@ -531,6 +532,9 @@ def openrouter_config(reasoning='high'):
     return {
         '$schema': 'https://opencode.ai/config.json',
         'share': 'disabled',
+        # Compact accumulated tool/search conversation before input grows huge.
+        # This is not a limit on investigation steps or reasoning effort.
+        'compaction': {'auto': True, 'keep': {'tokens': 2000}, 'buffer': '65%'},
         'model': 'openrouter/' + OPENROUTER_MODEL,
         'providers': {
             'openrouter': {
@@ -652,7 +656,7 @@ def classify_failure(log, code, backend, message=''):
 
 
 def run_one(va, minutes, unsafe, backend, model='mistral4', reasoning='medium',
-            pass_number=1, prompt_override=None, slot=None):
+            pass_number=1, prompt_override=None, slot=None, evidence=None):
     LOGS.mkdir(parents=True, exist_ok=True)
     suffix = model if backend == 'nvidia' else ('deepseek-openrouter' if backend == 'openrouter' else 'codex')
     pass_suffix = f'.pass{pass_number}' if pass_number > 1 else ''
@@ -664,6 +668,20 @@ def run_one(va, minutes, unsafe, backend, model='mistral4', reasoning='medium',
     last = LOGS / f'{va[2:]}.{suffix}{pass_suffix}.{serial}.last.txt'
     prompt = (prompt_override if prompt_override is not None else
               PROMPT_FILE.read_text(encoding='utf-8')).replace('{VA}', va)
+    if evidence:
+        prompt += f"""
+
+INVESTIGATION EVIDENCE: {evidence}/README.md
+The immutable retail assembly, first-seen C++, latest working C++ snapshot,
+original-to-current C++ diff, exact checker experiments and curated findings
+are saved there. Read the relevant evidence files before investigating.
+The working source file, NOT latest.cpp, is authoritative for edits.
+After meaningful checker experiments, update keep.md with concise tested
+hypotheses, observed differences, and next promising approaches.
+Do not dump entire compiler logs or broad repository search output into chat.
+Prefer targeted source reads and bounded tool outputs. Continue investigating
+while meaningful progress remains; there is no arbitrary model-step cutoff.
+"""
     if os.environ.get('SPORE_SQLITE_RUN_ID'):
         prompt += f"""
 PARALLEL WORKER SAFETY: Other agents are working in this repository concurrently.
@@ -699,13 +717,15 @@ fix requires changing a shared header, report SKIP instead.
         else:
             env['OPENCODE_CONFIG_CONTENT'] = json.dumps(nvidia_opencode_config(model, reasoning))
             selected_model = f"spore_nvidia/{NVIDIA_MODELS[model]['slug']}"
-        # Reuse this function's OpenCode *conversation* across passes and
-        # provider-only retries. A new function gets its own session. Keep
-        # --standalone for the pinned ephemeral provider config; sessions are
-        # stored in OpenCode's durable database and resumed with --session.
+        # Start each new paid pass from durable evidence instead of replaying
+        # the previous pass's long conversation. Provider-only retries within
+        # the SAME pass resume the saved session, including unfinished edits.
+        # Old session history and JSONL logs are never deleted.
         cmd = ['opencode', 'run', '--standalone', '--auto',
                '--agent', 'build', '--model', selected_model, '--format', 'json']
-        sid = store.session_for(va)
+        stored = store.session_for(va)
+        sid = (investigation.session_for_pass(ROOT, va, pass_number, stored)
+               if evidence else stored)
         if sid:
             cmd += ['--session', sid]
         else:
@@ -724,6 +744,8 @@ fix requires changing a shared header, report SKIP instead.
                 sid = ev.get('sessionID') if isinstance(ev, dict) else None
                 if isinstance(sid, str) and sid.startswith('ses_'):
                     store.save_session(va, sid)
+                    if evidence:
+                        investigation.remember_session(ROOT, va, pass_number, sid)
                     return
         except OSError:
             return
@@ -745,8 +767,13 @@ fix requires changing a shared header, report SKIP instead.
             # --minutes is a legacy CLI name. It now controls inactivity only;
             # old 5-minute settings are clamped to at least 15 minutes.
             idle_minutes = max(15, minutes)
+            evidence_seen = set()
+            def evidence_event(event):
+                if evidence and event.get('type') == 'tool_use':
+                    investigation.record_checker_event(ROOT, va, event, evidence_seen)
             watch_state, code = progress_watch.watch(
-                proc, log, idle_minutes * 60, on_output=tokens_confirmed)
+                proc, log, idle_minutes * 60, on_output=tokens_confirmed,
+                on_event=evidence_event if evidence else None)
             if watch_state != 'complete':
                 save_session_from_log()
                 if watch_state == 'provider_429':
@@ -1178,6 +1205,13 @@ def process(minutes, unsafe, backend, quota_wait, max_functions,
                              previous_log(va, backend, model, pass_number - 1))
                 prompt = (continuation_prompt(va, pass_number, prior_row, prior_log, pass_ceiling)
                           if pass_number > 1 else None)
+                evidence = None
+                try:
+                    source, _ = t.locate(int(va, 16))
+                    folder = investigation.prepare(ROOT, va, row['size'], source)
+                    evidence = folder.relative_to(ROOT)
+                except (OSError, ValueError, RuntimeError) as exc:
+                    print(f'  Evidence snapshot unavailable ({exc}); continuing safely.', flush=True)
                 print(f'  Pass {pass_number}/{pass_ceiling}...', flush=True)
                 provider_failures = 0
                 while True:
@@ -1196,7 +1230,8 @@ def process(minutes, unsafe, backend, quota_wait, max_functions,
                                 print('Run budget reserved for other workers or exhausted; stopping.', flush=True)
                                 return
                         kind, answer, log = run_one(va, minutes, unsafe, backend,
-                                                    model, reasoning, pass_number, prompt, slot=slot)
+                                                    model, reasoning, pass_number, prompt, slot=slot,
+                                                    evidence=evidence)
                     except KeyboardInterrupt:
                         print('\nStopped. Completed passes remain recorded; unfinished pass can be retried.')
                         return
@@ -1283,6 +1318,14 @@ def process(minutes, unsafe, backend, quota_wait, max_functions,
                         # was created; count the inference, not a false success.
                         outcome = ('FAIL', '+3',
                                    f'Pass {pass_number}: unverified model response: {answer[:95]} | checker: {check_note}')
+                if evidence:
+                    try:
+                        source, _ = t.locate(int(va, 16))
+                        if source:
+                            investigation.prepare(ROOT, va, row['size'], source)
+                        investigation.final_result(ROOT, va, pass_number, outcome[0], check_note)
+                    except (OSError, ValueError, RuntimeError) as exc:
+                        print(f'  Evidence update skipped ({exc}).', flush=True)
                 record(va, *outcome, log_path=log)
                 history.setdefault(va, []).append({'va': va, 'status': outcome[0],
                                                       'effort': outcome[1], 'note': outcome[2]})
