@@ -145,6 +145,10 @@ def ensure(repo):
             changed_utc TEXT NOT NULL
           );
         """)
+        # Compatible migration for already installed WSL knowledge databases.
+        cols = {x["name"] for x in con.execute("PRAGMA table_info(technique_queue)")}
+        if "next_retry_utc" not in cols:
+            con.execute("ALTER TABLE technique_queue ADD COLUMN next_retry_utc TEXT")
         con.commit()
         synchronize(con)
     finally:
@@ -165,7 +169,7 @@ def synchronize(con):
                 VALUES(?,?,'pending',0,NULL,?,'')
                 ON CONFLICT(finding_id) DO UPDATE SET
                     source_hash=excluded.source_hash,state='pending',failures=0,
-                    lease_utc=NULL,updated_utc=excluded.updated_utc,error=''""",
+                    lease_utc=NULL,next_retry_utc=NULL,updated_utc=excluded.updated_utc,error=''""",
                     (row["id"], row["source_hash"], now()))
     return len(rows)
 
@@ -483,6 +487,7 @@ def _claim(con):
               (q.state='pending' OR
                 (q.state='claimed' AND q.lease_utc < ?))
               AND q.failures < ?
+              AND (q.next_retry_utc IS NULL OR q.next_retry_utc <= ?)
             ORDER BY
               (CASE WHEN LENGTH(f.summary)>=120 THEN 1 ELSE 0 END) DESC,
               (SELECT COUNT(*) FROM finding_experiments e
@@ -490,7 +495,7 @@ def _claim(con):
               f.verified_match DESC,
               q.finding_id
             LIMIT 1""",
-            (now(), MAX_RETRIES)).fetchone()
+            (now(), MAX_RETRIES, now())).fetchone()
         if not row:
             return None
         from datetime import timedelta
@@ -502,12 +507,20 @@ def _claim(con):
 
 
 def _error(con, finding_id, info):
+    # An invalid model response should not immediately retry the same finding
+    # and monopolize the batch. Exponential cooling also caps wasted inference.
+    from datetime import timedelta
     with con:
+        old = con.execute("SELECT failures FROM technique_queue WHERE finding_id=?",
+                          (finding_id,)).fetchone()
+        retries = int(old["failures"] if old else 0)
+        until = (datetime.now(timezone.utc) + timedelta(minutes=5 * 3 ** retries)
+                 ).isoformat(timespec="seconds")
         con.execute("""UPDATE technique_queue SET
             state=CASE WHEN failures + 1 >= ? THEN 'failed' ELSE 'pending' END,
-            failures=failures+1,lease_utc=NULL,updated_utc=?,error=?
-            WHERE finding_id=?""",
-            (MAX_RETRIES, now(), _tidy(info, 200), finding_id))
+            failures=failures+1,lease_utc=NULL,next_retry_utc=?,
+            updated_utc=?,error=? WHERE finding_id=?""",
+            (MAX_RETRIES, until, now(), _tidy(info, 200), finding_id))
 
 
 def process(repo, *, max_items=4, daily_usd=0.15, caller=call_deepseek, key=None):
@@ -519,6 +532,7 @@ def process(repo, *, max_items=4, daily_usd=0.15, caller=call_deepseek, key=None
         key = _get_key()
     lock = _lock(repo)
     done = created = failed = 0
+    errors = []
     try:
         ensure(repo)
         con = memory.connection(repo)
@@ -539,18 +553,26 @@ def process(repo, *, max_items=4, daily_usd=0.15, caller=call_deepseek, key=None
                     if key is None:
                         key = _get_key()
                     response, usage = caller(key,prompt)
+                    # Bill the *actual* reported usage even when validation
+                    # rejects an unsupported/hallucinated model proposal.
+                    _settle(con,request_id,usage)
                     proposals = _validate(response, evidence, known)
                     created += apply(con,finding_id,source_hash,proposals)
-                    _settle(con,request_id,usage)
                     done += 1
                 except Exception as exc:
-                    _error(con,finding_id,type(exc).__name__ + ": " + str(exc)[:140])
+                    reason = type(exc).__name__ + ": " + str(exc)[:140]
+                    _error(con, finding_id, reason)
                     failed += 1
-                    # Do not repeatedly fire costly requests when an endpoint
-                    # or configuration fails. Future runs can safely retry.
-                    break
+                    errors.append({"finding_id":finding_id, "reason":reason})
+                    # Response-shape or quote validation failures are local
+                    # to one finding. Continue with other eligible findings.
+                    # Transport/auth/unknown failures stop the batch instead
+                    # of repeatedly hitting a broken paid provider.
+                    if not isinstance(exc, ValueError):
+                        break
+                    continue
             return {"processed":done,"technique_links_added":created,
-                    "failed":failed,"stats":status(repo)}
+                    "failed":failed,"errors":errors,"stats":status(repo)}
         finally:
             con.close()
     finally:
@@ -572,9 +594,14 @@ def status(repo):
         total = con.execute("SELECT COUNT(*) FROM compiler_technique_links").fetchone()[0]
         spent = con.execute("""SELECT COALESCE(SUM(cost_usd),0)
             FROM technique_spend WHERE day=?""", (day(),)).fetchone()[0]
+        errors = con.execute("""SELECT q.finding_id, f.va,q.failures,q.error,
+                   q.state,q.next_retry_utc
+            FROM technique_queue q JOIN findings f ON f.id=q.finding_id
+            WHERE q.error<>'' ORDER BY q.updated_utc DESC LIMIT 5""").fetchall()
         return {"installed":True,"model":MODEL,"provider":PROVIDER,
                 "techniques":techniques,"linked_evidence":total,
                 "queue":{x["state"]:x["n"] for x in rows},
+                "recent_errors":[dict(x) for x in errors],
                 "reserved_or_spent_today_usd":round(spent,6)}
     finally:
         con.close()
