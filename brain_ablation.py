@@ -1,0 +1,557 @@
+#!/usr/bin/env python3
+"""Reproducible four-arm Spore decompilation ablation benchmark.
+
+Preparation is strictly offline and only reads the live Spore checkout.
+The paid runner is NEVER started without the explicit run-next --execute flag.
+Each arm uses a separate full working tree, SQLite database, session and source.
+"""
+from __future__ import annotations
+
+import argparse
+from datetime import datetime, timezone
+import hashlib
+import json
+import os
+from pathlib import Path
+import random
+import re
+import shutil
+import signal
+import sqlite3
+import subprocess
+import sys
+import time
+
+ARMS = ("baseline", "raw", "consolidated", "placebo")
+WORK = Path("work/scratch/codex-pass1")
+OPS = WORK / "spore.sqlite3"
+KNOW = WORK / "memory/knowledge.sqlite3"
+RUNNER = Path("work/scratch/spore_first_pass_sqlite.py")
+MEMORY = Path("work/scratch/spore_collective_memory.py")
+RETRIEVAL = Path("work/scratch/brain_trial_query.py")
+CONFIG = WORK / "brain_trial.json"
+SOURCE_DIR = Path(__file__).resolve().parent
+RETRIEVAL_SOURCE = SOURCE_DIR / "brain_ablation_query.py"
+DEFAULT_BUDGET = 0.50
+
+
+def now():
+    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
+def write_json(path, data):
+    path.parent.mkdir(parents=True,exist_ok=True)
+    tmp=path.with_name(path.name+".tmp")
+    tmp.write_text(json.dumps(data,indent=2,ensure_ascii=False)+"\n",encoding="utf-8")
+    tmp.replace(path)
+
+
+def snapshot_db(source, destination):
+    """SQLite online backup, safe even when WAL writers are active."""
+    if not source.is_file():
+        raise FileNotFoundError(f"Missing required SQLite database: {source}")
+    destination.parent.mkdir(parents=True,exist_ok=True)
+    with sqlite3.connect(f"file:{source.resolve()}?mode=ro",uri=True) as src:
+        with sqlite3.connect(destination) as dst:
+            src.backup(dst)
+            dst.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+
+
+def canonical(va):
+    if va is None:
+        return None
+    if not re.fullmatch(r"(?:0x)?[0-9a-fA-F]{8}",va):
+        raise ValueError("Function address must contain eight hexadecimal digits")
+    return "0x"+va.lower().removeprefix("0x")
+
+
+def slice_path(va):
+    return Path("match/slices")/("s"+va[2:])/("s"+va[2:]+".cpp")
+
+
+def _checked_history(db):
+    return db.execute("""SELECT q.va,q.size,
+           SUM(CASE WHEN a.status IN ('FAIL','DEFER') AND v.attempt_id IS NULL
+                    THEN 1 ELSE 0 END) AS failures,
+           MAX(CASE WHEN a.status='MATCH' AND v.attempt_id IS NULL
+                    THEN 1 ELSE 0 END) AS matched
+       FROM queue q LEFT JOIN attempts a ON a.va=q.va
+       LEFT JOIN attempt_reviews v ON v.attempt_id=a.id
+       GROUP BY q.va,q.size ORDER BY failures DESC,q.va""").fetchall()
+
+
+def candidates(repo, minimum=7):
+    with sqlite3.connect(f"file:{(repo/OPS).resolve()}?mode=ro",uri=True) as db:
+        rows = _checked_history(db)
+    return [{"va":va,"size":size,"failures":n,"source":str(slice_path(va))}
+            for va,size,n,matched in rows if n>=minimum and not matched
+            and (repo/slice_path(va)).is_file()]
+
+
+def _copy_ignore(base):
+    """Do not copy live SQLite/WAL, sockets, old sessions or past tool logs."""
+    def ignored(dirname,names):
+        path=Path(dirname)
+        rel=path.relative_to(base)
+        drop=set()
+        if rel==Path("."):
+            drop |= {".git",".venv","node_modules","__pycache__",".pytest_cache"}
+        if rel==WORK:
+            drop |= {"spore.sqlite3","spore.sqlite3-wal","spore.sqlite3-shm",
+                     "logs","investigations","parallel","runtime","sqlite-backups"}
+        if rel==WORK/"memory":
+            drop |= {"knowledge.sqlite3","knowledge.sqlite3-wal",
+                     "knowledge.sqlite3-shm","memory.sock"}
+        for name in names:
+            p=path/name
+            if name=="__pycache__" or name==".DS_Store":
+                drop.add(name)
+            elif p.is_socket() or (not p.is_symlink() and not p.is_file() and not p.is_dir()):
+                drop.add(name)
+        return drop
+    return ignored
+
+
+def _check_symlinks(tree, original):
+    # Shared virtualenv is an explicit exception, and is never modified.
+    for path in tree.rglob("*"):
+        if path.is_symlink() and path.relative_to(tree)!=Path(".venv"):
+            resolved=path.resolve()
+            if resolved.is_relative_to(original):
+                raise RuntimeError(f"Source symlink escapes the experiment into the live checkout: {path}")
+
+
+def _patch_runner(path):
+    source=path.read_text(encoding="utf-8")
+    needle="if collective_memory.paths(ROOT)[2].is_file():"
+    if source.count(needle)!=1:
+        raise RuntimeError("Cannot locate memory injection boundary; runner version changed")
+    source=source.replace(needle,
+             "if not os.environ.get('SAD_BENCH_ARM') and collective_memory.paths(ROOT)[2].is_file():")
+    anchor="    if os.environ.get('SPORE_SQLITE_RUN_ID'):\n        prompt += f\"\"\""
+    if source.count(anchor)!=1:
+        raise RuntimeError("Cannot locate agent prompt boundary; runner version changed")
+    insert='''    if os.environ.get('SAD_BENCH_ARM'):
+        prompt += """
+CONTROLLED RESEARCH EXPERIMENT: Start this function from its blank source slice.
+Before proposing your first compiler hypothesis, query the Brain with a specific
+technical question using:
+.venv/bin/python work/scratch/brain_trial_query.py --text "MSVC x86 stack frame and register allocation"
+You may query the Brain repeatedly using your own technical questions.
+Some control conditions return no useful knowledge. Treat this as normal.
+Never look up knowledge by the target function address. Do not inspect
+historical logs, prior solutions, SQLite files, benchmark setup files,
+other sandboxes or agent sessions. Use only the benchmark Brain query tool.
+Consult task.py and check.py normally. Never trust a model claim of MATCH;
+only the retail checker proves byte-exact agreement.
+Focus on the current function. Do not edit unrelated files.
+"""
+'''
+    source=source.replace(anchor,insert+anchor)
+    path.write_text(source,encoding="utf-8")
+
+
+def _mask_memory(dbpath, target, alias):
+    """Mask direct target identity while retaining existing embedding rows."""
+    with sqlite3.connect(dbpath) as con:
+        con.row_factory=sqlite3.Row
+        con.execute("PRAGMA foreign_keys=ON")
+        for row in con.execute("SELECT * FROM findings").fetchall():
+            updated={k:re.sub(re.escape(target),alias,str(row[k]),flags=re.I)
+                     for k in ("title","summary","details")}
+            direct=row["va"].lower()==target.lower()
+            if direct or any(updated[k]!=row[k] for k in updated):
+                con.execute("""UPDATE findings SET va=?,title=?,summary=?,details=?,
+                    evidence_path=? WHERE id=?""",
+                    (alias if direct else row["va"],updated["title"],updated["summary"],
+                     updated["details"],"" if direct else row["evidence_path"],row["id"]))
+                con.execute("DELETE FROM findings_fts WHERE rowid=?",(row["id"],))
+                con.execute("INSERT INTO findings_fts(rowid,title,summary,details) VALUES(?,?,?,?)",
+                            (row["id"],updated["title"],updated["summary"],updated["details"]))
+            for e in con.execute("SELECT ordinal,command,result FROM finding_experiments WHERE finding_id=?",
+                                 (row["id"],)).fetchall():
+                newcmd=re.sub(re.escape(target),alias,e["command"],flags=re.I)
+                newresult=re.sub(re.escape(target),alias,e["result"],flags=re.I)
+                if newcmd!=e["command"] or newresult!=e["result"]:
+                    con.execute("UPDATE finding_experiments SET command=?,result=? WHERE finding_id=? AND ordinal=?",
+                                (newcmd,newresult,row["id"],e["ordinal"]))
+        # Also remove direct address references in technique evidence and labels.
+        for row in con.execute("SELECT * FROM compiler_techniques").fetchall():
+            keys=("title","problem","conditions","intervention","observed_effect")
+            newer={key:re.sub(re.escape(target),alias,row[key],flags=re.I) for key in keys}
+            if any(newer[key]!=row[key] for key in keys):
+                con.execute("""UPDATE compiler_techniques SET title=?,problem=?,conditions=?,
+                   intervention=?,observed_effect=? WHERE id=?""",
+                   (*(newer[key] for key in keys),row["id"]))
+                con.execute("DELETE FROM compiler_techniques_fts WHERE rowid=?",(row["id"],))
+                con.execute("""INSERT INTO compiler_techniques_fts
+                     (rowid,title,category,problem,conditions,intervention,observed_effect)
+                     VALUES(?,?,?,?,?,?,?)""",
+                     (row["id"],newer["title"],row["category"],newer["problem"],
+                      newer["conditions"],newer["intervention"],newer["observed_effect"]))
+        for row in con.execute("SELECT technique_id,finding_id,evidence_quote,observation FROM compiler_technique_links").fetchall():
+            quote=re.sub(re.escape(target),alias,row["evidence_quote"],flags=re.I)
+            note=re.sub(re.escape(target),alias,row["observation"],flags=re.I)
+            if quote!=row["evidence_quote"] or note!=row["observation"]:
+                con.execute("""UPDATE compiler_technique_links SET evidence_quote=?,observation=?
+                   WHERE technique_id=? AND finding_id=?""",
+                   (quote,note,row["technique_id"],row["finding_id"]))
+        # Freeze the original vectors for the entire pilot. Do not re-embed
+        # after masking: it would change the independent variable.
+        con.execute("DELETE FROM embedding_jobs")
+        if con.execute("SELECT 1 FROM sqlite_master WHERE name='technique_embedding_jobs'").fetchone():
+            con.execute("DELETE FROM technique_embedding_jobs")
+        con.commit()
+
+
+def _clean_operational(dbpath, target):
+    """Remove all previous attempts and sessions in the COPY only."""
+    with sqlite3.connect(dbpath) as con:
+        con.execute("PRAGMA foreign_keys=ON")
+        # Follow foreign-key order; keep the original queue and budget provenance.
+        for table in ("attempt_reviews","run_delays","run_attempt_limits",
+                      "run_exclusions","claims","inference_slots","reservations",
+                      "assignments","runs","agent_sessions","provider_incidents",
+                      "attempts","run_budgets"):
+            if con.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
+                           (table,)).fetchone():
+                con.execute("DELETE FROM "+table)
+        con.commit()
+        if con.execute("SELECT COUNT(*) FROM attempts WHERE va=?",(target,)).fetchone()[0]:
+            raise RuntimeError("Target history was not cleared in the experiment clone")
+
+
+def _clone(seed, destination):
+    if destination.exists():
+        raise FileExistsError(f"Experiment sandbox exists: {destination}")
+    shutil.copytree(seed,destination,symlinks=True,ignore=_copy_ignore(seed))
+    # Ignore logic removes SQLite files; install immutable prepared snapshots.
+    shutil.copy2(seed/OPS,destination/OPS)
+    if (seed/KNOW).is_file():
+        (destination/KNOW).parent.mkdir(parents=True,exist_ok=True)
+        shutil.copy2(seed/KNOW,destination/KNOW)
+    # The virtualenv is a shared dependency only, never a source workspace.
+    if (seed/".venv").is_symlink():
+        (destination/".venv").symlink_to(os.readlink(seed/".venv"),target_is_directory=True)
+
+
+def prepare(repo, out, va=None, repeats=3, minimum=7, seed=20261118):
+    repo=repo.resolve();out=out.resolve()
+    if out==repo or out.is_relative_to(repo) or repo.is_relative_to(out):
+        raise ValueError("Experiment directory must be outside the live repo and its ancestors")
+    if out.exists():
+        raise FileExistsError("Output directory exists; refusing to overwrite a previous experiment")
+    found=candidates(repo,minimum)
+    if va:
+        va=canonical(va)
+        choice=next((x for x in found if x["va"]==va),None)
+        if choice is None:
+            raise ValueError("Chosen VA is not a failed, isolated slice with enough attempts")
+    elif found:
+        choice=found[0]
+        va=choice["va"]
+    else:
+        raise ValueError("No eligible standalone slice. Run candidates and inspect target selection.")
+    if not (repo/RUNNER).is_file() or not (repo/MEMORY).is_file():
+        raise ValueError("Install the SAD runner and Collective Memory in the source checkout first")
+    if not (repo/KNOW).is_file():
+        raise ValueError("Collective Memory SQLite missing; consolidation has not been installed")
+    source=repo/slice_path(va)
+    original=source.read_text(encoding="utf-8",errors="replace")
+    others=set(re.findall(r"(?mi)^\s*//\s*@\s*(0x[0-9a-f]{8})",original))
+    if others-{va}:
+        raise ValueError("Source contains other function anchors; refusing to erase a shared file")
+    out.mkdir(parents=True,exist_ok=False)
+    try:
+        archive=out/"archive"
+        archive.mkdir()
+        snapshot_db(repo/OPS,archive/"spore.sqlite3")
+        snapshot_db(repo/KNOW,archive/"knowledge.sqlite3")
+        (archive/"original-target.cpp").write_text(original,encoding="utf-8")
+        (archive/"original-target.sha256").write_text(
+            hashlib.sha256(original.encode()).hexdigest()+"\n")
+        # These are outside every agent workspace, immutable experiment provenance.
+        with sqlite3.connect(archive/"spore.sqlite3") as con:
+            con.row_factory=sqlite3.Row
+            history=[dict(x) for x in con.execute(
+                "SELECT * FROM attempts WHERE va=? ORDER BY id",(va,))]
+        write_json(archive/"target-attempts.json",history)
+        seed_tree=out/"seed"
+        print("Copying entire checkout into an isolated seed:",seed_tree,flush=True)
+        shutil.copytree(repo,seed_tree,symlinks=True,ignore=_copy_ignore(repo))
+        _check_symlinks(seed_tree,repo)
+        if (repo/".venv").is_dir():
+            (seed_tree/".venv").symlink_to(repo/".venv",target_is_directory=True)
+        shutil.copy2(archive/"spore.sqlite3",seed_tree/OPS)
+        shutil.copy2(archive/"knowledge.sqlite3",seed_tree/KNOW)
+        # Source reset only in the seed, never in the live checkout.
+        blank=(f"// @ {va}\n"
+               "// Controlled blank-slate experiment. Rebuild using task.py and check.py.\n")
+        (seed_tree/slice_path(va)).write_text(blank,encoding="utf-8")
+        _clean_operational(seed_tree/OPS,va)
+        alias="0xff"+hashlib.sha256(va.encode()).hexdigest()[:6]
+        with sqlite3.connect(seed_tree/KNOW) as con:
+            if con.execute("SELECT 1 FROM findings WHERE va=?",(alias,)).fetchone():
+                raise RuntimeError("Address anonymization collision")
+        _mask_memory(seed_tree/KNOW,va,alias)
+        _patch_runner(seed_tree/RUNNER)
+        shutil.copy2(RETRIEVAL_SOURCE,seed_tree/RETRIEVAL)
+        rng=random.Random(seed)
+        order=[{"arm":arm,"repeat":i+1} for i in range(repeats) for arm in ARMS]
+        rng.shuffle(order)
+        for item in order:
+            item["name"]=f"{item['repeat']:02d}-{item['arm']}"
+            item["state"]="prepared"
+            item["seed"]=rng.randrange(1,2**31)
+        write_json(out/"plan.json",{
+            "version":1,"created":now(),"source":str(repo),
+            "target":va,"alias":alias,"original_failures":choice["failures"],
+            "original_cpp_sha256":hashlib.sha256(original.encode()).hexdigest(),
+            "repeats":repeats,"random_seed":seed,
+            "model":"deepseek/deepseek-v4.1-flash-1017","provider":"sail-research",
+            "arms":order,
+            "notes":"No paid calls performed; each run creates an isolated tree."})
+        print(f"Prepared {len(order)} randomized, isolated test slots for {va}.")
+        print("Next: python3 brain_ablation.py run-next --out "+str(out)+" --execute")
+        return out
+    except BaseException:
+        # Fail closed. Retain any partial archive for inspection, no deletion.
+        print("Preparation failed. Partial output retained for inspection:",out,file=sys.stderr)
+        raise
+
+
+def _start_vectors(trial, python):
+    script=trial/MEMORY
+    if not (trial/KNOW).is_file():
+        raise RuntimeError("Memory database is required for this treatment")
+    logfile=trial/WORK/"benchmark-memory-service.log"
+    logfile.parent.mkdir(parents=True,exist_ok=True)
+    with logfile.open("wb") as output:
+        process=subprocess.Popen([str(python),str(script),"--repo",str(trial),"serve"],
+                                  cwd=trial,stdin=subprocess.DEVNULL,stdout=output,
+                                  stderr=subprocess.STDOUT,start_new_session=True,
+                                  env={**os.environ,"PYTHONDONTWRITEBYTECODE":"1"})
+    sock=trial/WORK/"memory/memory.sock"
+    for _ in range(60):
+        if process.poll() is not None:
+            raise RuntimeError("Vector service failed; inspect "+str(logfile))
+        if sock.is_socket():
+            try:
+                check=subprocess.run([str(python),str(script),"--repo",str(trial),"status"],
+                                     cwd=trial,capture_output=True,text=True,timeout=5)
+                state=json.loads(check.stdout)
+                if state.get("service_online") and not state.get("restart_required"):
+                    return process
+            except (OSError,ValueError,subprocess.TimeoutExpired):
+                pass
+        time.sleep(1)
+    process.terminate()
+    raise RuntimeError("Vector service did not become ready; no paid agent was started")
+
+
+def _python(trial):
+    preferred=trial/".venv/bin/python"
+    return preferred if preferred.is_file() else Path(sys.executable)
+
+
+def run_next(out, execute=False, budget=DEFAULT_BUDGET, minutes=20):
+    out=out.resolve()
+    planpath=out/"plan.json"
+    plan=json.loads(planpath.read_text(encoding="utf-8"))
+    item=next((x for x in plan["arms"] if x["state"]=="prepared"),None)
+    if item is None:
+        print("No more prepared trials. Use report.")
+        return
+    if not execute:
+        print("DRY RUN: next arm",item["name"],"target",plan["target"])
+        print("This will start a paid OpenRouter decompilation agent only with --execute.")
+        print("Local soft budget per arm: $"+format(budget,".2f"))
+        return
+    if not 0.10<=budget<=25 or not 1<=minutes<=180:
+        raise ValueError("Budget must be $0.10-$25 and minutes 1-180")
+    env_key=os.environ.get("OPENROUTER_API_KEY","").strip()
+    if not env_key:
+        keyfile=Path.home()/".config/spore-agentic-decompiler/openrouter.key"
+        if keyfile.is_file():
+            if keyfile.stat().st_mode & 0o077:
+                raise RuntimeError("Configured OpenRouter key has insecure permissions; requires 0600")
+            env_key=keyfile.read_text(encoding="utf-8").strip()
+    if not env_key:
+        raise RuntimeError("OpenRouter key missing (environment or private SAD key file); no paid work started")
+    trial=out/"trials"/item["name"]
+    _clone(out/"seed",trial)
+    if item["arm"]=="baseline":
+        (trial/KNOW).unlink(missing_ok=True)
+    elif item["arm"]=="raw":
+        # No consolidated techniques can be returned in this arm, even if an
+        # agent tries the normal memory CLI rather than the benchmark wrapper.
+        with sqlite3.connect(trial/KNOW) as con:
+            con.execute("PRAGMA foreign_keys=ON")
+            con.execute("DELETE FROM compiler_technique_links")
+            con.execute("DELETE FROM compiler_techniques_fts")
+            con.execute("DELETE FROM compiler_techniques")
+            con.commit()
+    write_json(trial/CONFIG,{"arm":item["arm"],"repeat":item["repeat"],
+                             "target":plan["target"],"alias":plan["alias"],
+                             "seed":item["seed"],"source_sha256":plan["original_cpp_sha256"]})
+    if (trial/slice_path(plan["target"])).read_text(encoding="utf-8").find(
+          "Controlled blank-slate experiment")<0:
+        raise RuntimeError("Fresh source state was not preserved")
+    with sqlite3.connect(trial/OPS) as con:
+        if con.execute("SELECT COUNT(*) FROM attempts WHERE va=?",
+                       (plan["target"],)).fetchone()[0]:
+            raise RuntimeError("Old target attempts leaked into trial")
+    python=_python(trial)
+    # Service startup occurs BEFORE charging for the agent. Inability to run
+    # actual semantic retrieval invalidates the treatment, not fallback to FTS.
+    service=None
+    try:
+        if item["arm"]!="baseline":
+            service=_start_vectors(trial,python)
+        item["state"]="running"
+        item["started"]=now()
+        write_json(planpath,plan)
+        cmd=[str(python),str(trial/RUNNER),"run",
+             "--only-va",plan["target"],"--passes","1","--max-functions","1",
+             "--backend","openrouter","--reasoning","high",
+             "--quota-wait","0","--provider-retries","0",
+             "--max-inflight","1","--minutes",str(minutes),"--budget",str(budget)]
+        env={**os.environ,
+             "OPENROUTER_API_KEY":env_key,
+             "SAD_BENCH_ARM":item["arm"],
+             "SPORE_ADAPTIVE_INFLIGHT":"0",
+             "PYTHONDONTWRITEBYTECODE":"1",
+             "PWD":str(trial)}
+        print("Running",item["name"],"in",trial,flush=True)
+        with (trial/"benchmark-run.log").open("w",encoding="utf-8") as log:
+            proc=subprocess.run(cmd,cwd=trial,env=env,stdout=log,stderr=subprocess.STDOUT)
+        item["exit_code"]=proc.returncode
+        item["state"]="completed" if proc.returncode==0 else "error"
+        item["finished"]=now()
+        write_json(planpath,plan)
+        print("Trial",item["name"],"finished with exit code",proc.returncode)
+    except BaseException as exc:
+        item["state"]="blocked" if item["state"]=="prepared" else "interrupted"
+        item["error"]=type(exc).__name__+": "+str(exc)[:350]
+        item["finished"]=now()
+        write_json(planpath,plan)
+        raise
+    finally:
+        if service and service.poll() is None:
+            service.terminate()
+            try:
+                service.wait(timeout=8)
+            except subprocess.TimeoutExpired:
+                service.kill()
+                service.wait()
+
+
+def _checker_calls(folder):
+    root=folder/WORK/"logs"
+    calls=0;input_tokens=output_tokens=0
+    if not root.is_dir():
+        return 0,0,0
+    for path in root.rglob("*.jsonl"):
+        with path.open(encoding="utf-8",errors="replace") as handle:
+            for line in handle:
+                try:
+                    event=json.loads(line)
+                except (ValueError,json.JSONDecodeError):
+                    continue
+                part=event.get("part") or {}
+                state=part.get("state") or {}
+                invocation=state.get("input") or {}
+                command=str(invocation.get("command") or invocation.get("cmd") or "")
+                if event.get("type")=="tool_use" and "tools/contrib/check.py" in command:
+                    calls+=1
+                if event.get("type")=="step_finish":
+                    tokens=part.get("tokens") or {}
+                    input_tokens+=int(tokens.get("input") or 0)
+                    output_tokens+=int(tokens.get("output") or 0)
+    return calls,input_tokens,output_tokens
+
+
+def report(out):
+    out=out.resolve()
+    plan=json.loads((out/"plan.json").read_text(encoding="utf-8"))
+    rows=[]
+    for item in plan["arms"]:
+        trial=out/"trials"/item["name"]
+        data={"name":item["name"],"repeat":item["repeat"],
+              "arm":item["arm"],"state":item["state"],
+              "match":None,"checker_calls":None,"input_tokens":None,
+              "output_tokens":None,"brain_queries":None,"cost_usd":None}
+        if (trial/OPS).exists():
+            with sqlite3.connect(trial/OPS) as con:
+                result=con.execute("SELECT status,note,utc FROM attempts WHERE va=? ORDER BY id DESC LIMIT 1",
+                                   (plan["target"],)).fetchone()
+                data["status"]=result[0] if result else "NO_RESULT"
+                data["match"]=bool(result and result[0]=="MATCH")
+                diff=re.search(r"\bdiffs?\s*[=:]\s*(\d+)",result[1],re.I) if result else None
+                data["diff_bytes"]=int(diff.group(1)) if diff else None
+                budget=con.execute(
+                    "SELECT COALESCE(SUM(last_usage-baseline_usage),0) FROM run_budgets").fetchone()
+                data["cost_usd"]=round(max(0.0,float(budget[0] or 0)),6)
+            c,t1,t2=_checker_calls(trial)
+            data.update(checker_calls=c,input_tokens=t1,output_tokens=t2)
+            audit=trial/WORK/"brain-queries.jsonl"
+            data["brain_queries"]=sum(1 for _ in audit.open()) if audit.exists() else 0
+        rows.append(data)
+    write_json(out/"report.json",{"target":plan["target"],"generated":now(),"trials":rows})
+    print("ARM             REP  STATE       RESULT     CHECKS  BRAIN  INPUT TOK.   OUTPUT TOK.  $ (shared key)")
+    for x in rows:
+        print(f"{x['arm']:<16}{x['repeat']:>3}  {x['state']:<12}"
+              f"{x.get('status','-'):<10} {str(x['checker_calls']):>6}  "
+              f"{str(x['brain_queries']):>5}  {str(x['input_tokens']):>10}  "
+              f"{str(x['output_tokens']):>11}  {str(x['cost_usd']):>8}")
+    print("\nSummary by arm:")
+    for arm in ARMS:
+        group=[x for x in rows if x["arm"]==arm and x["match"] is not None]
+        if group:
+            matches=sum(int(x["match"]) for x in group)
+            avg_checks=sum(x["checker_calls"] or 0 for x in group)/len(group)
+            avg_tokens=sum((x["input_tokens"] or 0)+(x["output_tokens"] or 0)
+                           for x in group)/len(group)
+            print(f"  {arm:<13}: {matches}/{len(group)} MATCH,"
+                  f" {avg_checks:.1f} checks/trial, {avg_tokens:.0f} tokens/trial")
+    print("\nAll values are per-trial, and a MATCH is valid only if independently recorded.")
+    print("Cost is inferred from shared OpenRouter key usage; pause other paid jobs for accuracy.")
+    print("Use at least 3 repeated trials per arm, then expand to more functions for inference.")
+
+
+def main(argv=None):
+    parser=argparse.ArgumentParser(description=__doc__)
+    sub=parser.add_subparsers(dest="command",required=True)
+    c=sub.add_parser("candidates",help="Read-only: rank failed functions with dedicated slices")
+    c.add_argument("--repo",type=Path,default=Path.home()/"spore-decomp")
+    c.add_argument("--min-failures",type=int,default=7)
+    p=sub.add_parser("prepare",help="Make immutable backups and independent clean-slate trial seed")
+    p.add_argument("--repo",type=Path,default=Path.home()/"spore-decomp")
+    p.add_argument("--out",type=Path,default=Path.home()/"sad-brain-benchmark")
+    p.add_argument("--va")
+    p.add_argument("--repeats",type=int,default=3)
+    p.add_argument("--min-failures",type=int,default=7)
+    p.add_argument("--seed",type=int,default=20261118)
+    r=sub.add_parser("run-next",help="Run one randomized arm, paid only with --execute")
+    r.add_argument("--out",type=Path,default=Path.home()/"sad-brain-benchmark")
+    r.add_argument("--execute",action="store_true")
+    r.add_argument("--budget",type=float,default=DEFAULT_BUDGET)
+    r.add_argument("--minutes",type=int,default=20)
+    o=sub.add_parser("report",help="Read-only comparison from independently checked trial logs")
+    o.add_argument("--out",type=Path,default=Path.home()/"sad-brain-benchmark")
+    a=parser.parse_args(argv)
+    if a.command=="candidates":
+        for x in candidates(a.repo.resolve(),a.min_failures)[:25]:
+            print(f"{x['va']}  {x['failures']:>2} failed passes  {x['size']:>4} bytes  {x['source']}")
+    elif a.command=="prepare":
+        if not 1<=a.repeats<=10 or a.min_failures<1:
+            parser.error("repeats must be 1-10 and min-failures >= 1")
+        prepare(a.repo,a.out,a.va,a.repeats,a.min_failures,a.seed)
+    elif a.command=="run-next":
+        run_next(a.out,a.execute,a.budget,a.minutes)
+    elif a.command=="report":
+        report(a.out)
+
+
+if __name__=="__main__":
+    main()
