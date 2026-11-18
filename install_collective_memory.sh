@@ -48,6 +48,8 @@ chmod 700 "$HOME_DIR"
 "$PYTHON_BIN" "$SCRIPT" --repo "$REPO" init
 echo "Importing historical independent checker findings (read-only operational DB)..."
 "$PYTHON_BIN" "$SCRIPT" --repo "$REPO" backfill
+echo "Initializing compiler techniques queue (no paid requests)..."
+"$PYTHON_BIN" "$REPO/work/scratch/spore_technique_consolidator.py" --repo "$REPO" init
 
 if ((NO_MODEL)); then
   echo "FTS5-only installation complete. No embedding server started."
