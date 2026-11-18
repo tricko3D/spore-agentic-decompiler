@@ -77,10 +77,13 @@ def serve(repo:Path,port:int=8765,control:bool=False):
                     return self.respond({'error':'No SAD wallpaper configured'},404)
                 if route.path=='/api/allowlist':
                     return self.respond(controller.allowlist_document())
+                if route.path=='/api/claimants':
+                    return self.respond(controller.claimants())
                 if route.path=='/api/plan':
                     return self.respond(controller.preview(
                         params.get('module',['SPGonzago'])[0],
-                        int(params.get('workers',['16'])[0])))
+                        int(params.get('workers',['16'])[0]),
+                        params.get('claim_user',[None])[0]))
                 if route.path=='/api/snapshot':
                     data=snapshot(repo)
                     if control:data['controller']=controller.state()
