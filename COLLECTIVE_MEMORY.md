@@ -1,5 +1,10 @@
 # SAD Collective Memory, dev branch
 
+The optional DeepSeek compiler technique consolidation layer is described in
+[TECHNIQUE_CONSOLIDATOR.md](TECHNIQUE_CONSOLIDATOR.md). The consolidator is
+installed without sending paid requests and runs only when explicitly invoked.
+
+
 An optional shared knowledge base for the 32-agent SAD fleet, intended to reduce
 repeated investigations without limiting reasoning steps. It holds structured
 evidence about compiler flags, ABI problems, failed experiments and verified
