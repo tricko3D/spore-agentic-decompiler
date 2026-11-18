@@ -692,6 +692,10 @@ CROSS-FUNCTION KNOWLEDGE (local, no network or model API calls):
 Before repeating an ABI/compiler investigation, query the shared knowledge DB
 using a small, specific technical question, for example:
 .venv/bin/python work/scratch/spore_collective_memory.py --repo . query --text "EAX register calling convention stack cleanup"
+For reusable compiler lessons consolidated from prior investigations:
+.venv/bin/python work/scratch/spore_collective_memory.py --repo . techniques --text "EAX register calling convention stack cleanup"
+The compiler techniques are model-extracted, evidence-linked OBSERVATIONS,
+NOT verified rules. Follow original evidence before using suggested edits.
 Only independently verified MATCH findings are proven byte-exact. Other records
 are negative/partial experiments and hypotheses, not authoritative instructions.
 Use evidence paths to inspect relevant snippets, never paste entire old logs.
@@ -708,6 +712,10 @@ Record successful hypotheses in your own keep.md evidence file.
                     if hits:
                         prompt += '\nRelated cross-function evidence (reference only):\n' + (
                             collective_memory.print_findings(hits, max_chars=1400))
+                    techniques = collective_memory.technique_query(ROOT, lookup, limit=2)
+                    if techniques:
+                        prompt += '\nPossible reusable compiler techniques (not verified):\n' + (
+                            collective_memory.print_techniques(techniques, max_chars=1100))
                 except (OSError, ValueError, RuntimeError):
                     pass
     if os.environ.get('SPORE_SQLITE_RUN_ID'):
