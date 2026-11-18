@@ -1,66 +1,70 @@
 import type {ReactNode} from 'react';
 
-/** Read-only architecture description, not a simulated service monitor. */
-function Block({kind,title,source,children}:{kind:string;title:string;source:string;children:ReactNode}){
- return <div className={'infra-node infra-'+kind}>
+/** An architecture map, not a live process monitor.
+ * Every node names an actual subsystem and keeps its notes inside its card.
+ */
+function Node({kind,title,source,children}:{
+ kind:'ui'|'gateway'|'service'|'workers'|'data';
+ title:string;source:string;children:ReactNode;
+}){
+ return <article className={'infra-node infra-'+kind}>
   <div className="infra-node-title"><strong>{title}</strong><span>{kind}</span></div>
   <p className="infra-node-description">{children}</p>
-  <code>{source}</code>
- </div>;
+  <code title={source}>{source}</code>
+ </article>;
 }
-function Connection({label}:{label:string}){
- return <div className="infra-link"><span>{label}</span></div>;
+function Arrow({label,reverse=false}:{label:string;reverse?:boolean}){
+ return <div className={'infra-flow-arrow'+(reverse?' reverse':'')} aria-label={label}>
+  <span>{label}</span><i aria-hidden="true"/>
+ </div>;
 }
 export default function InfraDocs(){
  return <section className="infra-view view-body">
   <div className="infra-diagram-scroll infra-diagram-only" aria-label="SAD infrastructure diagram">
-
-     <div className="infra-top-node">
-      <Block kind="ui" title="React / TypeScript dashboard" source="dashboard_web/src/">
-       Agents, Brain and Infra Docs share a persistent command bar. The UI reads data and submits explicitly permitted control actions.
-      </Block>
-     </div>
-     <Connection label="Same-origin JSON / HTTP on 127.0.0.1:8765"/>
-     <div className="infra-top-node">
-      <Block kind="gateway" title="Python localhost API" source="dashboard/server.py">
-       Threaded HTTP server, paginated read endpoints and narrow control routes with token and Origin checks. No arbitrary shell execution.
-      </Block>
-     </div>
-     <div className="infra-fork" aria-hidden="true"/>
-     <div className="infra-branches">
-      <div className="infra-branch">
-       <div className="infra-branch-heading">
-        <strong>AGENT EXECUTION</strong><span>Operational pipeline</span>
-       </div>
-       <Block kind="service" title="Launch / stop controller" source="spore_dashboard_control.py">
-        Validates launch scope, worker count, budgets and permissions before starting or stopping a run.
-       </Block>
-       <Connection label="Schedules worker attempts"/>
-       <Block kind="workers" title="Decompilation workers + checker" source="spore_parallel_sqlite.py">
-        Parallel function investigations and compiler experiments. Independent checking records matched, failed and deferred outcomes.
-       </Block>
-       <Connection label="Persists attempts and byte agreement"/>
-       <Block kind="data" title="Operational SQLite + build evidence" source="work/scratch/">
-        Worker events, match status, compiled bytes, differences and attempts feed the Agents dashboard.
-       </Block>
-      </div>
-      <div className="infra-branch">
-       <div className="infra-branch-heading">
-        <strong>COLLECTIVE MEMORY</strong><span>Research consolidation pipeline</span>
-       </div>
-       <Block kind="service" title="Knowledge API + local retrieval" source="dashboard/knowledge.py">
-        Read-only evidence queries, paginated techniques and findings, FTS5 and optional local embedding lookup.
-       </Block>
-       <Connection label="Source hash checked links"/>
-       <Block kind="data" title="Knowledge SQLite" source="memory/knowledge.sqlite3">
-        Original findings, compiler techniques, evidence links, retry state and separate research annotations.
-       </Block>
-       <Connection label="Consolidates source-backed findings"/>
-       <Block kind="workers" title="DeepSeek technique consolidator" source="spore_technique_consolidator.py">
-        Independent systemd user service with daily budget, batching and retry handling. Extracted techniques remain observations or hypotheses.
-       </Block>
+   <div className="infra-flow-canvas">
+    <Node kind="ui" title="React / TypeScript dashboard" source="dashboard_web/src/">
+     Agents, Brain and Infra Docs display state and submit only permitted actions. Closing the page does not stop workers.
+    </Node>
+    <Arrow label="Local HTTP"/>
+    <Node kind="gateway" title="Python localhost API" source="dashboard/server.py">
+     Serves paginated JSON and validates control requests with token and Origin checks on 127.0.0.1:8765.
+    </Node>
+    <div className="infra-flow-junction" aria-hidden="true"><span/><span/></div>
+    <div className="infra-branches">
+     <div className="infra-lane">
+      <div className="infra-lane-heading"><strong>AGENT EXECUTION</strong><span>Operational data flow</span></div>
+      <div className="infra-lane-flow">
+       <Node kind="service" title="Launch / stop controller" source="spore_dashboard_control.py">
+        Checks module scope, worker count and spend limits before starting or stopping a run.
+       </Node>
+       <Arrow label="Schedules"/>
+       <Node kind="workers" title="Decompiler workers + checker" source="spore_parallel_sqlite.py">
+        Runs compiler experiments, compares retail bytes and records matched or failed attempts.
+       </Node>
+       <Arrow label="Writes"/>
+       <Node kind="data" title="Operational SQLite" source="work/scratch/">
+        Persists function outcomes, attempt history, byte differences and worker activity.
+       </Node>
       </div>
      </div>
+     <div className="infra-lane">
+      <div className="infra-lane-heading"><strong>COLLECTIVE MEMORY</strong><span>Research and consolidation</span></div>
+      <div className="infra-lane-flow">
+       <Node kind="service" title="Knowledge API + retrieval" source="dashboard/knowledge.py">
+        Reads paginated evidence, techniques and findings using FTS5 and optional local embeddings.
+       </Node>
+       <Arrow label="Reads" reverse/>
+       <Node kind="data" title="Knowledge SQLite" source="memory/knowledge.sqlite3">
+        Holds original findings, source-checked evidence links, extracted techniques and annotations.
+       </Node>
+       <Arrow label="Writes" reverse/>
+       <Node kind="workers" title="DeepSeek consolidator" source="spore_technique_consolidator.py">
+        Separate systemd service, independently budgeted; extracts source-backed observations with retries.
+       </Node>
+      </div>
+     </div>
+    </div>
+   </div>
   </div>
  </section>;
 }

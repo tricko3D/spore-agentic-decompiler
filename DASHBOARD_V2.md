@@ -179,3 +179,7 @@ Agents, Brain and Infra Docs occupy the viewport above the single persistent 50p
 ## 2026-11-18: compact graph, Preview dialog and diagram-only Infra
 
 Brain now launches the evidence map from a compact card. The map opens in a portaled overlay with drag-to-pan, wheel zoom, zoom buttons and fit-to-view, without altering main layout dimensions. The Agent dock Preview error and success response open a centered modal with a scrollable full response and Copy button, instead of squeezing an exception into the thin HUD notification. Infra Docs contains only the full-height annotated infrastructure topology diagram, not a heading, explanation sidebar, or additional title card. The node annotations provide all explanatory context.
+
+## Infra Docs horizontal architecture and unified card styling
+
+The Infra Docs canvas now lays out left-to-right (React dashboard → localhost HTTP API → split into two horizontal three-node flows). The agent branch shows controller → workers/checker → operational SQLite, and the Knowledge branch shows read model ← Knowledge SQLite ← independent DeepSeek consolidator. Annotations and paths stay inside fixed-height cards. The architecture diagram is the *entire* page, without an extra heading or design-commentary column. At narrower viewports, only the diagram canvas scrolls horizontally. Its gradient card surfaces, borders and inset bevels reuse the existing SAD panel style, and the same gradient style is restored to Brain panels, metrics and results, replacing mismatched flat cards.

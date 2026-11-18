@@ -126,6 +126,22 @@ class CompactUIRegression(unittest.TestCase):
         self.assertIn('Copy error',self.error_modal)
         self.assertIn('.error-record-summary',self.css)
 
+    def test_infra_is_horizontal_and_uses_shared_gradient_cards(self):
+        self.assertIn('className="infra-flow-canvas"',self.infra)
+        self.assertIn('className="infra-lane-flow"',self.infra)
+        self.assertIn('className="infra-flow-junction"',self.infra)
+        self.assertIn('infra-flow-arrow',self.infra)
+        self.assertNotIn('infra-top-node',self.infra)
+        self.assertNotIn('infra-diagram-foot',self.infra)
+        self.assertNotIn('<h1>',self.infra)
+        self.assertIn('grid-template-columns:minmax(180px,.87fr)',self.css)
+        self.assertIn('grid-template-rows:repeat(2,210px)',self.css)
+        self.assertIn('--sad-panel-surface:linear-gradient',self.css)
+        self.assertIn('background:var(--sad-panel-surface)',self.css)
+        self.assertIn('background:var(--sad-card-surface)',self.css)
+        self.assertIn('.knowledge-view .knowledge-card',self.css)
+        self.assertIn('height:176px;min-height:176px;max-height:176px',self.css)
+
     def test_infra_docs_is_a_separate_full_height_view(self):
         self.assertIn("const InfraDocs=lazy",self.app)
         self.assertIn("navigate('infra')",self.app)

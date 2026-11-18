@@ -683,135 +683,165 @@ body>.overlay{
  overflow:hidden;isolation:isolate;pointer-events:auto;
 }
 body>.overlay>.detail-drawer{height:100dvh;max-height:100dvh;overflow:hidden}
-/* Infra Docs is a third immutable-height workspace. */
+/* Unified SAD card language: all dashboard surfaces share gradient and trim. */
+.game-shell{
+ --sad-panel-surface:linear-gradient(170deg,#2a4b67,#18324d 16%,#10243b 82%,#132c48);
+ --sad-card-surface:linear-gradient(175deg,#2b5270,#1a3652 30%,#122b45);
+ --sad-card-hover:linear-gradient(175deg,#38647e,#20465f 32%,#183950);
+ --sad-card-edge:#698eaa;
+ --sad-card-shadow:inset 0 2px 2px #aacfe236,inset 0 -3px 4px #06172e,0 2px 6px #0006;
+}
+.knowledge-view .panel{
+ background:var(--sad-panel-surface);
+ border-color:var(--sad-card-edge);
+ box-shadow:var(--sad-card-shadow);
+}
+.knowledge-view .metric{
+ background:var(--sad-card-surface);
+ border-color:#557d9a;
+ box-shadow:inset 0 1px #bddfeb35;
+}
+.knowledge-view .knowledge-card,
+.knowledge-view .error-record,
+.knowledge-view .brain-match,
+.knowledge-view .evidence-node,
+.knowledge-view .evidence-source-row{
+ background:var(--sad-card-surface);
+ border-color:#567e9d;
+ box-shadow:inset 0 1px #bddfeb20!important;
+}
+.knowledge-view .knowledge-card:hover,
+.knowledge-view .error-record:hover,
+.knowledge-view .brain-match:hover,
+.knowledge-view .evidence-node:hover,
+.knowledge-view .evidence-source-row:hover{
+ background:var(--sad-card-hover);
+ border-color:#8db8d3;
+}
+.knowledge-view .graph-launcher{
+ background:var(--sad-card-surface);
+ border-color:var(--sad-card-edge);
+ box-shadow:inset 0 1px #bddfeb30!important;
+}
+.knowledge-view .graph-launcher:hover{background:var(--sad-card-hover)}
+/* Only a traditional horizontal infrastructure topology, no extra headings/cards. */
 .view-content>.infra-view{
- display:flex;flex-direction:column;gap:8px;
- height:100%;max-height:100%;min-height:0;overflow:hidden;
+ display:flex;flex-direction:column;flex:1 1 0;min-height:0;height:100%;max-height:100%;
+ overflow:hidden;padding:0;
 }
-.infra-heading{
- flex:0 0 48px;min-height:48px;display:flex;align-items:center;
- justify-content:space-between;padding:0 5px;
-}
-.infra-heading h1{font-size:19px;color:#effaff}
-.infra-heading p{font-size:11px}
-.infra-heading-tag{font:10px var(--numbers);color:#9ccfe6}
-.infra-layout{
- flex:1 1 0;display:grid;grid-template-columns:minmax(0,1.7fr) minmax(300px,.8fr);
- min-height:0;gap:8px;overflow:hidden;
-}
-.infra-layout>.panel{
- display:flex;flex-direction:column;min-height:0;max-height:100%;overflow:hidden;
-}
-.infra-layout .panel-head{flex:none}
-.infra-diagram-scroll,.infra-notes{
- flex:1 1 0;min-height:0;overflow-y:auto;overflow-x:hidden;
- overscroll-behavior:contain;scrollbar-gutter:stable;
- padding:3px 5px 14px;
-}
-.infra-top-node{display:flex;justify-content:center}
-.infra-top-node>.infra-node{width:min(520px,100%)}
-.infra-node{
- min-width:0;border:1px solid #6185a3;border-radius:11px;
- padding:10px 12px;background:#122f48;overflow:hidden;
-}
-.infra-ui{border-color:#8cd8e6;background:#123950}
-.infra-gateway{border-color:#8dc6da;background:#183e58}
-.infra-workers{border-color:#a5c98b;background:#263c3d}
-.infra-data{border-color:#9b9fd1;background:#252e49}
-.infra-node-title{
- display:flex;align-items:baseline;justify-content:space-between;gap:8px;
- color:#e8f7ff;font-size:12px;
-}
-.infra-node-title span{color:#a7c4d3;text-transform:uppercase;font:9px var(--numbers)}
-.infra-node-description{font-size:11px;line-height:1.5;color:#b7d5e4;margin:5px 0 7px}
-.infra-node code{display:block;color:#82cae7;font:10px var(--numbers);overflow-wrap:anywhere}
-.infra-link{
- display:flex;flex-direction:column;align-items:center;gap:2px;
- min-height:41px;justify-content:center;
- color:#a7cfdf;font:10px var(--numbers);
-}
-.infra-link:before{content:"";width:1px;height:11px;background:#7aabc4}
-.infra-link:after{content:"↓";font-size:14px;line-height:10px}
-.infra-fork{height:30px;display:flex;justify-content:center;align-items:center}
-.infra-fork:before{
- content:"";display:block;width:56%;height:18px;
- border-top:1px solid #80a5bd;border-left:1px solid #80a5bd;
- border-right:1px solid #80a5bd;transform:translateY(9px);
-}
-.infra-branches{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:9px}
-.infra-branch{
- min-width:0;display:flex;flex-direction:column;gap:0;
- border-radius:13px;border:1px solid #496c87;
- padding:9px;background:#0b2235;
-}
-.infra-branch-heading{display:flex;flex-direction:column;gap:2px;margin-bottom:9px}
-.infra-branch-heading strong{font:11px var(--numbers);color:#d7edfa;letter-spacing:.8px}
-.infra-branch-heading span{font-size:10px;color:#a4c4d5}
-.infra-branch .infra-node{flex:none}
-.infra-diagram-foot{
- display:grid;gap:6px;margin-top:10px;font-size:10px;
- color:#bbd6e4;border-top:1px solid #42637a;padding-top:8px;
-}
-.infra-diagram-foot b{color:#e5f6ff}
-.infra-notes{display:flex;flex-direction:column;gap:8px}
-.infra-notes article{
- flex:none;background:#122d43;border:1px solid #476d89;
- border-radius:10px;padding:10px 12px;
-}
-.infra-notes article strong{display:block;color:#e5f6ff;font-size:12px;margin-bottom:4px}
-.infra-notes article p{font-size:11px;line-height:1.5}
-@media(max-width:1150px){
- .knowledge-view>.knowledge-layout{
-  grid-template-columns:minmax(0,1fr);
-  grid-template-rows:minmax(0,68fr) minmax(0,32fr);
- }
- .knowledge-view .knowledge-side{
-  grid-template-columns:repeat(3,minmax(0,1fr));grid-template-rows:minmax(0,1fr);
- }
- .infra-layout{
-  grid-template-columns:minmax(0,1fr);
-  grid-template-rows:minmax(0,2fr) minmax(0,1fr);
- }
-}
-@media(max-width:730px){
- .knowledge-view>.knowledge-metrics{flex-basis:76px;height:76px}
- .knowledge-view .knowledge-results{grid-template-columns:repeat(2,minmax(0,1fr))}
- .knowledge-view .knowledge-side{
-  grid-template-columns:repeat(2,minmax(0,1fr));
-  grid-template-rows:minmax(0,1fr) minmax(0,1fr);
- }
- .knowledge-view .knowledge-side>.panel:last-child{grid-column:1 / -1}
- .infra-branches{grid-template-columns:1fr}
- .infra-heading-tag{display:none}
- .hud-infra{padding:5px 7px}
-}
-@media(max-width:480px){
- .knowledge-view .knowledge-results{grid-template-columns:1fr}
- .knowledge-view .knowledge-side{
-  grid-template-columns:minmax(0,1fr);
-  grid-template-rows:repeat(3,minmax(0,1fr));
- }
- .knowledge-view .knowledge-side>.panel:last-child{grid-column:auto}
-}
-
-/* The infrastructure page is only the annotated topology diagram. */
-.view-content>.infra-view{height:100%;max-height:100%;min-height:0;overflow:hidden;padding:0}
 .infra-diagram-only{
- flex:1 1 0;min-width:0;min-height:0;width:100%;height:100%;
- max-width:100%;max-height:100%;overflow:auto;
- padding:clamp(10px,2vw,24px);border:0;border-radius:0;
- background:#091b2d;overscroll-behavior:contain;
- scrollbar-gutter:stable;
+ display:flex;align-items:center;min-height:0;flex:1 1 0;
+ width:100%;height:100%;overflow:auto;
+ padding:clamp(12px,2vw,26px);background:#091b2d;
+ scrollbar-gutter:stable;overscroll-behavior:contain;
 }
-.infra-diagram-only>.infra-top-node,
-.infra-diagram-only>.infra-link,
-.infra-diagram-only>.infra-fork,
-.infra-diagram-only>.infra-branches{
- max-width:1300px;margin-left:auto;margin-right:auto;
+.infra-flow-canvas{
+ width:100%;min-width:1450px;max-width:1900px;
+ margin:auto;display:grid;
+ grid-template-columns:minmax(180px,.87fr) 40px minmax(208px,1fr) 42px minmax(780px,4fr);
+ align-items:center;gap:8px;
 }
-.infra-diagram-only>.infra-top-node>.infra-node{width:min(560px,100%)}
-.infra-diagram-only>.infra-branches{gap:15px}
-.infra-diagram-only>.infra-branches>.infra-branch{padding:13px}
+.infra-node{
+ display:flex;flex-direction:column;gap:7px;
+ height:176px;min-height:176px;max-height:176px;min-width:0;
+ padding:11px 13px;
+ border:2px solid var(--sad-card-edge);
+ border-radius:14px;background:var(--sad-panel-surface);
+ box-shadow:var(--sad-card-shadow);
+ overflow:hidden;
+}
+.infra-node-title{
+ flex:none;display:flex;flex-direction:column;gap:3px;
+ color:#edf8ff;
+}
+.infra-node-title strong{font-size:12px;line-height:1.3}
+.infra-node-title span{
+ width:max-content;font:9px/1.3 var(--numbers);
+ letter-spacing:.7px;text-transform:uppercase;color:#99c9df;
+}
+.infra-node-description{
+ flex:1 1 0;min-height:0;overflow:auto;
+ color:#c0d6e4;font-size:11px;line-height:1.42;
+}
+.infra-node code{
+ flex:none;display:block;min-width:0;max-width:100%;
+ white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+ color:#8ed0ee;font:10px/1.4 var(--numbers);
+ border-top:1px solid #597b943e;padding-top:6px;
+}
+.infra-node.infra-ui{border-top-color:#87d6e8}
+.infra-node.infra-gateway{border-top-color:#9ed0f1}
+.infra-node.infra-service{border-top-color:#7bc9df}
+.infra-node.infra-workers{border-top-color:#b8e398}
+.infra-node.infra-data{border-top-color:#b5a8ee}
+.infra-branches{
+ display:grid;grid-template-rows:repeat(2,210px);
+ gap:24px;min-height:0;min-width:0;
+}
+.infra-lane{
+ display:flex;flex-direction:column;gap:9px;
+ height:210px;min-height:0;min-width:0;
+ padding:9px 11px;
+ border:1px solid #456b87;border-radius:15px;
+ background:linear-gradient(180deg,#18365175,#0b21327d);
+}
+.infra-lane-heading{
+ display:flex;align-items:center;justify-content:space-between;gap:10px;
+ flex:0 0 14px;padding:0 3px;
+ color:#c8e5f6;
+}
+.infra-lane-heading strong{font:10px var(--numbers);letter-spacing:.8px}
+.infra-lane-heading span{font-size:10px;color:#a6c7d9}
+.infra-lane-flow{
+ display:grid;grid-template-columns:minmax(0,1fr) 32px minmax(0,1fr) 32px minmax(0,1fr);
+ align-items:center;gap:5px;min-height:0;flex:1;
+}
+.infra-lane-flow>.infra-node{height:176px;min-height:0}
+.infra-flow-arrow{
+ display:flex;align-items:center;justify-content:center;position:relative;
+ width:100%;height:40px;min-width:0;
+}
+.infra-flow-arrow>span{
+ position:absolute;bottom:28px;left:50%;transform:translateX(-50%);
+ font:9px var(--numbers);color:#91bdd4;white-space:nowrap;
+}
+.infra-flow-arrow>i{
+ width:100%;height:0;display:block;border-top:2px solid #83aac1;position:relative;
+}
+.infra-flow-arrow>i:after{
+ content:"";position:absolute;right:-1px;top:-5px;
+ width:8px;height:8px;border-top:2px solid #a7d6ec;
+ border-right:2px solid #a7d6ec;transform:rotate(45deg);
+}
+.infra-flow-arrow.reverse>i:after{
+ right:auto;left:-1px;transform:rotate(-135deg);
+}
+.infra-flow-junction{
+ align-self:stretch;position:relative;min-height:0;
+}
+.infra-flow-junction:before{
+ content:"";position:absolute;left:0;right:55%;top:50%;
+ border-top:2px solid #83aac1;
+}
+.infra-flow-junction:after{
+ content:"";position:absolute;left:45%;top:calc(25% - 4px);
+ height:calc(50% + 8px);border-left:2px solid #83aac1;
+}
+.infra-flow-junction>span{
+ position:absolute;left:45%;right:0;
+ border-top:2px solid #83aac1;
+}
+.infra-flow-junction>span:first-child{top:calc(25% - 4px)}
+.infra-flow-junction>span:last-child{top:calc(75% + 4px)}
+.infra-flow-junction>span:after{
+ content:"";position:absolute;right:-1px;top:-5px;
+ width:8px;height:8px;border-top:2px solid #a7d6ec;
+ border-right:2px solid #a7d6ec;transform:rotate(45deg);
+}
+@media(max-width:1650px){
+ .infra-flow-canvas{min-width:1450px}
+ .infra-lane-heading span{display:none}
+}
 
 /* Evidence graph is a launcher, not a full-width graph panel. */
 .knowledge-view .knowledge-main{grid-template-rows:102px minmax(0,1fr)}
@@ -909,3 +939,16 @@ body>.overlay>.detail-drawer{height:100dvh;max-height:100dvh;overflow:hidden}
  display:flex;align-items:center;justify-content:space-between;gap:10px;flex:none;
 }
 .preview-modal-actions button{min-width:105px}
+
+
+/* Final single-source card treatments, overriding legacy flat Knowledge rules. */
+.knowledge-view .panel{background:var(--sad-panel-surface);box-shadow:var(--sad-card-shadow)}
+.knowledge-view .metric{background:var(--sad-card-surface);box-shadow:inset 0 1px #bddfeb35}
+.knowledge-view .knowledge-card,
+.knowledge-view .brain-match,.knowledge-view .error-record{
+ background:var(--sad-card-surface);box-shadow:inset 0 1px #bddfeb20!important;
+}
+.knowledge-view .knowledge-card:hover,.knowledge-view .brain-match:hover,
+.knowledge-view .error-record:hover{background:var(--sad-card-hover)}
+.knowledge-view .graph-launcher{background:var(--sad-card-surface)}
+.knowledge-view .graph-launcher:hover{background:var(--sad-card-hover)}
