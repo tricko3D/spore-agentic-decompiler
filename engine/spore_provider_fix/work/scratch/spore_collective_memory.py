@@ -47,7 +47,7 @@ _evidence_spec = _evidence_util.spec_from_file_location(
 evidence = _evidence_util.module_from_spec(_evidence_spec)
 _evidence_spec.loader.exec_module(evidence)
 
-PROTOCOL = 2
+PROTOCOL = 3
 MODEL = "BAAI/bge-small-en-v1.5"
 DIM = 384
 MAX_DOC = 1800
@@ -138,6 +138,8 @@ def initialize(repo, *, vectors=False):
         """)
         if vectors:
             con.execute("CREATE VIRTUAL TABLE IF NOT EXISTS finding_vectors "
+                        "USING vec0(embedding float[384])")
+            con.execute("CREATE VIRTUAL TABLE IF NOT EXISTS technique_vectors "
                         "USING vec0(embedding float[384])")
             row = con.execute("SELECT value FROM metadata WHERE key='embedding_model'").fetchone()
             if row and row[0] != MODEL:
@@ -422,6 +424,90 @@ def _combine(con, query, *, vectors=None, limit=4, verified_only=False):
         })
     return result
 
+def _technique_combine(con, query, *, vectors=None, limit=3):
+    """Technical technique search using FTS and optionally local embeddings."""
+    words = list(dict.fromkeys(WORDS.findall(query.lower())))[:14]
+    if not words:
+        return []
+    scores = {}
+    expr = " OR ".join('"' + word.replace('"','""') + '"' for word in words)
+    try:
+        found = con.execute("""SELECT t.id
+            FROM compiler_techniques_fts
+            JOIN compiler_techniques t ON t.id=compiler_techniques_fts.rowid
+            WHERE compiler_techniques_fts MATCH ?
+            ORDER BY bm25(compiler_techniques_fts) LIMIT 30""", (expr,)).fetchall()
+        for rank, item in enumerate(found):
+            scores[item["id"]] = 1.0 / (20 + rank)
+    except sqlite3.Error:
+        return []
+    if vectors:
+        try:
+            packed = struct.pack("<384f", *vectors)
+            nearest = con.execute("""SELECT rowid,distance FROM technique_vectors
+                WHERE embedding MATCH ? AND k=30 ORDER BY distance""", (packed,)).fetchall()
+            for rank, item in enumerate(nearest):
+                scores[item["rowid"]] = scores.get(item["rowid"], 0) + 1.0 / (20 + rank)
+        except sqlite3.Error:
+            pass
+    if not scores:
+        return []
+    ids = sorted(scores)
+    rows = con.execute("SELECT * FROM compiler_techniques WHERE id IN (" +
+                       ",".join("?" for _ in ids) + ")", ids).fetchall()
+    ordered = sorted(rows, key=lambda x: -scores[x["id"]])
+    results = []
+    for item in ordered[:max(1, min(10, limit))]:
+        links = con.execute("""SELECT f.va,l.source_status,l.evidence_quote,
+            f.evidence_path FROM compiler_technique_links l
+            JOIN findings f ON f.id=l.finding_id WHERE l.technique_id=?
+            ORDER BY CASE l.source_status WHEN 'MATCH' THEN 0 ELSE 1 END,
+            l.created_utc DESC LIMIT 3""", (item["id"],)).fetchall()
+        results.append({
+            "id":item["id"], "title":item["title"], "category":item["category"],
+            "problem":item["problem"], "conditions":item["conditions"],
+            "intervention":item["intervention"], "observed_effect":item["observed_effect"],
+            "evidence_level":item["evidence_level"], "sources":[
+                {"va":x["va"], "status":x["source_status"],
+                 "quote":x["evidence_quote"][:180],
+                 "evidence_path":x["evidence_path"]} for x in links],
+            "score":round(scores[item["id"]],6)})
+    return results
+
+
+def technique_query(repo, query, limit=3):
+    text = _clean(query, 1800)
+    if not text:
+        return []
+    remote = request(repo, {"method":"techniques","query":text,"top":limit}, timeout=4)
+    if remote is not None and remote.get("protocol") == PROTOCOL:
+        return remote.get("results", [])
+    con = connection(repo)
+    if con is None:
+        return []
+    try:
+        return _technique_combine(con, text, limit=limit)
+    finally:
+        con.close()
+
+
+def print_techniques(rows, *, max_chars=1500):
+    if not rows:
+        return "No reusable compiler techniques indexed yet."
+    per = max(170, max_chars // len(rows))
+    blocks = []
+    for x in rows:
+        sources = ", ".join(z["va"]+" ("+z["status"]+")" for z in x["sources"])
+        content = (f"[TECHNIQUE #{x['id']} | {x['evidence_level']}] {x['title']}\n"
+                   f"Problem: {x['problem']}\n"
+                   f"Conditions: {x['conditions']}\n"
+                   f"Attempt: {x['intervention']}\n"
+                   f"Observed: {x['observed_effect']}\n"
+                   f"Sources: {sources}")
+        blocks.append(content[:per - 3] + "..." if len(content) > per else content)
+    return "\n\n".join(blocks)
+
+
 def lexical(repo, query, limit=4, verified_only=False):
     con = connection(repo)
     if not con:
@@ -560,6 +646,42 @@ class Service:
         finally:
             con.close()
 
+    def index_techniques_once(self, batch=6):
+        con = connection(self.repo, vectors=True)
+        try:
+            try:
+                rows = con.execute("""SELECT t.id,t.title,t.category,t.problem,
+                  t.conditions,t.intervention,t.observed_effect
+                  FROM technique_embedding_jobs j
+                  JOIN compiler_techniques t ON t.id=j.technique_id
+                  ORDER BY t.id LIMIT ?""", (batch,)).fetchall()
+            except sqlite3.OperationalError:
+                return 0
+            if not rows:
+                return 0
+            inputs = [_clean(" ".join(str(r[k]) for k in (
+                "title","category","problem","conditions","intervention","observed_effect")),
+                MAX_DOC) for r in rows]
+            embedded = self.embedder.encode(inputs)
+            with con:
+                for row,vec in zip(rows,embedded):
+                    key = row["id"]
+                    con.execute("DELETE FROM technique_vectors WHERE rowid=?", (key,))
+                    con.execute("INSERT INTO technique_vectors(rowid,embedding) VALUES(?,?)",
+                                (key,struct.pack("<384f",*vec)))
+                    con.execute("DELETE FROM technique_embedding_jobs WHERE technique_id=?", (key,))
+            return len(rows)
+        finally:
+            con.close()
+
+    def search_techniques(self, text, limit):
+        vector = self.embedder.encode([text[:1800]])[0]
+        con = connection(self.repo, vectors=True)
+        try:
+            return _technique_combine(con,text,vectors=vector,limit=limit)
+        finally:
+            con.close()
+
     def search(self, text, limit, verified_only=False):
         vector = self.embedder.encode([text[:1800]])[0]
         con = connection(self.repo, vectors=True)
@@ -571,7 +693,7 @@ class Service:
     def background(self):
         while not self.stop.is_set():
             try:
-                count = self.index_once()
+                count = self.index_once() + self.index_techniques_once()
             except Exception as exc:
                 print("Memory indexing issue:", str(exc)[:220], file=sys.stderr, flush=True)
                 count = 0
@@ -593,6 +715,11 @@ class Handler(socketserver.StreamRequestHandler):
                 top = max(1, min(10, int(req.get("top", 4))))
                 result = {"protocol": PROTOCOL, "results": self.server.service.search(
                     text, top, verified_only=bool(req.get("verified_only", False)))}
+            elif method == "techniques":
+                text = str(req.get("query",""))[:1800]
+                top = max(1,min(10,int(req.get("top",3))))
+                result = {"protocol":PROTOCOL,
+                          "results":self.server.service.search_techniques(text,top)}
             elif method == "status":
                 result = {"ok": True, "protocol": PROTOCOL,
                           "model": MODEL, "vector_dim": DIM}
@@ -665,6 +792,9 @@ def main(argv=None):
     query_cmd.add_argument("--top", type=int, default=4)
     query_cmd.add_argument("--verified-only", action="store_true",
                            help="Retrieve only relevant independently verified matches")
+    tq = command.add_parser("techniques", help="Search reusable compiler techniques")
+    tq.add_argument("--text", required=True)
+    tq.add_argument("--top", type=int, default=3)
     ingest_cmd = command.add_parser("ingest", help="Import an independently checked outcome")
     ingest_cmd.add_argument("--va", required=True)
     ingest_cmd.add_argument("--pass-number", type=int, required=True)
@@ -692,6 +822,8 @@ def main(argv=None):
                                  verified_only=args.verified_only)))
     elif args.command == "backfill":
         print(json.dumps(backfill(args.repo, args.limit)))
+    elif args.command == "techniques":
+        print(print_techniques(technique_query(args.repo,args.text,args.top)))
     elif args.command == "ingest":
         result = ingest(args.repo, args.va, args.pass_number, args.status,
                         note=args.note, checker=args.checker, evidence_path=args.evidence_path,
