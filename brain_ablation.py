@@ -457,6 +457,7 @@ def prepare(repo, out, va=None, repeats=3, minimum=7, seed=20261118,
         out.mkdir(parents=True,exist_ok=False)
     try:
         archive=out/"archive"
+        alias="0xff"+hashlib.sha256(va.encode()).hexdigest()[:6]
         if not resume_partial:
             archive.mkdir()
             snapshot_db(repo/OPS,archive/"spore.sqlite3")
@@ -491,7 +492,6 @@ def prepare(repo, out, va=None, repeats=3, minimum=7, seed=20261118,
                    "// Controlled blank-slate experiment. Rebuild using task.py and check.py.\n")
             (seed_tree/slice_path(va)).write_text(blank,encoding="utf-8")
             _clean_operational(seed_tree/OPS,va)
-            alias="0xff"+hashlib.sha256(va.encode()).hexdigest()[:6]
             with sqlite3.connect(seed_tree/KNOW) as con:
                 if con.execute("SELECT 1 FROM findings WHERE va=?",(alias,)).fetchone():
                     raise RuntimeError("Address anonymization collision")
