@@ -41,15 +41,21 @@ export function usePoll<T>(url:string,interval:number,active=true){
  useEffect(()=>{
   if(!active)return;
   let disposed=false;
+  let running=false;
   let timer:number|undefined;
   const signal=new AbortController();
   async function loop(){
-   if(disposed||signal.signal.aborted)return;
-   if(document.visibilityState!=='hidden')await refresh(signal.signal);
-   if(!disposed)timer=window.setTimeout(()=>void loop(),interval);
+   if(disposed||signal.signal.aborted||running)return;
+   running=true;
+   try{
+    if(document.visibilityState!=='hidden')await refresh(signal.signal);
+   }finally{
+    running=false;
+    if(!disposed)timer=window.setTimeout(()=>void loop(),interval);
+   }
   }
   const onVisibility=()=>{
-   if(document.visibilityState==='visible'&&!disposed){
+   if(document.visibilityState==='visible'&&!disposed&&!running){
     window.clearTimeout(timer);
     timer=window.setTimeout(()=>void loop(),50);
    }
