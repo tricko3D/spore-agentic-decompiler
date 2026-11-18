@@ -157,12 +157,14 @@ class DashboardV2Tests(unittest.TestCase):
         self.assertEqual(actual,{"daily_usd":0.17,"batch":3,"interval":180})
 
     def test_systemd_actions_have_no_user_controlled_command(self):
-        unit=Path("/temporary/unit")
-        with mock.patch.object(consolidation.Path,"home",return_value=Path("/temporary")):
-            with mock.patch.object(consolidation.Path,"is_file",return_value=True):
-                with mock.patch.object(consolidation,"_systemctl",return_value=(0,"active")) as invoke:
-                    consolidation.action(self.repo,"start")
-                    self.assertTrue(any(call.args[0]=="start" for call in invoke.call_args_list))
+        fake_home=self.repo/"home"
+        unit=fake_home/".config/systemd/user"/consolidation.UNIT
+        unit.parent.mkdir(parents=True)
+        unit.write_text("[Service]\\nType=simple\\n")
+        with mock.patch.object(consolidation.Path,"home",return_value=fake_home):
+            with mock.patch.object(consolidation,"_systemctl",return_value=(0,"active")) as invoke:
+                consolidation.action(self.repo,"start")
+                self.assertTrue(any(call.args[0]=="start" for call in invoke.call_args_list))
         with self.assertRaises(ValueError):
             consolidation.action(self.repo,"restart; rm -rf /")
 
