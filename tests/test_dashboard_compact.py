@@ -115,7 +115,8 @@ class CompactUIRegression(unittest.TestCase):
 
     def test_search_results_and_evidence_do_not_resize_panels(self):
         self.assertIn('className="brain-search-trigger"',self.brain_search)
-        self.assertIn('className="brain-action-row"',self.knowledge)
+        self.assertNotIn('className="brain-action-row"',self.knowledge)
+        self.assertIn('className="brain-list-toolbar"',self.knowledge)
         self.assertIn('className="brain-map-button"',self.knowledge)
         self.assertIn('<Drawer title="Search Collective Memory"',self.brain_search)
         self.assertIn("createPortal",self.panels)
