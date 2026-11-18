@@ -243,6 +243,87 @@ def graph(repo,limit=45):
                           "finding_id":x["finding_id"]} for x in links]}
 
 
+def _memory_socket(repo,method,text,top=5):
+    """Use the existing *local* embedding daemon; never call OpenRouter here.
+
+    Return None on daemon/network/protocol mismatch, triggering FTS fallback.
+    The socket path is fixed by the repository, never supplied by the browser.
+    """
+    import socket
+    path=Path(repo)/"work/scratch/codex-pass1/memory/memory.sock"
+    if not path.is_socket():
+        return None
+    payload=(json.dumps({"method":method,"query":text[:1400],"top":top})+"\n").encode()
+    try:
+        with socket.socket(socket.AF_UNIX,socket.SOCK_STREAM) as sock:
+            sock.settimeout(3)
+            sock.connect(str(path))
+            sock.sendall(payload)
+            data=bytearray()
+            while b"\n" not in data and len(data)<100000:
+                part=sock.recv(8192)
+                if not part:break
+                data.extend(part)
+        if b"\n" not in data:
+            return None
+        result=json.loads(data.split(b"\n",1)[0])
+        if isinstance(result,dict) and result.get("protocol")==3 and isinstance(result.get("results"),list):
+            return result["results"][:top]
+    except (OSError,ValueError,TypeError):
+        pass
+    return None
+
+
+def hybrid_search(repo,text):
+    """Joint lexical/semantic memory retrieval for the dashboard's Brain Search.
+
+    Every returned result is traceable to a current stored investigation or
+    current technique source link. This is retrieval, not paid model Q&A.
+    """
+    if not isinstance(text,str) or not 2<=len(text.strip())<=180:
+        raise ValueError("Enter a 2-180 character technical question")
+    text=text.strip()
+    techniques_remote=_memory_socket(repo,"techniques",text,6)
+    findings_remote=_memory_socket(repo,"query",text,6)
+    mode="hybrid" if techniques_remote is not None and findings_remote is not None else "lexical"
+    with connection(repo) as db:
+        if techniques_remote is None:
+            techniques_remote=[dict(x) for x in techniques(repo,search=text,limit=6)["items"]]
+        if findings_remote is None:
+            source=findings(repo,search=text,limit=6)["items"]
+            findings_remote=[
+                {"id":x["id"],"va":x["va"],"pass":x["pass_number"],
+                 "status":x["status"],"summary":x["summary"],
+                 "verified_match":bool(x["verified_match"])} for x in source]
+        ready=[]
+        for row in findings_remote:
+            if not isinstance(row,dict):continue
+            va=row.get("va");passed=row.get("pass")
+            if not isinstance(va,str) or not VA.fullmatch(va) or type(passed) is not int:
+                continue
+            match=db.execute(
+                "SELECT id,source_hash FROM findings WHERE va=? AND pass_number=?",
+                (va,passed)).fetchone()
+            if not match:continue
+            ready.append({"id":match["id"],"va":va,"pass":passed,
+                          "summary":_bounded(row.get("summary"),450),
+                          "status":_bounded(row.get("status"),20),
+                          "verified_match":bool(row.get("verified_match"))})
+        confirmed=[]
+        for row in techniques_remote:
+            if not isinstance(row,dict) or type(row.get("id")) is not int:continue
+            exists=db.execute("""SELECT 1 FROM compiler_technique_links l
+                JOIN findings f ON f.id=l.finding_id
+                WHERE l.technique_id=? AND l.source_hash=f.source_hash LIMIT 1""",
+                (row["id"],)).fetchone()
+            if not exists:continue
+            confirmed.append({"id":row["id"],
+                              "title":_bounded(row.get("title"),140),
+                              "problem":_bounded(row.get("problem"),450),
+                              "category":_bounded(row.get("category"),50)})
+        return {"mode":mode,"techniques":confirmed,"findings":ready}
+
+
 def annotate(repo,ident,note,pinned):
     if type(ident) is not int or not 1<=ident<=100000000:raise ValueError("Invalid technique")
     if not isinstance(note,str) or len(note)>NOTE_LIMIT:raise ValueError("Note exceeds 1500 characters")
