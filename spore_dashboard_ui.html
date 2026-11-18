@@ -369,10 +369,14 @@ footer{font-size:10px;color:#82a6be;padding:2px 7px}
 }
 .bottom-hud .dock-console .control-form::-webkit-scrollbar{display:none}
 .bottom-hud .dock-console .dock-field {
- display:flex;flex-direction:row;
- justify-content:flex-start;align-items:center;
- gap:7px;margin:0;
+ display:grid;
+ grid-template-columns:max-content max-content;
+ align-items:center;
+ column-gap:7px;
+ height:28px;
+ padding:0;margin:0;
  white-space:nowrap;flex:0 0 auto;
+ line-height:1;
  font-size:11px;font-weight:700;color:#d3eaf7;
 }
 .bottom-hud .dock-console .dock-field span{display:block;flex:none;white-space:nowrap}
@@ -394,7 +398,7 @@ footer{font-size:10px;color:#82a6be;padding:2px 7px}
  flex:0 0 auto;
  box-sizing:border-box;
  margin:0;padding:2px 10px;
- height:29px;min-height:0;align-self:center;
+ height:28px;min-height:28px;align-self:center;
  border-radius:16px;font-size:11px;font-weight:800;
 }
 /* Button pair is one command cluster, with matching spacing internally. */
@@ -417,14 +421,15 @@ footer{font-size:10px;color:#82a6be;padding:2px 7px}
 }
 .bottom-hud .dock-console .control-status:empty{display:none}
 .status-pod {
- position:absolute;right:13px;bottom:17px;z-index:4;
- display:flex;align-items:center;gap:6px;
- padding:6px 10px;
+ position:absolute;right:12px;bottom:7px;z-index:4;
+ height:46px;min-height:46px;box-sizing:border-box;
+ display:flex;align-items:center;justify-content:center;gap:6px;
+ padding:0 12px;
  border:1px solid #a4cadb;border-radius:22px;
  background:linear-gradient(#467696,#1f4667 37%,#0a223d);
  box-shadow:inset 0 1px #d4f3ff9c,inset 0 -2px 3px #051626,0 3px 9px #0009;
 }
-.status-pod .up {display:flex;align-items:center;gap:7px;font-size:11px}
+.status-pod .up {display:flex;align-items:center;justify-content:center;gap:7px;height:28px;font-size:11px;line-height:1}
 .status-pod .dock-subline{display:none}
 html,body,.grid,.table-scroll,.drawer,.timeline,.control-status{
  scrollbar-color:#82b9d5 #0a2641;
@@ -437,7 +442,7 @@ html,body,.grid,.table-scroll,.drawer,.timeline,.control-status{
 ::-webkit-scrollbar-thumb:hover{background:#a1d7e8}
 @media(max-width:1450px){
  .bottom-hud{max-width:calc(100vw - 25px)}
- .status-pod{position:relative;right:auto;bottom:auto;align-self:flex-end;margin-top:-2px}
+ .status-pod{position:relative;right:auto;bottom:auto;align-self:flex-end;margin-top:0}
 }
 @media(max-width:850px){
  .bottom-hud{width:calc(100vw - 24px);max-width:calc(100vw - 24px)}
