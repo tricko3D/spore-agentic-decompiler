@@ -1,5 +1,4 @@
 import type {ReactNode} from 'react';
-import {Panel} from '../components/Panel';
 
 /** Read-only architecture description, not a simulated service monitor. */
 function Block({kind,title,source,children}:{kind:string;title:string;source:string;children:ReactNode}){
@@ -14,13 +13,8 @@ function Connection({label}:{label:string}){
 }
 export default function InfraDocs(){
  return <section className="infra-view view-body">
-  <div className="infra-heading">
-   <div><h1>Infrastructure</h1><p>Actual SAD components and their responsibility boundaries</p></div>
-   <span className="infra-heading-tag">LOCAL FIRST · SOURCE GROUNDED</span>
-  </div>
-  <div className="infra-layout">
-   <Panel className="infra-topology" title="System topology" subtitle="Control plane, worker pipeline and evidence-backed memory">
-    <div className="infra-diagram-scroll">
+  <div className="infra-diagram-scroll infra-diagram-only" aria-label="SAD infrastructure diagram">
+
      <div className="infra-top-node">
       <Block kind="ui" title="React / TypeScript dashboard" source="dashboard_web/src/">
        Agents, Brain and Infra Docs share a persistent command bar. The UI reads data and submits explicitly permitted control actions.
@@ -67,28 +61,6 @@ export default function InfraDocs(){
        </Block>
       </div>
      </div>
-     <div className="infra-diagram-foot">
-      <p><b>External inference:</b> Worker and consolidator processes make their respective model calls, never the browser.</p>
-      <p><b>Trust boundary:</b> The frontend cannot directly read SQLite, mutate verified outcomes, or execute arbitrary commands.</p>
-     </div>
-    </div>
-   </Panel>
-   <Panel className="infra-notes-panel" title="Design commentary" subtitle="What the separation buys us">
-    <div className="infra-notes">
-     <article><strong>1. Presentation is disposable</strong>
-      <p>Closing or reloading the dashboard does not stop decompilation or consolidation. They are separate, process-owned services.</p></article>
-     <article><strong>2. Operational data is not knowledge</strong>
-      <p>Checked bytes and attempt history live in the operational store. Techniques and research notes live in Collective Memory, linked to original investigations.</p></article>
-     <article><strong>3. Provenance before promotion</strong>
-      <p>Evidence links are validated against current source hashes. An extracted pattern is never automatically promoted to a compiler-verified fact.</p></article>
-     <article><strong>4. Search stays local</strong>
-      <p>FTS5 works without paid inference. An optional local embedding daemon improves retrieval when available.</p></article>
-     <article><strong>5. Two independent budgets</strong>
-      <p>Decompilation controls govern worker launches. The consolidator has its own daily USD cap and is managed by its existing systemd user unit.</p></article>
-     <article><strong>6. A narrow API boundary</strong>
-      <p>Only known launch, stop, annotation and settings actions are permitted. Source investigations remain read-only in the browser.</p></article>
-    </div>
-   </Panel>
   </div>
  </section>;
 }

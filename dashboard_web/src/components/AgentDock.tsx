@@ -1,6 +1,7 @@
 import {useCallback,useEffect,useState} from 'react';
 import {controlsEnabled,get,post,query} from '../api';
 import {Drawer,ErrorText} from './Panel';
+import PreviewResultModal from './PreviewResultModal';
 import type {AllowList,Claimants,Plan,Snapshot} from '../types';
 
 type Launch={module:string;workers:number;max_inflight:number;passes:number;minutes:number;budget:number;claim_user:string};
@@ -34,6 +35,7 @@ function AllowListEditor({onClose}:{onClose:()=>void}){
 export default function AgentDock({snapshot,onUpdated}:{snapshot:Snapshot|null;onUpdated:()=>void}){
  const [form,setForm]=useState<Launch>(START),[busy,setBusy]=useState(false),[notice,setNotice]=useState('');
  const [preview,setPreview]=useState<Plan|null>(null),[claimants,setClaimants]=useState<Claimants|null>(null),[editor,setEditor]=useState(false);
+ const [previewError,setPreviewError]=useState<string|null>(null),[showPreview,setShowPreview]=useState(false);
  const running=Boolean(snapshot?.controller?.running||snapshot?.run?.state==='running');
  const update=<K extends keyof Launch>(field:K,value:Launch[K])=>{setForm(old=>({...old,[field]:value}));setPreview(null)};
  useEffect(()=>{
@@ -60,10 +62,15 @@ export default function AgentDock({snapshot,onUpdated}:{snapshot:Snapshot|null;o
   finally{setBusy(false)}
  }
  const getPlan=async()=>{
-  try{setNotice('');setPreview(await get<Plan>('/api/plan?'+query({
-   module:form.module,workers:form.workers,claim_user:form.module==='__claimed__'?form.claim_user:undefined
-  })))}
-  catch(e){setNotice((e as Error).message)}
+  if(busy)return;
+  setBusy(true);setNotice('');setPreview(null);setPreviewError(null);
+  try{
+   const plan=await get<Plan>('/api/plan?'+query({
+    module:form.module,workers:form.workers,claim_user:form.module==='__claimed__'?form.claim_user:undefined
+   }));
+   setPreview(plan);setShowPreview(true);
+  }catch(e){setPreviewError(e instanceof Error?e.message:String(e));setShowPreview(true)}
+  finally{setBusy(false)}
  };
  return <><div className="control-dock" aria-label="Agent controls">
   <div className="control-fields">
@@ -90,9 +97,8 @@ export default function AgentDock({snapshot,onUpdated}:{snapshot:Snapshot|null;o
      onClick={()=>void toggle()}>{busy?'Working…':running?'Stop workers':'Launch'}</button>
   </div>
  </div>
-  {(notice||preview)&&<div className="dock-message" role="status">
-   {notice||(String(preview?.eligible||0)+' eligible functions · '+String(preview?.workers||0)+' workers · provisional scope')}
-  </div>}
+  {notice&&<div className="dock-message" role="status">{notice}</div>}
+  {showPreview&&<PreviewResultModal plan={preview} error={previewError} onClose={()=>setShowPreview(false)}/>}
   {editor&&<AllowListEditor onClose={()=>setEditor(false)}/>}
  </>;
 }

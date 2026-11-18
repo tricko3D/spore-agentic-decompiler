@@ -17,6 +17,8 @@ class CompactUIRegression(unittest.TestCase):
         cls.css=(WEB/"compact.css").read_text()
         cls.base=(WEB/"styles.css").read_text()
         cls.graph=(WEB/"components/BrainGraph.tsx").read_text()
+        cls.graph_viewer=(WEB/"components/GraphViewer.tsx").read_text()
+        cls.preview_modal=(WEB/"components/PreviewResultModal.tsx").read_text()
         cls.app=(WEB/"App.tsx").read_text()
         cls.hooks=(WEB/"hooks.ts").read_text()
         cls.panels=(WEB/"components/Panel.tsx").read_text()
@@ -58,7 +60,7 @@ class CompactUIRegression(unittest.TestCase):
         self.assertIn("onFinding(x.id)",self.graph)
         self.assertIn("onTechnique(x.id)",self.graph)
         self.assertIn(".knowledge-view .graph-wrap",self.css)
-        self.assertIn("display:block;flex:1 1 0;min-height:0;max-height:none;overflow:auto",self.css)
+        self.assertIn(".graph-viewer .graph-wrap",self.css)
 
     def test_views_are_lazy_and_only_the_current_view_is_mounted(self):
         self.assertIn("lazy(()=>import('./views/Operations'))",self.app)
@@ -101,7 +103,7 @@ class CompactUIRegression(unittest.TestCase):
     def test_knowledge_view_fixed_and_cannot_expand_panels(self):
         self.assertNotIn('className="knowledge-intro"',self.knowledge)
         self.assertNotIn('How knowledge is formed',self.knowledge)
-        self.assertIn('grid-template-rows:minmax(0,45fr) minmax(0,55fr)',self.css)
+        self.assertIn('grid-template-rows:102px minmax(0,1fr)',self.css)
         self.assertIn('grid-auto-rows:111px',self.css)
         self.assertIn('max-height:111px',self.css)
         self.assertIn('overflow-y:auto;overflow-x:hidden',self.css)
@@ -131,6 +133,10 @@ class CompactUIRegression(unittest.TestCase):
         self.assertIn("view==='infra'",self.app)
         self.assertIn("export default function InfraDocs()",self.infra)
         self.assertIn('className="infra-branches"',self.infra)
+        self.assertIn("infra-diagram-only",self.infra)
+        self.assertNotIn("infra-notes-panel",self.infra)
+        self.assertNotIn("infra-heading",self.infra)
+        self.assertNotIn("System topology",self.infra)
         self.assertIn("spore_dashboard_control.py",self.infra)
         self.assertIn("dashboard/server.py",self.infra)
         self.assertIn("spore_technique_consolidator.py",self.infra)
@@ -153,8 +159,30 @@ class CompactUIRegression(unittest.TestCase):
     def test_knowledge_graph_memo_receives_stable_callbacks(self):
         self.assertIn("const openTechnique=useCallback",self.knowledge)
         self.assertIn("const openFinding=useCallback",self.knowledge)
-        self.assertIn("<BrainGraph graph={graph} onTechnique={openTechnique}",self.knowledge)
+        self.assertIn("<GraphViewer graph={graph} onTechnique={openTechnique}",self.knowledge)
         self.assertIn("export default memo(BrainGraph)",self.graph)
+
+    def test_preview_error_is_copyable_in_a_modal(self):
+        self.assertIn('<PreviewResultModal plan={preview} error={previewError}',self.agent_dock)
+        self.assertIn("setPreviewError(e instanceof Error?e.message:String(e))",self.agent_dock)
+        self.assertIn("createPortal",self.preview_modal)
+        self.assertIn("navigator.clipboard.writeText",self.preview_modal)
+        self.assertIn('className="preview-modal-content"',self.preview_modal)
+        self.assertIn("Full error",self.preview_modal)
+        self.assertIn("white-space:pre-wrap;overflow-wrap:anywhere",self.css)
+        self.assertNotIn("{(notice||preview)&&",self.agent_dock)
+
+    def test_graph_small_launcher_and_pan_zoom_modal(self):
+        self.assertIn("setShowGraph(true)",self.knowledge)
+        self.assertIn("graph-launcher-panel",self.knowledge)
+        self.assertNotIn("<BrainGraph graph={graph}",self.knowledge)
+        self.assertIn("createPortal",self.graph_viewer)
+        self.assertIn("setPointerCapture",self.graph_viewer)
+        self.assertIn("addEventListener('wheel',wheel,{passive:false})",self.graph_viewer)
+        self.assertIn("Math.exp(-event.deltaY",self.graph_viewer)
+        self.assertIn("onClickCapture",self.graph_viewer)
+        self.assertIn("Fit</button>",self.graph_viewer)
+        self.assertIn(".graph-viewer-world",self.css)
 
     def test_desktop_shell_restores_fixed_viewport_when_height_allows(self):
         self.assertIn("@media(min-width:1600px) and (min-height:950px)",self.css)

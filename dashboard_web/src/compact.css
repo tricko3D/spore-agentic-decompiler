@@ -793,3 +793,119 @@ body>.overlay>.detail-drawer{height:100dvh;max-height:100dvh;overflow:hidden}
  }
  .knowledge-view .knowledge-side>.panel:last-child{grid-column:auto}
 }
+
+/* The infrastructure page is only the annotated topology diagram. */
+.view-content>.infra-view{height:100%;max-height:100%;min-height:0;overflow:hidden;padding:0}
+.infra-diagram-only{
+ flex:1 1 0;min-width:0;min-height:0;width:100%;height:100%;
+ max-width:100%;max-height:100%;overflow:auto;
+ padding:clamp(10px,2vw,24px);border:0;border-radius:0;
+ background:#091b2d;overscroll-behavior:contain;
+ scrollbar-gutter:stable;
+}
+.infra-diagram-only>.infra-top-node,
+.infra-diagram-only>.infra-link,
+.infra-diagram-only>.infra-fork,
+.infra-diagram-only>.infra-branches{
+ max-width:1300px;margin-left:auto;margin-right:auto;
+}
+.infra-diagram-only>.infra-top-node>.infra-node{width:min(560px,100%)}
+.infra-diagram-only>.infra-branches{gap:15px}
+.infra-diagram-only>.infra-branches>.infra-branch{padding:13px}
+
+/* Evidence graph is a launcher, not a full-width graph panel. */
+.knowledge-view .knowledge-main{grid-template-rows:102px minmax(0,1fr)}
+.knowledge-view .graph-launcher-panel{
+ align-self:start;width:min(400px,100%);height:102px;max-width:400px;
+ padding:8px 10px;overflow:hidden;
+}
+.knowledge-view .graph-launcher-panel .panel-head{margin-bottom:4px}
+.knowledge-view .graph-launcher-panel h2{font-size:12px}
+.knowledge-view .graph-launcher-panel .panel-head p{
+ font-size:10px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+}
+.knowledge-view .graph-launcher{
+ display:flex;align-items:center;justify-content:space-between;gap:8px;
+ width:100%;min-width:0;height:39px;max-height:39px;
+ padding:5px 9px;text-align:left;overflow:hidden;
+ border:1px solid #75a3c2;background:#1b425e;
+}
+.knowledge-view .graph-launcher span:first-child{min-width:0;display:grid;gap:1px}
+.knowledge-view .graph-launcher strong,.knowledge-view .graph-launcher small{
+ white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+}
+.knowledge-view .graph-launcher strong{font-size:11px}
+.knowledge-view .graph-launcher small{font-size:10px;color:#a9c9d9}
+.knowledge-view .graph-launcher-open{flex:none;font-size:10px;color:#c8eeff}
+.graph-viewer-backdrop{
+ position:fixed;inset:0;z-index:1050;
+ display:flex;align-items:center;justify-content:center;
+ padding:clamp(8px,2vw,24px);background:#020c19dd;
+}
+.graph-viewer{
+ display:flex;flex-direction:column;gap:8px;
+ width:min(1600px,100%);height:min(930px,92dvh);min-height:0;max-height:100%;
+ padding:11px;border:2px solid #89b6cf;border-radius:16px;
+ background:#10293f;box-shadow:0 18px 55px #000b;overflow:hidden;
+}
+.graph-viewer-toolbar{
+ flex:none;display:flex;align-items:center;justify-content:flex-end;
+ min-height:32px;gap:6px;padding:0 4px 4px;
+}
+.graph-viewer-actions{display:flex;align-items:center;gap:5px;flex:none}
+.graph-viewer-actions button{height:30px;min-width:30px;padding:4px 10px;border-radius:9px}
+.graph-zoom-label{min-width:42px;text-align:right;font:11px var(--numbers);color:#c9e9f7}
+.graph-viewer-viewport{
+ position:relative;flex:1 1 0;min-height:0;min-width:0;
+ border:1px solid #537f9c;border-radius:11px;
+ background:#081d30;overflow:hidden;touch-action:none;
+ cursor:grab;user-select:none;
+}
+.graph-viewer-viewport:active{cursor:grabbing}
+.graph-viewer-world{
+ position:absolute;top:0;left:0;width:980px;
+ transform-origin:0 0;will-change:transform;
+}
+.graph-viewer .graph-wrap{
+ display:block!important;width:980px;max-width:none;min-height:0;max-height:none;
+ position:static;overflow:visible;flex:none;border:0;border-radius:0;background:transparent;
+}
+.graph-viewer .brain-svg{width:980px;min-width:980px;max-width:none;height:auto;display:block}
+.graph-viewer .graph-item{cursor:pointer}
+.graph-viewer-hint{flex:none;text-align:center;font:10px var(--numbers);color:#a9c9d9}
+@media(max-width:750px){
+ .graph-viewer{height:94dvh}
+ .graph-viewer-hint{font-size:9px}
+}
+.preview-modal-backdrop{
+ position:fixed;inset:0;z-index:1200;
+ display:flex;align-items:center;justify-content:center;
+ padding:clamp(8px,2vw,24px);background:#020b18df;
+}
+.preview-result-modal{
+ width:min(780px,100%);max-height:min(760px,88dvh);min-height:0;
+ display:flex;flex-direction:column;gap:11px;overflow:hidden;
+ padding:16px;background:#102a40;
+ border:2px solid #87b6ce;border-radius:16px;box-shadow:0 18px 50px #000b;
+}
+.preview-modal-header{
+ display:flex;align-items:center;justify-content:space-between;gap:12px;flex:none;
+}
+.preview-modal-header h2{font-size:18px;margin-top:3px}
+.preview-modal-description{flex:none;font-size:12px;color:#debcc5}
+.preview-modal-facts{
+ display:flex;gap:10px;flex-wrap:wrap;flex:none;padding:9px;
+ border:1px solid #3d6987;border-radius:10px;background:#1c3b53;font-size:12px;
+}
+.preview-modal-label{font-size:11px;font-weight:800;color:#d2edf9}
+.preview-modal-content{
+ display:block;flex:1 1 200px;min-height:100px;max-height:52dvh;
+ overflow:auto;overscroll-behavior:contain;
+ white-space:pre-wrap;overflow-wrap:anywhere;word-break:break-word;
+ padding:12px;background:#081c2d;color:#f2d8dd;
+ border:1px solid #597f9d;border-radius:10px;font:11px/1.6 var(--numbers);
+}
+.preview-modal-actions{
+ display:flex;align-items:center;justify-content:space-between;gap:10px;flex:none;
+}
+.preview-modal-actions button{min-width:105px}

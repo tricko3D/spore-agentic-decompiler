@@ -2,7 +2,7 @@ import {memo,useCallback,useEffect,useState} from 'react';
 import {controlsEnabled,money,post,pretty,query} from '../api';
 import {usePoll} from '../hooks';
 import {Drawer,ErrorText,Metric,Panel,Tag} from '../components/Panel';
-import BrainGraph from '../components/BrainGraph';
+import GraphViewer from '../components/GraphViewer';
 import BrainSearch from '../components/BrainSearch';
 import KnowledgeDock from '../components/KnowledgeDock';
 import ErrorModal from '../components/ErrorModal';
@@ -86,6 +86,7 @@ function Knowledge({active,overview,summaryError,refreshOverview}:{active:boolea
  const [draft,setDraft]=useState(''),[search,setSearch]=useState(''),[category,setCategory]=useState<Category>('all');
  const [status,setStatus]=useState(''),[offset,setOffset]=useState(0),[selection,setSelection]=useState<Selection|null>(null);
  const [selectedError,setSelectedError]=useState<QueueError|null>(null);
+ const [showGraph,setShowGraph]=useState(false);
  const openTechnique=useCallback((id:number)=>setSelection({kind:'technique',id}),[]);
  const openFinding=useCallback((id:number)=>setSelection({kind:'finding',id}),[]);
  useEffect(()=>{const t=window.setTimeout(()=>{setSearch(draft);setOffset(0)},300);return ()=>clearTimeout(t)},[draft]);
@@ -106,10 +107,11 @@ function Knowledge({active,overview,summaryError,refreshOverview}:{active:boolea
   <BrainSearch onTechnique={openTechnique} onFinding={openFinding}/>
   <div className="knowledge-layout">
    <div className="knowledge-main">
-    <Panel title="Evidence graph" subtitle="Click a technique or function; every edge represents a stored evidence link"
-      action={<span className="subtle">Current source hashes only</span>}>
-     <BrainGraph graph={graph} onTechnique={openTechnique}
-       onFinding={openFinding}/>
+    <Panel title="Evidence graph" subtitle="Explore real source links in a separate interactive map" className="graph-launcher-panel">
+     <button type="button" className="graph-launcher" onClick={()=>setShowGraph(true)}>
+      <span><strong>Open evidence map</strong><small>{graph?.techniques?.length||0} techniques · {graph?.findings?.length||0} findings · {graph?.links?.length||0} links</small></span>
+      <span className="graph-launcher-open">Pan + zoom</span>
+     </button>
     </Panel>
     <Panel title="Explore the brain" subtitle="Search consolidated compiler techniques and individual investigations" className="explorer">
      <div className="tabs"><button className={mode==='techniques'?'selected':''}
@@ -179,6 +181,8 @@ function Knowledge({active,overview,summaryError,refreshOverview}:{active:boolea
   {selection&&<EvidenceInspector selection={selection} onChoose={setSelection}
     onClose={()=>setSelection(null)} refresh={refreshOverview}/>}
   {selectedError&&<ErrorModal error={selectedError} onClose={()=>setSelectedError(null)}/>}
+  {showGraph&&<GraphViewer graph={graph} onTechnique={openTechnique} onFinding={openFinding} onClose={()=>setShowGraph(false)}/>}
+
  </section>;
 }
 
