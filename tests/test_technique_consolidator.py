@@ -2,6 +2,7 @@
 import importlib.util
 import io
 import json
+import os
 from pathlib import Path
 import sqlite3
 import subprocess
@@ -333,6 +334,40 @@ class ConsolidationTests(unittest.TestCase):
         self.assertIn("nohup",source)
         self.assertIn("--disable",source)
         self.assertIn("--daily-usd",source)
+
+    def test_automatic_user_service_enable_disable_with_fake_systemd(self):
+        """Exercise real shell service setup without starting a paid daemon."""
+        helper = ROOT / "enable_automatic_consolidation.sh"
+        scratch = self.root / "work/scratch"
+        scratch.mkdir(parents=True,exist_ok=True)
+        (scratch/"spore_technique_consolidator.py").write_text("print('{}')\n")
+        bindir = self.root / "mockbin"
+        bindir.mkdir()
+        trace = self.root / "systemctl.log"
+        systemctl = bindir / "systemctl"
+        systemctl.write_text(
+            "#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$TEST_SYSTEMCTL_TRACE\"\nexit 0\n")
+        systemctl.chmod(0o755)
+        key = self.root / ".config/spore-agentic-decompiler/openrouter.key"
+        key.parent.mkdir(parents=True)
+        key.write_text("sk-or-TEST-KEY\n")
+        env = {**os.environ,"HOME":str(self.root),
+               "PATH":str(bindir) + os.pathsep + os.environ.get("PATH",""),
+               "TEST_SYSTEMCTL_TRACE":str(trace)}
+        command = ["bash",str(helper),"--repo",str(self.root),
+                   "--daily-usd","0.20","--batch","2"]
+        proc = subprocess.run(command,env=env,capture_output=True,
+                              text=True,timeout=15)
+        self.assertEqual(proc.returncode,0,proc.stderr)
+        unit = self.root / ".config/systemd/user/sad-technique-consolidator.service"
+        self.assertTrue(unit.is_file())
+        self.assertIn("--daily-usd 0.20",unit.read_text())
+        self.assertIn("enable --now",trace.read_text())
+        proc = subprocess.run(["bash",str(helper),"--repo",str(self.root),
+                               "--disable"],env=env,capture_output=True,text=True)
+        self.assertEqual(proc.returncode,0,proc.stderr)
+        self.assertFalse(unit.exists())
+        self.assertIn("disable --now",trace.read_text())
 
     def test_installer_opt_in_and_runner_uses_technique_search(self):
         installer = (ROOT/"install_collective_memory.sh").read_text()
