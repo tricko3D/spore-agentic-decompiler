@@ -922,6 +922,57 @@ def checker_metric_summary(lines):
     return f'size={compiled}/{retail} diffs={diffs[-1]}'
 
 
+def parse_agent_verdict(answer):
+    """Parse explicit FAIL +N and SKIP verdicts, including Markdown reports.
+
+    This only parses model explanations. It never accepts a claimed MATCH;
+    independent byte verification is still required in process().
+    """
+    if not isinstance(answer, str):
+        return None
+    pattern = re.compile(
+        r'^[ \t]*(?:#{1,6}[ \t]+|[-*][ \t]+)?'
+        r'(?P<fmt>\*\*|__|\x60)?'
+        r'(?P<verdict>FAIL[ \t]*\+[1-5]|SKIP)'
+        r'(?P<inner_colon>:)?'
+        r'(?(fmt)(?P=fmt))'
+        r'(?=$|[ \t]|:|—|–|-)'
+        r'[ \t]*(?:[:—–-][ \t]*)?'
+        r'(?P<reason>.*)$', re.IGNORECASE
+    )
+    lines = answer.splitlines()
+    in_fence = False
+    for index, line in enumerate(lines):
+        stripped = line.lstrip()
+        if re.match(r'^(?:\x60{3}|~~~)', stripped):
+            in_fence = not in_fence
+            continue
+        if in_fence or stripped.startswith('>'):
+            continue
+        match = pattern.match(line)
+        if not match:
+            continue
+
+        verdict = match.group('verdict').upper().replace(' ', '')
+        status = 'FAIL' if verdict.startswith('FAIL') else 'SKIP'
+        effort = '+' + verdict.split('+', 1)[1] if status == 'FAIL' else ''
+        reason = (match.group('reason') or '').strip()
+        if not reason:
+            # A heading may contain just the verdict; its technical blocker
+            # is then the next substantive line.
+            for subsequent in lines[index + 1:]:
+                subsequent = subsequent.strip()
+                if not subsequent:
+                    continue
+                if re.match(r'^(?:\x60{3}|~~~|>)', subsequent):
+                    break
+                reason = subsequent
+                break
+        reason = re.sub(r'\*\*(.*?)\*\*', r'\1', reason).strip()
+        return status, effort, (reason[:1200] or 'No reason supplied')
+    return None
+
+
 def checked_result(va, log_path=None, minutes=2):
     """Independent byte check; never accept a model's MATCH statement alone.
 
@@ -1222,13 +1273,11 @@ def process(minutes, unsafe, backend, quota_wait, max_functions,
                 elif kind == 'TIMEOUT':
                     outcome = ('DEFER', '', f'Pass {pass_number}: time limit ({minutes} min) | checker: {check_note}')
                 else:
-                    skip = re.search(r'(?m)^\s*SKIP\b\s*:?\s*(.*)$', answer)
-                    failed = re.search(r'(?m)^\s*FAIL\s*\+([1-5])\s*:?\s*(.*)$', answer)
-                    if skip:
-                        outcome = ('SKIP', '', f'Pass {pass_number}: {skip.group(1)}')
-                    elif failed:
-                        outcome = ('FAIL', f'+{failed.group(1)}',
-                                   f'Pass {pass_number}: {failed.group(2)} | checker: {check_note}')
+                    verdict = parse_agent_verdict(answer)
+                    if verdict:
+                        result_status, effort, explanation = verdict
+                        outcome = (result_status, effort,
+                                   f'Pass {pass_number}: {explanation} | checker: {check_note}')
                     else:
                         # Some models claim MATCH although no verified manifest
                         # was created; count the inference, not a false success.
