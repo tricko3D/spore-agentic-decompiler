@@ -1300,7 +1300,7 @@ def main():
     run.add_argument('--reasoning', choices=['low', 'medium', 'high'], default='high', help='Requested reasoning effort (default high; API provider may not honor it)')
     run.add_argument('--passes', type=int, default=3, help='Additional valid attempts per function for a parallel run (1-24; default 3); serial mode keeps cumulative limit')
     run.add_argument('--retry-timeouts', action='store_true', help='Retry previously timed-out functions, including legacy FAIL +4 timeouts; other results remain intact')
-    run.add_argument('--budget', type=float, default=5.0, help='OpenRouter local soft budget in USD since first run (default $5; dashboard API-key cap is hard limit)')
+    run.add_argument('--budget', type=float, default=5.0, help='Per-run OpenRouter soft spending limit in USD (default $5; the OpenRouter key limit is independent)')
     run.add_argument('--only-va', help='Run only this queued function, useful for testing (e.g. 0x00c69a70)')
     run.add_argument('--run-id', help=argparse.SUPPRESS)
     run.add_argument('--worker-idx', type=int, help=argparse.SUPPRESS)
