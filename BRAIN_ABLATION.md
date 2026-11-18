@@ -69,6 +69,22 @@ The existing OpenRouter key's provider-side spending limit remains the actual ha
 
 The command runs exactly one randomized treatment each invocation. Before any paid request in a knowledge arm, a copied offline embedding service must reach ready status. It also refuses to resume an existing sandbox silently. There is no auto-purchasing from prepare, candidates, report, or the dry-run version of run-next.
 
+### Repairing the original seed after a launcher upgrade
+
+If a trial reports `can't open file .../brain_trial_entry.py`, its seed was prepared before the safe Python 3.14 launcher was introduced. Updating the SAD checkout does **not** retroactively update `~/sad-brain-benchmark/seed`. This makes repeated retries fail in exactly the same way.
+
+The offline, non-destructive repair verifies that every current and retired trial lacks agent output, Brain queries, recorded attempts, or provider spending before changing **only** three benchmark tools in the seed: `brain_trial_entry.py`, `brain_trial_query.py`, and the benchmark-specific query command in `spore_first_pass_sqlite.py`. It records SHA-256 checksums of these tools in `plan.json`. All frozen operational/knowledge SQLite files, original source, treatment assignments and failed trial logs remain intact.
+
+```bash
+cd ~/spore-agentic-decompiler
+git pull --ff-only
+python3 brain_ablation.py repair-seed --out ~/sad-brain-benchmark
+python3 brain_ablation.py retry-invalid --out ~/sad-brain-benchmark
+python3 brain_ablation.py run-next --out ~/sad-brain-benchmark
+```
+
+The final command is a dry run and performs no paid inference. After the user deliberately adds `--execute --budget 0.50`, it creates a new isolated sandbox from the updated seed. `repair-seed` refuses to operate if a trial has genuinely started, since mixing different tooling versions would invalidate comparisons.
+
 ### Python 3.14 `dis.py` collision
 
 The Spore checkout contains `work/scratch/dis.py`, which is a project helper and **not** Python's standard-library `dis`. Running `python work/scratch/spore_first_pass_sqlite.py run` directly puts that helper's directory at the front of `sys.path`. Under Python 3.14, `argparse` imports `inspect` and `dis` during CLI setup, so this can exit before the agent is started with `ValueError: invalid literal for int() with base 16: 'run'`.

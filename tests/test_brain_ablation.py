@@ -96,6 +96,78 @@ def run_one():
             db.execute("INSERT INTO compiler_technique_links VALUES(?,?,?,?)",
                        (10,1,f"Observed at {VA}","stack-frame mismatch"))
 
+    def test_repair_old_seed_without_recopying_sqlite_or_trials(self):
+        bench.prepare(self.source,self.destination,repeats=1)
+        seed=self.destination/"seed"
+        planpath=self.destination/"plan.json"
+        plan=json.loads(planpath.read_text())
+        item=plan["arms"][0]
+        active=item["name"]
+        archived="trial-original-failed"
+        # Imitate the November 18 historical seed, created before the safe
+        # root launcher existed, then retried without paid model activity.
+        (seed/bench.ENTRY).unlink()
+        runner=seed/bench.RUNNER
+        runner.write_text(runner.read_text().replace(
+            ".venv/bin/python brain_trial_entry.py query --text",
+            ".venv/bin/python work/scratch/brain_trial_query.py --text"))
+        bench._clone(seed,self.destination/"trials"/archived)
+        bench._clone(seed,self.destination/"trials"/active)
+        old_log=self.destination/"trials"/archived/"benchmark-run.log"
+        old_log.write_text("ValueError: invalid literal for int() with base 16: 'run'\\n")
+        new_log=self.destination/"trials"/active/bench.WORK/"benchmark-memory-service.log"
+        new_log.write_text("can't open file brain_trial_entry.py\\n")
+        item["state"]="blocked"
+        item["invalid_history"]=[{"name":archived,"state":"error"}]
+        bench.write_json(planpath,plan)
+        original_cpp=(self.source/bench.slice_path(VA)).read_bytes()
+        database_before={str(p):bench._tool_hash(p) for p in [
+            seed/bench.OPS,seed/bench.KNOW,
+            self.destination/"archive/spore.sqlite3",
+            self.destination/"archive/knowledge.sqlite3"]}
+        with mock.patch.object(bench.subprocess,"run",
+                               side_effect=AssertionError("Repair invoked a paid command")):
+            with mock.patch.object(bench.shutil,"copytree",
+                                   side_effect=AssertionError("Repair recopied repo")):
+                bench.repair_seed(self.destination)
+        self.assertTrue((seed/bench.ENTRY).is_file())
+        self.assertIn("brain_trial_entry.py query",(seed/bench.RUNNER).read_text())
+        self.assertNotIn("work/scratch/brain_trial_query.py --text",
+                         (seed/bench.RUNNER).read_text())
+        self.assertEqual(database_before,{str(p):bench._tool_hash(p) for p in [
+            seed/bench.OPS,seed/bench.KNOW,
+            self.destination/"archive/spore.sqlite3",
+            self.destination/"archive/knowledge.sqlite3"]})
+        self.assertEqual((self.source/bench.slice_path(VA)).read_bytes(),original_cpp)
+        self.assertTrue(old_log.exists())
+        self.assertTrue(new_log.exists())
+        self.assertEqual(json.loads(planpath.read_text())["arms"][0]["name"],active)
+        # Idempotence without any trial data loss.
+        bench.repair_seed(self.destination)
+        bench.retry_invalid(self.destination)
+        self.assertTrue(old_log.exists())
+        self.assertTrue(new_log.exists())
+        self.assertEqual(json.loads(planpath.read_text())["arms"][0]["state"],"prepared")
+
+    def test_repair_seed_rejects_any_started_agent_or_completed_trial(self):
+        bench.prepare(self.source,self.destination,repeats=1)
+        seed=self.destination/"seed"
+        (seed/bench.ENTRY).unlink()
+        planpath=self.destination/"plan.json"
+        plan=json.loads(planpath.read_text())
+        item=plan["arms"][0]
+        trial=self.destination/"trials"/item["name"]
+        bench._clone(seed,trial)
+        evidence=trial/bench.WORK/"logs/model.jsonl"
+        evidence.parent.mkdir(parents=True,exist_ok=True)
+        evidence.write_text('{"type":"tool_use"}\\n')
+        item["state"]="error"
+        bench.write_json(planpath,plan)
+        with self.assertRaisesRegex(RuntimeError,"possible agent activity"):
+            bench.repair_seed(self.destination)
+        self.assertFalse((seed/bench.ENTRY).exists())
+        self.assertTrue(evidence.exists())
+
     def test_memory_startup_diagnostics_show_bounded_traceback_and_redact_keys(self):
         logfile=self.base/"memory-service.log"
         logfile.write_text(

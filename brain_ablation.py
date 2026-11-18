@@ -398,6 +398,8 @@ def prepare(repo, out, va=None, repeats=3, minimum=7, seed=20261118,
             "original_cpp_sha256":hashlib.sha256(original.encode()).hexdigest(),
             "repeats":repeats,"random_seed":seed,
             "model":"deepseek/deepseek-v4.1-flash-1017","provider":"sail-research",
+            "tooling_sha256":{name.as_posix():_tool_hash(seed_tree/name)
+                              for name in (ENTRY,RUNNER,RETRIEVAL)},
             "arms":order,
             "notes":"No paid calls performed; each run creates an isolated tree."})
         print(f"Prepared {len(order)} randomized, isolated test slots for {va}.")
@@ -473,6 +475,123 @@ def _python(trial):
     return preferred if preferred.is_file() else Path(sys.executable)
 
 
+def _tool_hash(path):
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _seed_tooling(out, plan):
+    """Fail before cloning or spending if the seed lacks its own safe launcher."""
+    seed=out/"seed"
+    for name in (ENTRY,RUNNER,RETRIEVAL):
+        file=seed/name
+        if not file.is_file() or file.is_symlink():
+            raise RuntimeError(
+                f"Benchmark seed missing an isolated tool: {name}. "
+                "Run: python3 brain_ablation.py repair-seed --out "+str(out))
+    runner=(seed/RUNNER).read_text(encoding="utf-8")
+    if ("brain_trial_entry.py query" not in runner or
+            ".venv/bin/python work/scratch/brain_trial_query.py --text" in runner):
+        raise RuntimeError(
+            "The benchmark seed contains the obsolete Brain query entrypoint. "
+            "Run: python3 brain_ablation.py repair-seed --out "+str(out))
+    expected=plan.get("tooling_sha256",{})
+    for name in (ENTRY,RUNNER,RETRIEVAL):
+        key=name.as_posix()
+        if key in expected and _tool_hash(seed/name)!=expected[key]:
+            raise RuntimeError(f"Benchmark seed tooling changed after preparation: {key}")
+
+
+def repair_seed(out):
+    """Upgrade ONLY benchmark-owned tooling in an unmeasured saved seed.
+
+    A trial previously started from this seed can have a missing entrypoint
+    even after updating the orchestrator. Preserve all trial copies/logs and
+    the frozen knowledge snapshots. Refuse repair if a real run ever began.
+    """
+    out=out.resolve()
+    planpath=out/"plan.json"
+    plan=json.loads(planpath.read_text(encoding="utf-8"))
+    seed=out/"seed"
+    if not seed.is_dir() or not (seed/OPS).is_file() or not (seed/KNOW).is_file():
+        raise RuntimeError("Prepared benchmark seed or SQLite snapshots missing")
+    if any(i.get("state") not in {"prepared","error","blocked","interrupted"}
+           for i in plan["arms"]):
+        raise RuntimeError("Cannot change benchmark tooling after a recorded or running trial")
+    expected=f"// @ {plan['target']}\n// Controlled blank-slate experiment."
+    target=seed/slice_path(plan["target"])
+    if not target.is_file() or not target.read_text(encoding="utf-8").startswith(expected):
+        raise RuntimeError("Prepared target source changed; seed repair rejected")
+    with sqlite3.connect(f"file:{(seed/OPS).resolve()}?mode=ro",uri=True) as db:
+        if db.execute("SELECT COUNT(*) FROM attempts WHERE va=?",(plan["target"],)).fetchone()[0]:
+            raise RuntimeError("Target attempts found in seed; refusing repair")
+    # Include retired attempts named in invalid_history, not just current slots.
+    seen=set()
+    for item in plan["arms"]:
+        for name in [item["name"],*(x["name"] for x in item.get("invalid_history",[]))]:
+            if name in seen:
+                raise RuntimeError("Duplicate trial sandbox name in plan")
+            seen.add(name)
+            trial=out/"trials"/name
+            if not trial.exists():
+                # Unstarted slots have no trial directory.
+                if name==item["name"] and item["state"]!="prepared":
+                    raise RuntimeError(f"Invalid trial missing its evidence directory: {name}")
+                continue
+            if not trial.is_dir() or not (trial/OPS).is_file():
+                raise RuntimeError(f"Cannot audit failed trial: {name}")
+            with sqlite3.connect(f"file:{(trial/OPS).resolve()}?mode=ro",uri=True) as db:
+                attempts=db.execute("SELECT COUNT(*) FROM attempts WHERE va=?",
+                                    (plan["target"],)).fetchone()[0]
+                charged=db.execute("SELECT COALESCE(SUM(last_usage-baseline_usage),0) "
+                                   "FROM run_budgets").fetchone()[0]
+            logs=trial/WORK/"logs"
+            audit=trial/WORK/"brain-queries.jsonl"
+            source=trial/slice_path(plan["target"])
+            if (attempts or float(charged or 0)>0.000001 or
+                    (logs.is_dir() and any(logs.rglob("*.jsonl"))) or
+                    (audit.is_file() and audit.stat().st_size>0) or
+                    not source.is_file() or
+                    not source.read_text(encoding="utf-8").startswith(expected)):
+                raise RuntimeError(
+                    f"Trial {name} has possible agent activity. "
+                    "Cannot modify shared seed after an experimental run.")
+    runner=seed/RUNNER
+    query=seed/RETRIEVAL
+    launcher=seed/ENTRY
+    if any(p.is_symlink() for p in (runner,query,launcher)):
+        raise RuntimeError("Benchmark tooling must never be symlinks")
+    code=runner.read_text(encoding="utf-8")
+    old_cmd=".venv/bin/python work/scratch/brain_trial_query.py --text"
+    new_cmd=".venv/bin/python brain_trial_entry.py query --text"
+    if old_cmd in code:
+        if code.count(old_cmd)!=1 or new_cmd in code:
+            raise RuntimeError("Unexpected Brain query prompt, refusing ambiguous repair")
+        code=code.replace(old_cmd,new_cmd)
+    if ("if os.environ.get('SAD_BENCH_ACTIVE')" not in code or
+            code.count(new_cmd)!=1):
+        raise RuntimeError("Runner lacks the expected benchmark prompt; refusing repair")
+    # Apply only benchmark-owned scripts. SQLite, user source, task/checker code,
+    # archived evidence, seeds and existing trial data remain unchanged.
+    tmp=runner.with_name(runner.name+".repair.tmp")
+    tmp.write_text(code,encoding="utf-8")
+    tmp.chmod(runner.stat().st_mode & 0o777)
+    tmp.replace(runner)
+    for src,dst in ((ENTRY_SOURCE,launcher),(RETRIEVAL_SOURCE,query)):
+        if not src.is_file():
+            raise RuntimeError(f"Missing benchmark tool in SAD checkout: {src}")
+        tmp=dst.with_name(dst.name+".repair.tmp")
+        shutil.copy2(src,tmp)
+        tmp.replace(dst)
+    plan["tooling_sha256"]={name.as_posix():_tool_hash(seed/name)
+                             for name in (ENTRY,RUNNER,RETRIEVAL)}
+    plan["tooling_repair_utc"]=now()
+    write_json(planpath,plan)
+    _seed_tooling(out,plan)
+    print("Benchmark seed repaired: launcher installed and Brain query path updated.")
+    print("Frozen SQLite databases, treatment assignments and failed trial logs unchanged.")
+    print("The next action is retry-invalid (no paid inference), then run-next.")
+
+
 def run_next(out, execute=False, budget=DEFAULT_BUDGET, minutes=20):
     out=out.resolve()
     planpath=out/"plan.json"
@@ -488,6 +607,7 @@ def run_next(out, execute=False, budget=DEFAULT_BUDGET, minutes=20):
         return
     if not 0.10<=budget<=25 or not 1<=minutes<=180:
         raise ValueError("Budget must be $0.10-$25 and minutes 1-180")
+    _seed_tooling(out,plan)
     env_key=os.environ.get("OPENROUTER_API_KEY","").strip()
     if not env_key:
         keyfile=Path.home()/".config/spore-agentic-decompiler/openrouter.key"
@@ -730,6 +850,9 @@ def main(argv=None):
     r.add_argument("--minutes",type=int,default=20)
     o=sub.add_parser("report",help="Read-only comparison from independently checked trial logs")
     o.add_argument("--out",type=Path,default=Path.home()/"sad-brain-benchmark")
+    seed_fix=sub.add_parser("repair-seed",
+        help="Fix missing benchmark-only tools in a frozen seed with no measured trials")
+    seed_fix.add_argument("--out",type=Path,default=Path.home()/"sad-brain-benchmark")
     retry=sub.add_parser("retry-invalid",help="Requeue an auditable zero-evidence infrastructure failure")
     retry.add_argument("--out",type=Path,default=Path.home()/"sad-brain-benchmark")
     retry.add_argument("--name",help="The prior invalid sandbox name, if more than one")
@@ -748,6 +871,8 @@ def main(argv=None):
         report(a.out)
     elif a.command=="retry-invalid":
         retry_invalid(a.out,a.name)
+    elif a.command=="repair-seed":
+        repair_seed(a.out)
 
 
 if __name__=="__main__":
