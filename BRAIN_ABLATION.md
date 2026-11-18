@@ -69,6 +69,12 @@ The existing OpenRouter key's provider-side spending limit remains the actual ha
 
 The command runs exactly one randomized treatment each invocation. Before any paid request in a knowledge arm, a copied offline embedding service must reach ready status. It also refuses to resume an existing sandbox silently. There is no auto-purchasing from prepare, candidates, report, or the dry-run version of run-next.
 
+### Python 3.14 `dis.py` collision
+
+The Spore checkout contains `work/scratch/dis.py`, which is a project helper and **not** Python's standard-library `dis`. Running `python work/scratch/spore_first_pass_sqlite.py run` directly puts that helper's directory at the front of `sys.path`. Under Python 3.14, `argparse` imports `inspect` and `dis` during CLI setup, so this can exit before the agent is started with `ValueError: invalid literal for int() with base 16: 'run'`.
+
+The benchmark now launches the runner, Brain queries and memory service through the small `brain_trial_entry.py` script at the root of **each isolated trial**. It appends `work/scratch` after stdlib and site-packages, and executes the actual original script via `runpy.run_path`. This preserves original runner arguments and working directory while keeping Python's own `dis` ahead of the Spore helper. The production checkout and `work/scratch/dis.py` remain unchanged.
+
 ### Infrastructure failures and retry
 
 A nonzero runner exit or a zero exit without a recorded attempt is an **invalid trial**, not a FAIL or a zero MATCH in the experimental denominator. The runner prints a bounded diagnostic tail. The complete `benchmark-run.log` is retained in the original sandbox:

@@ -32,6 +32,8 @@ RETRIEVAL = Path("work/scratch/brain_trial_query.py")
 CONFIG = WORK / "brain_trial.json"
 SOURCE_DIR = Path(__file__).resolve().parent
 RETRIEVAL_SOURCE = SOURCE_DIR / "brain_ablation_query.py"
+ENTRY = Path("brain_trial_entry.py")
+ENTRY_SOURCE = SOURCE_DIR / ENTRY.name
 DEFAULT_BUDGET = 0.50
 
 
@@ -204,7 +206,7 @@ def _patch_runner(path):
 CONTROLLED RESEARCH EXPERIMENT: Start this function from its blank source slice.
 Before proposing your first compiler hypothesis, query the Brain with a specific
 technical question using:
-.venv/bin/python work/scratch/brain_trial_query.py --text "MSVC x86 stack frame and register allocation"
+.venv/bin/python brain_trial_entry.py query --text "MSVC x86 stack frame and register allocation"
 You may query the Brain repeatedly using your own technical questions.
 Some control conditions return no useful knowledge. Treat this as normal.
 Never look up knowledge by the target function address. Do not inspect
@@ -382,6 +384,7 @@ def prepare(repo, out, va=None, repeats=3, minimum=7, seed=20261118,
         _mask_memory(seed_tree/KNOW,va,alias)
         _patch_runner(seed_tree/RUNNER)
         shutil.copy2(RETRIEVAL_SOURCE,seed_tree/RETRIEVAL)
+        shutil.copy2(ENTRY_SOURCE,seed_tree/ENTRY)
         rng=random.Random(seed)
         order=[{"arm":arm,"repeat":i+1} for i in range(repeats) for arm in ARMS]
         rng.shuffle(order)
@@ -417,7 +420,8 @@ def _start_vectors(trial, python):
     logfile=trial/WORK/"benchmark-memory-service.log"
     logfile.parent.mkdir(parents=True,exist_ok=True)
     with logfile.open("wb") as output:
-        process=subprocess.Popen([str(python),str(script),"--repo",str(trial),"serve"],
+        process=subprocess.Popen([str(python),str(trial/ENTRY),"memory",
+                                  "--repo",str(trial),"serve"],
                                   cwd=trial,stdin=subprocess.DEVNULL,stdout=output,
                                   stderr=subprocess.STDOUT,start_new_session=True,
                                   env={**os.environ,"PYTHONDONTWRITEBYTECODE":"1"})
@@ -427,7 +431,8 @@ def _start_vectors(trial, python):
             raise RuntimeError("Vector service failed; inspect "+str(logfile))
         if sock.is_socket():
             try:
-                check=subprocess.run([str(python),str(script),"--repo",str(trial),"status"],
+                check=subprocess.run([str(python),str(trial/ENTRY),"memory",
+                                      "--repo",str(trial),"status"],
                                      cwd=trial,capture_output=True,text=True,timeout=5)
                 state=json.loads(check.stdout)
                 if state.get("service_online") and not state.get("restart_required"):
@@ -501,7 +506,7 @@ def run_next(out, execute=False, budget=DEFAULT_BUDGET, minutes=20):
         item["state"]="running"
         item["started"]=now()
         write_json(planpath,plan)
-        cmd=[str(python),str(trial/RUNNER),"run",
+        cmd=[str(python),str(trial/ENTRY),"runner","run",
              "--only-va",plan["target"],"--passes","1","--max-functions","1",
              "--backend","openrouter","--reasoning","high",
              "--quota-wait","0","--provider-retries","0",

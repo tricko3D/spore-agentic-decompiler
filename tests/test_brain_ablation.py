@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import subprocess
 from pathlib import Path
 import sqlite3
 import sys
@@ -95,6 +96,40 @@ def run_one():
             db.execute("INSERT INTO compiler_technique_links VALUES(?,?,?,?)",
                        (10,1,f"Observed at {VA}","stack-frame mismatch"))
 
+    def test_safe_entrypoint_does_not_shadow_python_dis_module(self):
+        workspace=self.base/"collision"
+        scratch=workspace/"work/scratch"
+        scratch.mkdir(parents=True)
+        (workspace/"brain_trial_entry.py").write_text(
+            (ROOT/"brain_trial_entry.py").read_text(encoding="utf-8"),
+            encoding="utf-8")
+        (scratch/"dis.py").write_text(
+            "raise RuntimeError('Spore dis.py shadowed Python stdlib')\n")
+        (scratch/"spore_test_module.py").write_text("VALUE=123\n")
+        script=(
+            "import argparse\n"
+            "import inspect\n"
+            "import dis\n"
+            "import spore_test_module\n"
+            "assert spore_test_module.VALUE==123\n"
+            "assert 'work/scratch/dis.py' not in str(dis.__file__)\n"
+            "parser=argparse.ArgumentParser()\n"
+            "parser.add_argument('--mode')\n"
+            "assert parser.parse_args().mode=='smoke'\n"
+            "print('safe-stdlib-and-local-helper')\n"
+        )
+        for alias, filename in (
+            ("runner","spore_first_pass_sqlite.py"),
+            ("query","brain_trial_query.py"),
+            ("memory","spore_collective_memory.py")):
+            (scratch/filename).write_text(script,encoding="utf-8")
+            process=subprocess.run(
+                [sys.executable,str(workspace/"brain_trial_entry.py"),
+                 alias,"--mode","smoke"],cwd=workspace,capture_output=True,text=True)
+            self.assertEqual(process.returncode,0,
+                             msg=f"{alias}: {process.stdout} {process.stderr}")
+            self.assertIn("safe-stdlib-and-local-helper",process.stdout)
+
     def test_benchmark_query_tool_compiles_and_rejects_direct_address_search(self):
         import ast
         from types import ModuleType
@@ -132,7 +167,8 @@ def run_one():
         self.assertIn("blank-slate",(self.destination/"seed"/bench.slice_path(VA)).read_text())
         copied=(self.destination/"seed"/bench.RUNNER).read_text()
         self.assertIn("if not os.environ.get('SAD_BENCH_ACTIVE')",copied)
-        self.assertIn("brain_trial_query.py",copied)
+        self.assertIn("brain_trial_entry.py query",copied)
+        self.assertTrue((self.destination/"seed"/bench.ENTRY).is_file())
         with sqlite3.connect(self.source/bench.OPS) as original:
             self.assertEqual(original.execute(
                 "SELECT COUNT(*) FROM attempts WHERE va=?",(VA,)).fetchone()[0],7)
@@ -224,6 +260,8 @@ def run_one():
         before=(self.source/bench.slice_path(VA)).read_bytes()
         def fake_agent(cmd,**kwargs):
             self.assertIn("--only-va",cmd)
+            self.assertEqual(cmd[1],str(kwargs["cwd"]/bench.ENTRY))
+            self.assertEqual(cmd[2],"runner")
             self.assertEqual(cmd[cmd.index("--only-va")+1],VA)
             self.assertEqual(kwargs["env"]["OPENROUTER_API_KEY"],"mock-not-a-real-key")
             self.assertEqual(kwargs["env"]["SAD_BENCH_ACTIVE"],"1")
