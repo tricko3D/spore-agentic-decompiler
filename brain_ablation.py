@@ -112,14 +112,81 @@ def _copy_ignore(base):
     return ignored
 
 
-def _check_symlinks(tree, original):
-    # Shared virtualenv is an explicit exception, and is never modified.
+def _relocate_symlinks(tree, source):
+    """Make copied in-repo links resolve inside their new checkout, not into source.
+
+    Both the seed and every trial need this. Rewriting seed links alone is
+    insufficient when a copied trial contains an absolute link back to seed.
+    External links are not followed during copying and are left unchanged.
+    """
+    tree=tree.resolve()
+    source=source.resolve()
+    remapped=0
+    for path in tree.rglob("*"):
+        if not path.is_symlink():
+            continue
+        if path.relative_to(tree) in {Path(".venv"), WORK/"memory/.venv"}:
+            # Explicitly shared, installed runtime dependencies.
+            continue
+        try:
+            target=path.resolve(strict=False)
+        except (OSError,RuntimeError) as exc:
+            raise RuntimeError(f"Invalid symlink in benchmark copy: {path}") from exc
+        if not target.is_relative_to(source):
+            continue
+        local=tree/target.relative_to(source)
+        if not local.exists():
+            raise RuntimeError(
+                f"Cannot isolate symlink {path.relative_to(tree)}: copied target "
+                f"{local.relative_to(tree)} is missing (possibly ignored during copy). "
+                "No experiment was started.")
+        relative=os.path.relpath(local,start=path.parent)
+        directory=local.is_dir()
+        path.unlink()  # Never modify the original referent.
+        path.symlink_to(relative,target_is_directory=directory)
+        remapped+=1
+    # Fail closed if any link was unexpectedly left pointing into source.
     for path in tree.rglob("*"):
         if path.is_symlink() and path.relative_to(tree) not in {
-                Path(".venv"),WORK/"memory/.venv"}:
-            resolved=path.resolve()
-            if resolved.is_relative_to(original):
-                raise RuntimeError(f"Source symlink escapes the experiment into the live checkout: {path}")
+                Path(".venv"), WORK/"memory/.venv"}:
+            if path.resolve(strict=False).is_relative_to(source):
+                raise RuntimeError(f"Unisolated source symlink: {path}")
+    return remapped
+
+
+def _validate_partial(repo, out, va, original):
+    """Resume only the exact pre-snapshot-copy failure state of prepare()."""
+    archive=out/"archive"
+    seed_tree=out/"seed"
+    required=[
+        archive/"spore.sqlite3", archive/"knowledge.sqlite3",
+        archive/"original-target.cpp", archive/"original-target.sha256",
+        archive/"target-attempts.json", seed_tree/RUNNER,
+        seed_tree/MEMORY, seed_tree/slice_path(va)
+    ]
+    if any(not p.is_file() for p in required):
+        raise RuntimeError("Partial preparation is missing required backups or seed files; "
+                           "keep this directory and start a new output directory")
+    if (out/"plan.json").exists() or (out/"trials").exists():
+        raise RuntimeError("Refusing to resume a finalized or trial-bearing experiment")
+    if (seed_tree/OPS).exists() or (seed_tree/KNOW).exists():
+        raise RuntimeError("Cannot resume after trial database installation; use a new directory")
+    digest=hashlib.sha256(original.encode()).hexdigest()
+    if archive.joinpath("original-target.sha256").read_text().strip()!=digest:
+        raise RuntimeError("Live target changed since the backup; refusing to mix source versions")
+    if archive.joinpath("original-target.cpp").read_text()!=original:
+        raise RuntimeError("Archived C++ differs from the live target")
+    if (seed_tree/slice_path(va)).read_text()!=original:
+        raise RuntimeError("Seed target differs from the archived C++; refusing unsafe resume")
+    if (seed_tree/RUNNER).read_bytes()!=(repo/RUNNER).read_bytes():
+        raise RuntimeError("Runner changed after failed copy; start a new experiment")
+    # Ensure the two WAL-consistent backups can be opened and contain the target.
+    with sqlite3.connect(f"file:{(archive/'spore.sqlite3').resolve()}?mode=ro",uri=True) as db:
+        if not db.execute("SELECT 1 FROM attempts WHERE va=? LIMIT 1",(va,)).fetchone():
+            raise RuntimeError("Partial operational backup lacks the target attempts")
+    with sqlite3.connect(f"file:{(archive/'knowledge.sqlite3').resolve()}?mode=ro",uri=True) as db:
+        db.execute("SELECT 1 FROM findings LIMIT 1").fetchone()
+    return seed_tree
 
 
 def _patch_runner(path):
@@ -226,6 +293,7 @@ def _clone(seed, destination):
     if destination.exists():
         raise FileExistsError(f"Experiment sandbox exists: {destination}")
     shutil.copytree(seed,destination,symlinks=True,ignore=_copy_ignore(seed))
+    _relocate_symlinks(destination,seed)
     # Ignore logic removes SQLite files; install immutable prepared snapshots.
     shutil.copy2(seed/OPS,destination/OPS)
     if (seed/KNOW).is_file():
@@ -239,12 +307,15 @@ def _clone(seed, destination):
             os.readlink(seed/WORK/"memory/.venv"),target_is_directory=True)
 
 
-def prepare(repo, out, va=None, repeats=3, minimum=7, seed=20261118):
+def prepare(repo, out, va=None, repeats=3, minimum=7, seed=20261118,
+            resume_partial=False):
     repo=repo.resolve();out=out.resolve()
     if out==repo or out.is_relative_to(repo) or repo.is_relative_to(out):
         raise ValueError("Experiment directory must be outside the live repo and its ancestors")
-    if out.exists():
+    if out.exists() and not resume_partial:
         raise FileExistsError("Output directory exists; refusing to overwrite a previous experiment")
+    if not out.exists() and resume_partial:
+        raise FileNotFoundError("No partial benchmark directory to resume")
     found=candidates(repo,minimum)
     if va:
         va=canonical(va)
@@ -265,25 +336,33 @@ def prepare(repo, out, va=None, repeats=3, minimum=7, seed=20261118):
     others=set(re.findall(r"(?mi)^\s*//\s*@\s*(0x[0-9a-f]{8})",original))
     if others-{va}:
         raise ValueError("Source contains other function anchors; refusing to erase a shared file")
-    out.mkdir(parents=True,exist_ok=False)
+    if resume_partial:
+        seed_tree=_validate_partial(repo,out,va,original)
+    else:
+        out.mkdir(parents=True,exist_ok=False)
     try:
         archive=out/"archive"
-        archive.mkdir()
-        snapshot_db(repo/OPS,archive/"spore.sqlite3")
-        snapshot_db(repo/KNOW,archive/"knowledge.sqlite3")
-        (archive/"original-target.cpp").write_text(original,encoding="utf-8")
-        (archive/"original-target.sha256").write_text(
-            hashlib.sha256(original.encode()).hexdigest()+"\n")
-        # These are outside every agent workspace, immutable experiment provenance.
-        with sqlite3.connect(archive/"spore.sqlite3") as con:
-            con.row_factory=sqlite3.Row
-            history=[dict(x) for x in con.execute(
-                "SELECT * FROM attempts WHERE va=? ORDER BY id",(va,))]
-        write_json(archive/"target-attempts.json",history)
-        seed_tree=out/"seed"
-        print("Copying entire checkout into an isolated seed:",seed_tree,flush=True)
-        shutil.copytree(repo,seed_tree,symlinks=True,ignore=_copy_ignore(repo))
-        _check_symlinks(seed_tree,repo)
+        if not resume_partial:
+            archive.mkdir()
+            snapshot_db(repo/OPS,archive/"spore.sqlite3")
+            snapshot_db(repo/KNOW,archive/"knowledge.sqlite3")
+            (archive/"original-target.cpp").write_text(original,encoding="utf-8")
+            (archive/"original-target.sha256").write_text(
+                hashlib.sha256(original.encode()).hexdigest()+"\n")
+            # These are outside every agent workspace, immutable experiment provenance.
+            with sqlite3.connect(archive/"spore.sqlite3") as con:
+                con.row_factory=sqlite3.Row
+                history=[dict(x) for x in con.execute(
+                    "SELECT * FROM attempts WHERE va=? ORDER BY id",(va,))]
+            write_json(archive/"target-attempts.json",history)
+            seed_tree=out/"seed"
+            print("Copying entire checkout into an isolated seed:",seed_tree,flush=True)
+            shutil.copytree(repo,seed_tree,symlinks=True,ignore=_copy_ignore(repo))
+        else:
+            print("Resuming validated partial seed without recopying:",seed_tree,flush=True)
+        remapped=_relocate_symlinks(seed_tree,repo)
+        if remapped:
+            print(f"Relocated {remapped} in-repository symlink(s) into isolated seed.",flush=True)
         if (repo/".venv").is_dir():
             (seed_tree/".venv").symlink_to(repo/".venv",target_is_directory=True)
         if (repo/WORK/"memory/.venv").is_dir():
@@ -543,6 +622,8 @@ def main(argv=None):
     p.add_argument("--repeats",type=int,default=3)
     p.add_argument("--min-failures",type=int,default=7)
     p.add_argument("--seed",type=int,default=20261118)
+    p.add_argument("--resume-partial",action="store_true",
+                   help="Validate and resume a pre-database partial preparation without recopying")
     r=sub.add_parser("run-next",help="Run one randomized arm, paid only with --execute")
     r.add_argument("--out",type=Path,default=Path.home()/"sad-brain-benchmark")
     r.add_argument("--execute",action="store_true")
@@ -557,7 +638,8 @@ def main(argv=None):
     elif a.command=="prepare":
         if not 1<=a.repeats<=10 or a.min_failures<1:
             parser.error("repeats must be 1-10 and min-failures >= 1")
-        prepare(a.repo,a.out,a.va,a.repeats,a.min_failures,a.seed)
+        prepare(a.repo,a.out,a.va,a.repeats,a.min_failures,a.seed,
+                resume_partial=a.resume_partial)
     elif a.command=="run-next":
         run_next(a.out,a.execute,a.budget,a.minutes)
     elif a.command=="report":

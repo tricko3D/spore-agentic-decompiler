@@ -154,6 +154,62 @@ def run_one():
             self.assertNotIn(VA,mem.execute(
                 "SELECT title FROM compiler_techniques WHERE id=10").fetchone()[0])
 
+    def test_absolute_live_symlink_retargeted_into_seed_and_each_trial(self):
+        # The real Spore checkout has absolute links such as
+        # work/match/scratch_s0088b250_inc/freetype -> /.../spore-decomp/...
+        source_target=self.source/"src/engine/freetype"
+        source_target.mkdir(parents=True)
+        (source_target/"test.h").write_text("original source\n")
+        link_rel=Path("work/match/scratch_s0088b250_inc/freetype")
+        live_link=self.source/link_rel
+        live_link.parent.mkdir(parents=True)
+        live_link.symlink_to(source_target,target_is_directory=True)
+        bench.prepare(self.source,self.destination,repeats=1)
+        in_seed=self.destination/"seed"/link_rel
+        self.assertTrue(in_seed.is_symlink())
+        self.assertEqual(in_seed.resolve(),self.destination/"seed/src/engine/freetype")
+        self.assertFalse(in_seed.resolve().is_relative_to(self.source))
+        trial=self.destination/"trials/copied"
+        bench._clone(self.destination/"seed",trial)
+        in_trial=trial/link_rel
+        self.assertTrue(in_trial.is_symlink())
+        self.assertEqual(in_trial.resolve(),trial/"src/engine/freetype")
+        (in_trial/"new-in-trial.h").write_text("trial only\n")
+        self.assertFalse((source_target/"new-in-trial.h").exists())
+        self.assertFalse((self.destination/"seed/src/engine/freetype/new-in-trial.h").exists())
+
+    def test_resume_partial_symlink_failure_without_recoping_checkout(self):
+        source_target=self.source/"src/freetype"
+        source_target.mkdir(parents=True)
+        link=self.source/"work/match/headers/freetype"
+        link.parent.mkdir(parents=True)
+        link.symlink_to(source_target,target_is_directory=True)
+        with mock.patch.object(bench,"_relocate_symlinks",
+                               side_effect=RuntimeError("simulate old symlink guard")):
+            with self.assertRaisesRegex(RuntimeError,"simulate old symlink guard"):
+                bench.prepare(self.source,self.destination,repeats=1)
+        self.assertTrue((self.destination/"archive/spore.sqlite3").is_file())
+        self.assertTrue((self.destination/"seed"/link.relative_to(self.source)).is_symlink())
+        self.assertFalse((self.destination/"plan.json").exists())
+        with mock.patch.object(bench.shutil,"copytree",
+                               side_effect=AssertionError("Cannot recopy checkout on resume")):
+            bench.prepare(self.source,self.destination,repeats=1,resume_partial=True)
+        copied=self.destination/"seed"/link.relative_to(self.source)
+        self.assertEqual(copied.resolve(),self.destination/"seed/src/freetype")
+        self.assertTrue((self.destination/"plan.json").is_file())
+        self.assertEqual((self.source/bench.slice_path(VA)).read_text(),self.original)
+
+    def test_resume_partial_refuses_changed_source_without_touching_copy(self):
+        with mock.patch.object(bench,"_relocate_symlinks",
+                               side_effect=RuntimeError("simulate prior failure")):
+            with self.assertRaises(RuntimeError):
+                bench.prepare(self.source,self.destination,repeats=1)
+        modified=(self.source/bench.slice_path(VA))
+        modified.write_text("// changed by a live agent\n")
+        with self.assertRaisesRegex(RuntimeError,"Live target changed"):
+            bench.prepare(self.source,self.destination,repeats=1,resume_partial=True)
+        self.assertFalse((self.destination/"plan.json").exists())
+
     def test_dry_run_cannot_charge_or_start_agent(self):
         bench.prepare(self.source,self.destination,repeats=1)
         with mock.patch.object(bench.subprocess,"run",

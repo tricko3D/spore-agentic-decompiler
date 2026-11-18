@@ -37,6 +37,19 @@ Alternatively specify `--va 0xXXXXXXXX` in the prepare command after identifying
 
 Prepare uses SQLite's online backup API to archive the WAL-consistent original `spore.sqlite3` and `knowledge.sqlite3`. It also archives the original C++ slice, its SHA-256 hash and target history. It copies the upstream checkout to a seed under the experiment directory, removes old operational attempts/sessions **only in that copy**, blanks the dedicated target source **only in that copy**, masks the target address in the copied knowledge DB and installs a benchmark-specific Brain query tool. Other stored technical evidence and vectors are kept intact. It never writes to the live Spore checkout and never calls an LLM.
 
+Internal symlinks, including absolute links from `work/match` back to files in the source checkout, are retargeted to equivalent paths inside the isolated seed. The same relocation is checked again for every trial clone. If a symlink points to a source file that was excluded from the copy, preparation stops rather than leaving a write-through path into the live checkout.
+
+**Recovering an interrupted preparation:** If preparation previously failed at the symlink safety check after copying the checkout, you can reuse its existing WAL-consistent backups and full seed copy without running another expensive copy:
+
+```bash
+cd ~/spore-agentic-decompiler
+git pull --ff-only
+python3 brain_ablation.py prepare --repo ~/spore-decomp \
+  --out ~/sad-brain-benchmark --repeats 3 --resume-partial
+```
+
+This only resumes a specifically validated pre-database-install state with the original target source, original runner and archives unchanged. It refuses to modify completed experiments, partially executed trials or a changed source checkout. It does not launch any paid runs.
+
 A full checkout is copied (excluding ephemeral logs, runtime files, prior investigation snapshots, caches, VCS metadata and live SQLite/WAL files). The installed decompiler Python virtualenv and the separate FastEmbed/sqlite-vec virtualenv under memory/.venv are shared dependency symlinks, not experiment source trees. The model weights and vector database are copied independently. Each trial receives its **own independent copy** of the seed and its own databases, agent sessions, source and logs. No Git worktrees or hardlinks point agent edits into live source. Expect substantial disk usage and copy time, especially for many trials.
 
 The plan randomizes the four arm orders per repeat using a recorded seed, and assigns opaque trial directory names to avoid advertising the treatment in the agent's working directory or process environment. It defaults to three repeats (12 independent trials). All experiment output is in `~/sad-brain-benchmark`, never the source repository.
