@@ -81,7 +81,7 @@ class CompactUIRegression(unittest.TestCase):
         self.assertIn("navigate('knowledge')",self.app)
         self.assertIn('className="hud-spacer"',self.app)
         self.assertIn('<AgentDock snapshot={snapshot}',self.app)
-        self.assertIn('className="hud-connection "',self.app)
+        self.assertIn("'hud-connection '+connection",self.app)
         self.assertIn('CONNECTED',self.app)
         self.assertIn('DISCONNECTED',self.app)
         self.assertIn('className="control-dock"',self.agent_dock)
