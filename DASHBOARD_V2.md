@@ -36,6 +36,40 @@ Node.js, Vite or npm process is needed on the WSL runtime machine.
 Dashboard HTML, CSS and JavaScript serve from 127.0.0.1:8765. The UI makes
 same-origin API requests, and no public API port is introduced.
 
+## Compact styling and scroll performance
+
+The dashboard has a compact density override in
+dashboard_web/src/compact.css, imported after the original component styles.
+It deliberately retains the original SAD instrument look: steel-blue rails,
+rounded mission panels, Spore-style status colors and green primary actions.
+
+The first React implementation was too spacious and expensive to scroll on
+large Windows/Chromium displays. The compact mode addresses this structurally:
+
+- Removes fixed-background wallpaper repainting and panel backdrop blur.
+- Restores a viewport-bounded mission-control shell on sufficiently tall
+  desktop displays, with scroll limited to necessary data areas.
+- Keeps 16 agent cards small and fixed-height instead of stretching the grid
+  to the entire document's height.
+- Moves launch/stop controls above the main explorer to remain visible.
+- Replaces the width-scaled SVG graph with a bounded, clickable source-link
+  adjacency map. Selecting a technique reveals the investigations supporting
+  that specific observation, with explicit access to full details.
+- Loads only the active React view and pauses its requests when it is
+  unmounted or the browser is hidden. Polling is serialized, abortable and
+  cannot pile up overlapping requests.
+- Uses local CSS and static assets only, with no animations or layout zoom
+  transforms for the graphs and data tables.
+
+The original dashboard remains at /legacy for visual reference. The compact
+patch does not modify worker operations, evidence storage, model selection,
+paid OpenRouter requests or the API authorization boundary.
+
+The fast regression suite runs tests/test_dashboard_compact.py alongside the
+React/TypeScript build and existing backend security checks. Performance
+should still be verified in a real Windows browser, because these tests
+cannot measure GPU compositor frame time.
+
 ## Run
 
 From the SAD checkout:
