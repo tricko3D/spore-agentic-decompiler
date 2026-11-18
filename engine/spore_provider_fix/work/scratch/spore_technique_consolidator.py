@@ -449,11 +449,18 @@ def _settle(con, request_id, usage):
 def _claim(con):
     with con:
         row = con.execute("""SELECT q.finding_id,q.source_hash
-            FROM technique_queue q WHERE
+            FROM technique_queue q
+            JOIN findings f ON f.id=q.finding_id WHERE
               (q.state='pending' OR
                 (q.state='claimed' AND q.lease_utc < ?))
               AND q.failures < ?
-            ORDER BY q.finding_id LIMIT 1""",
+            ORDER BY
+              (CASE WHEN LENGTH(f.summary)>=120 THEN 1 ELSE 0 END) DESC,
+              (SELECT COUNT(*) FROM finding_experiments e
+                WHERE e.finding_id=q.finding_id) DESC,
+              f.verified_match DESC,
+              q.finding_id
+            LIMIT 1""",
             (now(), MAX_RETRIES)).fetchone()
         if not row:
             return None
