@@ -229,7 +229,7 @@ def ingest(repo, va, pass_number, status, *, note, checker, evidence_path="", lo
         f"Independent checker: {verdict}. "
         f"Actual checker experiments: {brief}. "
         f"Curated hypotheses: {kept}. Source delta: {diff}. "
-        f"Locally verified source excerpt (only for MATCH): {matched_cpp}", MAX_DOC)
+        f"Local source excerpt (function has a recorded MATCH; source may have changed): {matched_cpp}", MAX_DOC)
     summary = observation or verdict
     digest = hashlib.sha256((title + summary + details).encode("utf-8")).hexdigest()
     rel = str(safe.relative_to(Path(repo).expanduser().resolve())) if safe else ""
