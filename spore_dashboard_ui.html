@@ -1032,7 +1032,7 @@ function missionSelection(){
 function scheduleMissionPreview(){
  if(!CONTROL||mutating||commandPhase==='starting'||commandPhase==='running'||commandPhase==='stopping'||runCoordinatorActive(lastSnapshot))return;
  const selected=missionSelection(),key=selected.module+'|'+(selected.module==='__claimed__'?selected.claim_user:'')+'|'+selected.workers;
- if(selected.module==='__claimed__'&&!selected.claim_user){
+ if(selected.module==='__claimed__'&&(!selected.claim_user||!claimUsersReady)){
   previewKey='';previewState=null;
   if(previewTimer)clearTimeout(previewTimer);
   return;
@@ -1136,9 +1136,9 @@ function renderMission(d){
  set('missionPolicy',allowText+'. MATCH, SKIP and already manifested functions are excluded. Matching stops immediately on success.'+caveat);
  const launch=$('runToggle');
  if(launch.dataset.mode==='launch'){
-  const missing=choosingClaimant&&!claimUser;
+  const missing=choosingClaimant&&(!claimUser||!claimUsersReady);
   launch.disabled=missing;
-  launch.title=missing?'Select a GitHub claimant before launching':'';
+  launch.title=missing?'Select a current GitHub claimant before launching':'';
  }
 }
 function runCoordinatorActive(d){
@@ -1289,8 +1289,8 @@ $('controls').addEventListener('submit',e=>{
   return;
  }
  if(mode!=='launch')return;
- if(missionSelection().module==='__claimed__'&&!claimUser){
-  set('controlMessage','Select a GitHub claimant before launching.');
+ if(missionSelection().module==='__claimed__'&&(!claimUser||!claimUsersReady)){
+  set('controlMessage','Select a current GitHub claimant before launching.');
   return;
  }
  control('start',{
