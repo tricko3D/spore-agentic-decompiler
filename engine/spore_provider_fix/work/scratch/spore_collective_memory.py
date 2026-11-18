@@ -47,6 +47,7 @@ _evidence_spec = _evidence_util.spec_from_file_location(
 evidence = _evidence_util.module_from_spec(_evidence_spec)
 _evidence_spec.loader.exec_module(evidence)
 
+PROTOCOL = 2
 MODEL = "BAAI/bge-small-en-v1.5"
 DIM = 384
 MAX_DOC = 1800
@@ -433,8 +434,10 @@ def query(repo, text, limit=4, verified_only=False):
         return []
     remote = request(repo, {"method": "query", "query": text, "top": limit,
                             "verified_only": bool(verified_only)})
-    if remote is not None:
+    if remote is not None and remote.get("protocol") == PROTOCOL:
         return remote.get("results", [])
+    # A stale daemon may still be running the previous version of this file.
+    # Never silently return a different ranking/format after an upgrade.
     return lexical(repo, text, limit, verified_only=verified_only)
 
 
@@ -531,10 +534,11 @@ class Handler(socketserver.StreamRequestHandler):
             if method == "query":
                 text = str(req.get("query", ""))[:1800]
                 top = max(1, min(10, int(req.get("top", 4))))
-                result = {"results": self.server.service.search(
+                result = {"protocol": PROTOCOL, "results": self.server.service.search(
                     text, top, verified_only=bool(req.get("verified_only", False)))}
             elif method == "status":
-                result = {"ok": True, "model": MODEL, "vector_dim": DIM}
+                result = {"ok": True, "protocol": PROTOCOL,
+                          "model": MODEL, "vector_dim": DIM}
             else:
                 result = {"error": "Unknown method"}
         except (ValueError, TypeError, sqlite3.Error, RuntimeError) as exc:
@@ -582,7 +586,9 @@ def stats(repo):
         return {"installed": True, "findings": info[0],
                 "verified": info[1] or 0, "pending_embeddings": pending,
                 "service_online": service is not None,
-                "embedding_model": service.get("model") if service else None}
+                "embedding_model": service.get("model") if service else None,
+                "service_protocol": service.get("protocol") if service else None,
+                "restart_required": bool(service and service.get("protocol") != PROTOCOL)}
     finally:
         con.close()
 
