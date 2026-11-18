@@ -152,6 +152,7 @@ export default function Operations({active}:{active:boolean}){
    <Metric label="Run spend" value={money(budget.run_spend)} detail={'Limit '+money(budget.run_limit)}/>
   </div>
   <ErrorText error={error}/>
+  <LaunchDock snapshot={d} onUpdated={()=>{void refresh();void refreshTable()}}/>
   <div className="operations-layout">
    <div className="ops-left">
     <Panel title="Evolution progress" subtitle="Cumulative function outcomes and checked bytes">
@@ -216,7 +217,6 @@ export default function Operations({active}:{active:boolean}){
      {!d?.workers?.length&&<div className="empty">No worker activity recorded</div>}</div>
    </Panel>
   </div>
-  <LaunchDock snapshot={d} onUpdated={()=>{void refresh();void refreshTable()}}/>
   {detail&&<Details item={detail} onClose={()=>setDetail(null)}/>}
  </section>;
 }
