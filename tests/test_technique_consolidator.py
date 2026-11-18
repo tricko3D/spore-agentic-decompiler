@@ -139,6 +139,21 @@ class ConsolidationTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 tech._validate({"techniques":[proposal]},evidence,known)
 
+    def test_semantic_candidates_are_offered_as_possible_merges(self):
+        fake,_=self.fake_api()
+        tech.process(self.root,caller=fake,key="test")
+        prior=tech.search(self.root,"EAX register ABI",1)[0]["id"]
+        tech.memory.ingest(self.root,OTHER,1,"FAIL",
+                           note="This function has an unrelated generic description",
+                           checker="NO MATCH")
+        with mock.patch.object(tech.memory,"technique_query",
+                               return_value=[{"id":prior}]) as finder:
+            with tech.memory.connection(self.root) as con:
+                finding,evidence,known,prompt=tech.make_prompt(con,2,repo=self.root)
+        finder.assert_called_once()
+        self.assertIn(prior,{row["id"] for row in known})
+        self.assertIn("EXISTING TECHNIQUES",prompt)
+
     def test_source_version_change_requeues_and_invalidates_old_link(self):
         fake,_ = self.fake_api()
         tech.process(self.root,caller=fake,key="test")
