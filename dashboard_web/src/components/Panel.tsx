@@ -12,8 +12,10 @@ export function Metric({label,value,detail,tone=''}:{
 }){
  return <div className={'metric '+tone}><span>{label}</span><strong>{value}</strong><small>{detail||'\u00a0'}</small></div>;
 }
-export function Tag({value,tone}: {value:string;tone?:string}){
- return <span className={'tag '+(tone||value.toLowerCase().replace(/[^a-z0-9]+/g,'-'))}>{value}</span>;
+export function Tag({value,tone}: {value?:string|null;tone?:string}){
+ // Untrusted or incomplete legacy findings must never crash the whole view.
+ const label=typeof value==='string'&&value.trim()?value:'UNKNOWN';
+ return <span className={'tag '+(tone||label.toLowerCase().replace(/[^a-z0-9]+/g,'-'))}>{label}</span>;
 }
 export function Drawer({title,subtitle,onClose,children}:{title:string;subtitle?:string;onClose:()=>void;children:ReactNode}){
  return <div className="overlay" onMouseDown={e=>{if(e.target===e.currentTarget)onClose()}}>

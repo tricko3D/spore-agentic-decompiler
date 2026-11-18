@@ -1,4 +1,4 @@
-import {useCallback,useEffect,useState} from 'react';
+import {memo,useCallback,useEffect,useState} from 'react';
 import {controlsEnabled,money,post,pretty,query} from '../api';
 import {usePoll} from '../hooks';
 import {Drawer,ErrorText,Metric,Panel,Tag} from '../components/Panel';
@@ -79,7 +79,7 @@ function EvidenceInspector({selection,onClose,onChoose,refresh}:{selection:Selec
  </Drawer>;
 }
 
-export default function Knowledge({active,overview,summaryError,refreshOverview}:{active:boolean;overview:KnowledgeOverview|null;summaryError:string;refreshOverview:()=>void}){
+function Knowledge({active,overview,summaryError,refreshOverview}:{active:boolean;overview:KnowledgeOverview|null;summaryError:string;refreshOverview:()=>void}){
  const {value:graph}=usePoll<Graph>('/api/knowledge/graph?limit=35',45000,active);
  const [mode,setMode]=useState<'techniques'|'findings'>('techniques');
  const [draft,setDraft]=useState(''),[search,setSearch]=useState(''),[category,setCategory]=useState<Category>('all');
@@ -186,3 +186,7 @@ export default function Knowledge({active,overview,summaryError,refreshOverview}
     onClose={()=>setSelection(null)} refresh={refreshOverview}/>}
  </section>;
 }
+
+// Snapshot updates happen every three seconds in the always-visible HUD.
+// Keep those agent updates from reconciling the entire Brain tree.
+export default memo(Knowledge);

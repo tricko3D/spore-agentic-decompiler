@@ -7,9 +7,15 @@ import {get} from './api';
  * responses cannot repaint the old view or overtake newer query results.
  */
 export function usePoll<T>(url:string,interval:number,active=true){
- const [value,setValue]=useState<T|null>(null);
- const [error,setError]=useState('');
- const [loading,setLoading]=useState(true);
+ // Bind cached data to the exact URL that produced it. Switching between
+ // technique and finding tabs must never render old rows as the new type.
+ const [response,setResponse]=useState<{url:string;value:T|null;error:string;loading:boolean}>({
+  url:'',value:null,error:'',loading:true
+ });
+ const current=response.url===url;
+ const value=current?response.value:null;
+ const error=current?response.error:'';
+ const loading=current?response.loading:true;
  const inFlight=useRef<AbortController|null>(null);
  const requestId=useRef(0);
 
@@ -25,16 +31,20 @@ export function usePoll<T>(url:string,interval:number,active=true){
   try{
    const next=await get<T>(url,controller.signal);
    if(!controller.signal.aborted&&id===requestId.current){
-    setValue(next);setError('');
+    setResponse({url,value:next,error:'',loading:false});
    }
   }catch(e){
    if(!controller.signal.aborted&&id===requestId.current){
-    setError((e as Error).message);
+    setResponse(prev=>({
+     url,value:prev.url===url?prev.value:null,
+     error:(e as Error).message,loading:false
+    }));
    }
   }finally{
    signal?.removeEventListener('abort',onAbort);
    if(inFlight.current===controller)inFlight.current=null;
-   if(!controller.signal.aborted&&id===requestId.current)setLoading(false);
+   // Success and failure already settle loading together with their URL.
+
   }
  },[url]);
 

@@ -506,3 +506,27 @@ html,body,#root{height:100%;overflow:hidden}
  .hud-brand strong{display:none}
  .hud-spacer,.hud-spacer-end{display:none}
 }
+
+/* Render only the Knowledge cards that are near the scroll viewport.
+   Paginated data still comes from the server, never a full database dump. */
+.knowledge-view .knowledge-card{
+ content-visibility:auto;
+ contain-intrinsic-size:auto 115px;
+}
+.knowledge-view .knowledge-side>.panel{
+ content-visibility:auto;
+ contain-intrinsic-size:auto 190px;
+}
+.knowledge-view .knowledge-main>.panel.explorer{
+ contain:layout style;
+}
+.knowledge-view .knowledge-card,
+.knowledge-view .evidence-node,
+.knowledge-view .evidence-source-row,
+.knowledge-view .brain-match,
+.knowledge-view .error-record,
+.knowledge-view .panel{
+ animation:none!important;
+ transition:none!important;
+}
+.knowledge-view{scroll-behavior:auto}

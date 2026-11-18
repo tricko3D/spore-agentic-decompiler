@@ -19,6 +19,8 @@ class CompactUIRegression(unittest.TestCase):
         cls.graph=(WEB/"components/BrainGraph.tsx").read_text()
         cls.app=(WEB/"App.tsx").read_text()
         cls.hooks=(WEB/"hooks.ts").read_text()
+        cls.panels=(WEB/"components/Panel.tsx").read_text()
+        cls.brain_search=(WEB/"components/BrainSearch.tsx").read_text()
         cls.ops=(WEB/"views/Operations.tsx").read_text()
         cls.knowledge=(WEB/"views/Knowledge.tsx").read_text()
         cls.agent_dock=(WEB/"components/AgentDock.tsx").read_text()
@@ -101,6 +103,20 @@ class CompactUIRegression(unittest.TestCase):
         self.assertIn('transition:none!important',self.css)
         self.assertIn('background:#15324b',self.css)
         self.assertIn('contain:layout paint',self.css)
+
+    def test_raw_investigations_do_not_render_cached_technique_rows(self):
+        self.assertIn('response.url===url',self.hooks)
+        self.assertIn('current?response.value:null',self.hooks)
+        self.assertIn('setResponse({url,value:next',self.hooks)
+        self.assertIn("typeof value==='string'",self.panels)
+        self.assertIn("label.toLowerCase()",self.panels)
+        self.assertIn("export default memo(Knowledge)",self.knowledge)
+        self.assertIn("export default memo(BrainSearch)",self.brain_search)
+
+    def test_knowledge_skips_offscreen_rendering(self):
+        self.assertIn("content-visibility:auto",self.css)
+        self.assertIn("contain-intrinsic-size:auto 115px",self.css)
+        self.assertIn("animation:none!important",self.css)
 
     def test_knowledge_graph_memo_receives_stable_callbacks(self):
         self.assertIn("const openTechnique=useCallback",self.knowledge)

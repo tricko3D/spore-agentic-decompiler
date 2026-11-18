@@ -167,3 +167,7 @@ continue to work until the feature branch is validated and merged.
 ## Knowledge interaction performance
 
 Knowledge now has a single native scrolling owner. Its previously nested result-list scroll is removed, and Knowledge panels/cards have static opaque backgrounds, no backdrop blur and no expensive hover transitions. The single bottom command bar remains mounted outside the scroll surface. CI validates builds and regression tests, but cannot measure actual Windows browser GPU frame time.
+
+## Raw findings crash and render isolation
+
+The Knowledge technique and raw-findings tabs use different item shapes. The polling hook previously retained the previous URL's data during the next query, so switching tabs rendered technique entries as findings and passed an absent status into the Tag component. Poll responses are now URL-keyed, and tags tolerate missing data defensively. The entire Knowledge component is memoized so the shell's three-second agent-snapshot refresh doesn't cause Brain rerenders. Search is memoized, and off-screen result cards use CSS content-visibility to skip rendering. The backend already uses ThreadingHTTPServer and paginates findings/techniques at 30 records per page; there is no full raw dump.

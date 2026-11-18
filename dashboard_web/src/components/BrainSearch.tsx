@@ -1,4 +1,4 @@
-import {useState,type FormEvent} from 'react';
+import {memo,useState,type FormEvent} from 'react';
 import {get,query} from '../api';
 import {Panel,Tag} from './Panel';
 
@@ -7,7 +7,7 @@ interface SearchResults {
  techniques:{id:number;title:string;problem:string;category:string}[];
  findings:{id:number;va:string;pass:number;summary:string;status:string;verified_match:boolean}[];
 }
-export default function BrainSearch({onTechnique,onFinding}:{
+function BrainSearch({onTechnique,onFinding}:{
  onTechnique:(id:number)=>void;onFinding:(id:number)=>void
 }){
  const [text,setText]=useState(''),[querying,setQuerying]=useState(false),
@@ -51,3 +51,4 @@ export default function BrainSearch({onTechnique,onFinding}:{
   </div>}
  </Panel>;
 }
+export default memo(BrainSearch);
