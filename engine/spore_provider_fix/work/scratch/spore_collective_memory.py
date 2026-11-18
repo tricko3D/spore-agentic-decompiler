@@ -464,7 +464,7 @@ def _technique_combine(con, query, *, vectors=None, limit=3):
     ordered = sorted(rows, key=lambda x: -scores[x["id"]])
     results = []
     for item in ordered[:max(1, min(10, limit))]:
-        links = con.execute("""SELECT f.va,l.source_status,l.evidence_quote,
+        links = con.execute("""SELECT f.va,l.source_status,l.evidence_quote,l.observation,
             f.evidence_path FROM compiler_technique_links l
             JOIN findings f ON f.id=l.finding_id WHERE l.technique_id=?
                 AND l.source_hash=f.source_hash
@@ -477,6 +477,7 @@ def _technique_combine(con, query, *, vectors=None, limit=3):
             "evidence_level":item["evidence_level"], "sources":[
                 {"va":x["va"], "status":x["source_status"],
                  "quote":x["evidence_quote"][:180],
+                 "observation":x["observation"][:220],
                  "evidence_path":x["evidence_path"]} for x in links],
             "score":round(scores[item["id"]],6)})
     return results
@@ -505,12 +506,14 @@ def print_techniques(rows, *, max_chars=1500):
     blocks = []
     for x in rows:
         sources = ", ".join(z["va"]+" ("+z["status"]+")" for z in x["sources"])
+        latest = (x["sources"][0].get("observation","") if x["sources"] else "")
         content = (f"[TECHNIQUE #{x['id']} | {x['evidence_level']}] {x['title']}\n"
                    f"Problem: {x['problem']}\n"
                    f"Conditions: {x['conditions']}\n"
                    f"Attempt: {x['intervention']}\n"
                    f"Observed: {x['observed_effect']}\n"
-                   f"Sources: {sources}")
+                   f"Sources: {sources}\n"
+                   f"Recent linked observation: {latest[:240]}")
         blocks.append(content[:per - 3] + "..." if len(content) > per else content)
     return "\n\n".join(blocks)
 
