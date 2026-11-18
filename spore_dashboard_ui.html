@@ -774,10 +774,18 @@ function renderMission(d){
   Number.isFinite(budget)?'$'+budget+' budget':null
  ].filter(Boolean).join(' · ');
  set('missionResources',resources);
- const allow=assigned?controller.settings?.allowlist_active:controller.next_launch_allowlist;
- const allowText=allow===true?'Retry allowlist enabled, only allowed addresses will run':
-  allow===false?'No retry allowlist, all eligible selected addresses may run':
-  'Retry allowlist status unavailable for this run';
+ const allow=assigned?controller.settings?.allowlist_active:
+  (shownPreview?.allowlist_active ??
+   (controller.next_launch_allowlist || (config.module==='*' && controller.allowlist_available)));
+ const allowCount=assigned?controller.settings?.allowlist_count:shownPreview?.allowlist_count;
+ const allowSource=assigned?controller.settings?.allowlist_source:shownPreview?.allowlist_source;
+ const allowText=allow===true?
+  'Retry allowlist ON'+(Number.isInteger(allowCount)?' ('+allowCount+' addresses)':'')+
+  (allowSource?' via '+allowSource:'')+'. Only listed addresses can run':
+  config.module==='*'?
+  'All modules requires retry-all.json or SPORE_RETRY_ALLOWLIST. Launch is blocked without it':
+  allow===false?'No retry allowlist: all eligible functions in the selected module can run':
+  'Retry allowlist status unavailable';
  const caveat=shownPreview?.error?' Preview error: '+shownPreview.error:
   shownPreview&&typeof shownPreview.eligible==='number'?
    ' Preview uses the current queue; applying scope at launch can add targets.':'';
@@ -974,7 +982,7 @@ function render(d){
  $('agents').innerHTML=work.length?work.map(w=>{let list=(w.stream||[]).slice(-3);let state=!w.alive?'offline':w.phase==='VERIFIED'?'verified':w.phase==='NO SLOT'?'no-slot':w.phase==='PROBING'?'probing':'idle';return `<button class="agent ${state}" data-worker="${w.worker}"><header><strong>Agent ${String(w.worker).padStart(2,'0')}</strong><span class="tag ${state}">${esc(!w.alive?'OFFLINE':w.phase||'UNKNOWN')}</span></header><div class="small mono worker-address">${esc(w.current||w.last_function||'Idle / waiting')}<span class="worker-meta">${w.bytes==null?'—':bytes(w.bytes)} · PID ${esc(w.pid)}</span></div><div class="mini-stream">${list.length?list.map(e=>`<div class="t"><span class="blue">${esc(e.kind)}</span> ${esc(e.message.slice(0,140))}</div>`).join(''):'<span class="muted">'+esc(w.phase==='NO SLOT'?'No active inference (waiting or checking)':w.phase==='IDLE'?'No active function':'Waiting for first output tokens')+'</span>'}</div></button>`}).join(''):'<div class="empty">No agents in the latest run</div>';
  $('agents').querySelectorAll('[data-worker]').forEach(n=>n.onclick=()=>openDrawer('agent',n.dataset.worker));
  arrangeWorkers();
- const old=$('module').value;$('module').innerHTML='<option value="*">All confidently classified</option>'+['SPGonzago',...(d.modules||[])].filter((v,i,a)=>a.indexOf(v)===i).map(v=>`<option value="${esc(v)}">${esc(v)}</option>`).join('');if([...$('module').options].some(o=>o.value===old))$('module').value=old;else $('module').value='SPGonzago';
+ const old=$('module').value;$('module').innerHTML='<option value="*" title="All classified modules, restricted to retry-all.json or SPORE_RETRY_ALLOWLIST">All modules (retry list)</option>'+['SPGonzago',...(d.modules||[])].filter((v,i,a)=>a.indexOf(v)===i).map(v=>`<option value="${esc(v)}">${esc(v)}</option>`).join('');if([...$('module').options].some(o=>o.value===old))$('module').value=old;else $('module').value='SPGonzago';
  syncRunAction(d);
  renderMission(d);
  scheduleMissionPreview();
