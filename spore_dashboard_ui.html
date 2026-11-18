@@ -1,6 +1,6 @@
 <!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Spore Agentic · Mission Control</title>
+<title>Spore Agentic | Decompilation Workbench</title>
 <style>
 :root{color-scheme:dark;font:13px/1.46 system-ui,Segoe UI,Arial,sans-serif;background:#0e1116;color:#e8edf5;--panel:#181d26;--border:#303847;--sub:#97a4b8;--green:#76deb2;--red:#ed8e91;--gold:#edc583;--blue:#87b8fd}
 *[hidden]{display:none!important}*{box-sizing:border-box}body{max-width:1840px;margin:auto;padding:22px 25px 70px}h1{font-size:24px;margin:0;letter-spacing:-.7px;font-weight:740}h2{font-size:15px;margin:0 0 11px;font-weight:650}h3{font-size:13px;margin:0 0 8px}p{color:var(--sub);margin:4px 0}button,select,input{font:inherit;color:inherit}button{cursor:pointer;background:#242d3c;border:1px solid #3b485b;padding:7px 11px;border-radius:7px}button:hover{border-color:#7698be}button:disabled{opacity:.4;cursor:default}.primary{background:#2b664f;border-color:#34815f}.danger{background:#572c37;border-color:#8e4b58}input,select{background:#101723;border:1px solid #384354;padding:8px;border-radius:7px}input[type=number]{width:82px}input[type=search]{width:215px}label{display:flex;align-items:center;gap:6px;color:var(--sub);font-size:12px}.top{display:flex;align-items:center;justify-content:space-between;gap:18px;flex-wrap:wrap;margin-bottom:21px}.up{display:flex;align-items:center;gap:8px;color:var(--sub)}.dot{width:9px;height:9px;background:var(--green);border-radius:50%;display:inline-block}.dot.off{background:var(--red)}.muted{color:var(--sub)}.small{font-size:11px;color:var(--sub)}.mono,code,pre{font-family:ui-monospace,Consolas,monospace}.metric-grid{display:grid;grid-template-columns:repeat(6,minmax(125px,1fr));gap:11px;margin-bottom:13px}.metric,.panel{background:var(--panel);border:1px solid var(--border);border-radius:11px;padding:15px;min-width:0}.metric strong{font-size:27px;display:block;letter-spacing:-1px;margin:5px 0 1px}.green{color:var(--green)}.red{color:var(--red)}.gold{color:var(--gold)}.blue{color:var(--blue)}.metric small{color:var(--sub)}.layout{display:grid;grid-template-columns:1.2fr .9fr;gap:13px;margin-bottom:13px}.section{margin:19px 0 11px;display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}.section h2{font-size:16px;margin:0}.status-track{height:12px;display:flex;overflow:hidden;border-radius:9px;background:#343b47}.status-track span{transition:width .2s}.legend{display:flex;flex-wrap:wrap;gap:15px;margin-top:10px;color:var(--sub);font-size:12px}.legend b{font-weight:600;color:#e8edf5}.control-form{display:flex;gap:9px;flex-wrap:wrap;align-items:end}.control-form label{flex-direction:column;align-items:stretch;gap:3px}.control-form select{max-width:210px}.control-form button{height:34px}.note{font-size:12px;color:var(--sub);margin-top:10px}.control-status{font-size:12px;min-height:17px;margin-top:8px}.outcome-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:9px}.outcome{padding:12px;border:1px solid var(--border);background:#151b23;border-radius:9px}.outcome .value{font-size:20px;font-weight:650;margin:4px 0}.mini-bar{height:7px;background:#303743;border-radius:7px;overflow:hidden;margin:4px 0 9px}.mini-bar span{height:100%;background:var(--red);display:block}.efforts{display:grid;grid-template-columns:repeat(5,1fr);gap:9px}.efforts>div{padding:6px;border-radius:7px;background:#222936;text-align:center}.efforts b{display:block;font-size:17px}.grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}.agent{background:#171d27;border:1px solid #344052;border-radius:11px;padding:12px;text-align:left;min-height:155px;display:flex;flex-direction:column;gap:7px;min-width:0}.agent.verified{border-color:#358b70;background:#14241f;box-shadow:inset 0 2px 0 var(--green)}.agent.no-slot{border-color:#aa813a;background:#252016;box-shadow:inset 0 2px 0 var(--gold)}.agent.probing{border-color:#4b86b9;background:#151f30;box-shadow:inset 0 2px 0 var(--blue)}.agent header{display:flex;align-items:center;justify-content:space-between}.agent .mini-stream{font:11px/1.35 ui-monospace,Consolas,monospace;color:#abbad0;background:#0d141f;border-radius:5px;padding:8px;min-height:72px;max-height:96px;overflow:hidden;white-space:pre-wrap;overflow-wrap:anywhere}.agent .mini-stream .t{margin-bottom:4px}.tag{display:inline-block;border-radius:5px;padding:2px 6px;background:#293345;color:#c4d7e7;font-size:10px}.tag.MATCH{background:#173c2c;color:#8fe2b4}.tag.FAIL{background:#47292d;color:#eeb0b5}.tag.DEFER{background:#504028;color:#f1d49a}.tag.PENDING{background:#2a3445;color:#9eb1ca}table{width:100%;border-collapse:collapse}th,td{padding:10px 8px;text-align:left;border-bottom:1px solid #2d3542;font-size:12px}th{color:var(--sub);font-weight:500}tr:hover td{background:#202837}.table-scroll{max-height:540px;overflow:auto}.file{color:var(--sub);max-width:290px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.click{cursor:pointer}.toolbar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:11px}.pager{display:flex;align-items:center;gap:11px;justify-content:flex-end;margin-top:10px}.activity{max-height:360px;overflow:auto}.drawer-back{position:fixed;inset:0;background:#000b;z-index:8;display:none}.drawer-back.open{display:block}.drawer{position:fixed;right:0;top:0;bottom:0;width:min(740px,100vw);background:#161d28;border-left:1px solid #3f4c5e;z-index:9;padding:23px;overflow:auto;display:none;box-shadow:-10px 0 38px #0006}.drawer.open{display:block}.drawer-head{display:flex;align-items:start;justify-content:space-between;gap:10px;margin-bottom:20px}.timeline{max-height:60vh;overflow:auto;border:1px solid var(--border);background:#0d141f;padding:11px;border-radius:8px}.event{display:flex;gap:10px;margin:7px 0;font:12px/1.48 ui-monospace,Consolas,monospace;overflow-wrap:anywhere}.event .kind{width:63px;flex:none;color:#7dacc5;font-size:10px;text-transform:uppercase}.event .body{white-space:pre-wrap;min-width:0}.history{display:grid;gap:8px}.history article{padding:9px;border:1px solid var(--border);border-radius:7px}.history .pill{font-size:11px}.pre{white-space:pre-wrap;word-break:break-word;color:#b9ccdf;padding:10px;background:#0e1620;border-radius:7px}.activity tbody td{font-size:11px}.empty{color:var(--sub);padding:13px}.disclaimer{font-size:11px;color:#93a1b6;margin-top:10px}footer{margin-top:24px;color:#8b96a8;font-size:11px}#error{color:var(--red)}
@@ -87,25 +87,199 @@
     aspect-ratio:1;
   }
 }
+
+/* Spore workbench: restrained instrument surfaces, not a stack of cards.
+   Status colors communicate actual execution states only. */
+:root {
+  --panel:#151B22; --border:#313C48; --sub:#A1AEBA;
+  --green:#62C6A4; --red:#E17D87; --gold:#D7B676; --blue:#80AEE0;
+  --workbench-bg:#11151A; --surface-raised:#1B242D;
+  --hairline:#33404B; --ink:#DCE5EB;
+  --font-ui:"Segoe UI Variable","Segoe UI",Arial,sans-serif;
+  --font-head:"Bahnschrift","Arial Narrow","Segoe UI",sans-serif;
+  --font-code:"Cascadia Code","Consolas",monospace;
+  background:var(--workbench-bg); color:var(--ink);
+  font:13px/1.46 var(--font-ui);
+}
+html { background:var(--workbench-bg); }
+body { background:var(--workbench-bg); }
+h1,h2,h3 { color:var(--ink); font-family:var(--font-head); }
+h1 { font-size:23px;letter-spacing:-.4px;display:flex;align-items:baseline;gap:11px; }
+h1 .wordmark {font-weight:720;letter-spacing:-.45px;}
+h1 .title-divider {color:#677887;font-weight:350;}
+h1 .title-context {font-weight:430;color:#B6C4CF;letter-spacing:0;}
+.top {margin-bottom:15px;padding-bottom:10px;border-bottom:1px solid var(--hairline);}
+.top p {margin-top:0;color:#8294A3;font-size:12px;}
+.up {font-family:var(--font-code);font-size:11px;}
+.mono,code,pre {font-family:var(--font-code);}
+:focus-visible {outline:2px solid var(--blue);outline-offset:2px;}
+button:focus-visible,input:focus-visible,select:focus-visible {outline:2px solid var(--blue);outline-offset:2px;}
+button, input, select {border-radius:5px;}
+button {background:#242E38;border-color:#45515C;transition:background-color .1s,border-color .1s;}
+button:hover:not(:disabled) {background:#303D48;}
+.primary {background:#275945;border-color:#4D9A78;color:#E1F7EC;}
+.primary:hover:not(:disabled) {background:#327456;}
+.danger {background:#402730;border-color:#92565F;color:#F4C5CA;}
+.danger:hover:not(:disabled) {background:#5A313B;}
+input,select {background:#111922;border-color:#465360;}
+input:focus,select:focus {border-color:var(--blue);}
+.metric-grid {
+  display:grid;grid-template-columns:repeat(6,minmax(0,1fr));
+  gap:0;border:1px solid var(--hairline);
+  background:#151B22;border-radius:6px;overflow:hidden;
+}
+.metric {
+  border:0;border-radius:0;background:transparent;box-shadow:none;
+  border-right:1px solid var(--hairline);
+  padding:11px 14px 10px;
+}
+.metric:last-child {border-right:0;}
+.metric .small {display:block;color:#99AAB7;font-size:11px;letter-spacing:0;}
+.metric strong {
+  font-family:var(--font-head);font-variant-numeric:tabular-nums;
+  font-weight:650;font-size:29px;line-height:1.04;
+  letter-spacing:-.55px;margin:6px 0 3px;
+}
+.metric small {font-size:10px;}
+.metric-capacity strong,.metric-spend strong {color:var(--ink);}
+.metric-match {box-shadow:inset 0 2px 0 #3D8D76;}
+.metric-fail {box-shadow:inset 0 2px 0 #9E545E;}
+.metric-defer {box-shadow:inset 0 2px 0 #927746;}
+.panel {border-color:var(--hairline);background:#151B22;border-radius:7px;box-shadow:none;}
+.section h2 {font-size:15px;font-weight:640;letter-spacing:.05px;}
+.overview-panel h2,.controls-pane>h2 {font-weight:640;}
+.overview-columns {gap:16px;}
+.controls-pane {border-left-color:var(--hairline);padding-left:16px;}
+.overview-panel .section {margin-top:13px;margin-bottom:7px;}
+.overview-panel .section:first-child {margin-top:0;}
+.status-track {height:7px;border-radius:2px;}
+.legend {gap:7px 13px;margin-top:8px;font-size:11px;}
+.legend b {font-weight:650;}
+.outcome-grid {gap:0!important;border-top:1px solid var(--hairline);border-bottom:1px solid var(--hairline);}
+.overview-panel .outcome {
+  border:0;border-right:1px solid var(--hairline);border-radius:0;
+  background:transparent;padding:9px 10px!important;
+}
+.overview-panel .outcome:last-child {border-right:0;}
+.outcome .value {font-family:var(--font-head);font-variant-numeric:tabular-nums;}
+.disclaimer {font-size:10px;color:#8E9EAB;line-height:1.42;}
+.efforts {gap:6px;}
+.efforts>div {
+  background:#1D2731;border:0;border-radius:3px;
+  border-top:2px solid #45515B;padding:7px 6px 5px;
+}
+.efforts b {font-family:var(--font-head);font-weight:600;font-variant-numeric:tabular-nums;}
+.efforts .mini-bar {height:3px;margin-bottom:0;}
+.control-form {gap:7px;}
+.control-form label {font-size:11px;}
+.control-form input[type=number] {width:68px;}
+.control-form select {max-width:205px;}
+.control-form button {height:33px;}
+.control-status {color:var(--gold);min-height:0;}
+.agent-column {background:#10161B;border:1px solid var(--hairline);border-radius:7px;padding:13px;}
+.agent-heading {margin:0 0 10px;padding-bottom:9px;border-bottom:1px solid #35424D;}
+.agent-heading h2 {font-size:17px;font-weight:670;}
+.agent-heading .small {color:#90A1AE;font-size:11px;}
+.agent-column .grid {gap:8px;}
+.agent {
+  border-radius:5px!important;border:1px solid #465360;
+  background:#1B242D;box-shadow:none!important;
+  padding:10px!important;gap:6px!important;
+  text-align:left;
+  transition:border-color .12s,background-color .12s;
+}
+.agent:hover {background:#25323C;border-color:#8595A2;}
+.agent header {flex-wrap:wrap;gap:5px;align-items:center;}
+.agent header strong {font-family:var(--font-head);font-size:13px!important;font-weight:670;}
+.agent .tag {font-family:var(--font-ui);font-size:10px;}
+.agent.verified {border-color:#579981;background:#162820;box-shadow:inset 3px 0 #62C6A4!important;}
+.agent.probing {border-color:#547BA5;background:#172536;box-shadow:inset 3px 0 #80AEE0!important;}
+.agent.no-slot {border-color:#927549;background:#292419;box-shadow:inset 3px 0 #D7B676!important;}
+.agent.offline {border-color:#89535B;background:#2A1E25;box-shadow:inset 3px 0 #E17D87!important;}
+.agent.offline .mini-stream {opacity:.85;}
+.agent .worker-address {font:10px/1.35 var(--font-code);color:#C3D5E2;min-width:0;}
+.worker-meta {display:block;color:#8D9EAA;font-size:10px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.agent .mini-stream {
+  min-height:0;max-height:none;overflow:hidden;
+  border:1px solid #313D49;background:#10171E;
+  padding:7px;font:10px/1.4 var(--font-code);
+  border-radius:3px;color:#BBCBD8;opacity:1;
+}
+.agent .mini-stream .t {margin-bottom:4px;}
+.tag {border-radius:3px;font-weight:600;letter-spacing:0;}
+.tag.offline {background:#5F3038;color:#F6B0B8;border-color:#9F5C66;}
+.explorer-heading {margin:0 0 9px;}
+.explorer-heading h2 {font-size:16px;font-weight:670;}
+.explorer-heading .muted {font:11px var(--font-ui);font-weight:400;padding-left:7px;}
+.explorer-block>.panel {padding:12px;}
+.toolbar {margin-bottom:8px;}
+.toolbar select,.toolbar input {font-size:12px;padding:7px 9px;}
+.table-scroll {border-top:1px solid var(--hairline);border-bottom:1px solid var(--hairline);}
+.table-scroll th {font-size:11px;color:#9FAFBD;font-weight:620;background:#202A33;}
+.table-scroll td,.table-scroll th {padding:8px 9px;border-bottom:1px solid #2C3843;}
+.table-scroll tbody tr:nth-child(even) td {background:#18212A;}
+.table-scroll tbody tr:hover td {background:#273641;}
+.table-scroll td:first-child {font-weight:580;}
+.table-scroll .reason {color:#A7B8C5;}
+.table-scroll thead {box-shadow:0 1px 0 var(--hairline);}
+.pager {margin-top:8px;}
+.drawer {background:#151E27;border-left-color:#5A6B79;}
+.drawer-head {border-bottom:1px solid var(--hairline);padding-bottom:12px;}
+.drawer-head h2 {font-family:var(--font-head);}
+.history article {border-color:var(--hairline);border-radius:4px;background:#1B252E;}
+footer {color:#748694;font-size:10px;}
+@media (min-width:1900px) {
+  body {padding:10px 14px 7px;}
+  .top {margin-bottom:8px;padding-bottom:7px;}
+  .metric-grid {margin-bottom:9px;}
+  .metric {padding:8px 12px;}
+  .metric strong {font-size:25px;}
+  .workspace {gap:12px;}
+  .agent-column {padding:11px;}
+  .agent-column .grid {grid-auto-rows:var(--worker-size,140px);}
+}
+@media (max-width:1899px) {
+  .agent-column {padding:12px;}
+}
+@media (max-width:1250px) {
+  .metric-grid {grid-template-columns:repeat(3,minmax(0,1fr));}
+  .metric:nth-child(3) {border-right:0;}
+  .metric:nth-child(-n+3) {border-bottom:1px solid var(--hairline);}
+}
+@media (max-width:650px) {
+  h1 {font-size:18px;gap:6px;}
+  .top {align-items:flex-start;}
+  .metric-grid {grid-template-columns:repeat(2,minmax(0,1fr));}
+  .metric:nth-child(3) {border-right:1px solid var(--hairline);}
+  .metric:nth-child(even) {border-right:0;}
+  .metric:nth-child(-n+4) {border-bottom:1px solid var(--hairline);}
+  .metric strong {font-size:23px;}
+  .overview-panel {padding:12px;}
+  .outcome-grid {grid-template-columns:1fr 1fr;}
+  .agent-column {padding:10px;}
+}
+@media (prefers-reduced-motion:reduce) {
+  *,*::before,*::after {transition:none!important;animation:none!important;scroll-behavior:auto!important;}
+}
 </style></head><body>
-<div class="top"><div><h1>Spore Agentic <span class="muted" style="font-weight:400">/ Mission Control</span></h1><p>Decompiler telemetry · SQLite state · Sail Research</p></div><div class="up"><span class="dot" id="dot"></span><span id="connection">Connecting…</span><span class="small" id="clock"></span></div></div>
+<div class="top"><div><h1><span class="wordmark">Spore Agentic</span><span class="title-divider">/</span><span class="title-context">Decompilation Workbench</span></h1><p>Live compiler matching and agent execution</p></div><div class="up"><span class="dot" id="dot"></span><span id="connection">Connecting…</span><span class="small" id="clock"></span></div></div>
 <div class="metric-grid">
-<div class="metric"><span class="small">MATCH · latest</span><strong class="green" id="matches">—</strong><small id="matchBytes">Verified outcome bytes</small></div>
-<div class="metric"><span class="small">FAIL · latest</span><strong class="red" id="fails">—</strong><small id="failBytes">Failed outcome bytes</small></div>
-<div class="metric"><span class="small">DEFER · latest</span><strong class="gold" id="defers">—</strong><small id="deferBytes">Deferred outcome bytes</small></div>
-<div class="metric"><span class="small">PENDING</span><strong id="pending">—</strong><small id="pendingBytes">Pending bytes</small></div>
-<div class="metric"><span class="small">SAIL CONCURRENCY</span><strong id="cap">—</strong><small id="cooldown">Adaptive</small></div>
-<div class="metric"><span class="small">OPENROUTER ACTUAL</span><strong id="spend">—</strong><small id="reserved">Key usage snapshot</small></div>
+<div class="metric metric-match"><span class="small">Matched functions</span><strong class="green" id="matches">—</strong><small id="matchBytes">Verified outcome bytes</small></div>
+<div class="metric metric-fail"><span class="small">Unmatched functions</span><strong class="red" id="fails">—</strong><small id="failBytes">Failed outcome bytes</small></div>
+<div class="metric metric-defer"><span class="small">Deferred functions</span><strong class="gold" id="defers">—</strong><small id="deferBytes">Deferred outcome bytes</small></div>
+<div class="metric metric-pending"><span class="small">Pending functions</span><strong id="pending">—</strong><small id="pendingBytes">Pending bytes</small></div>
+<div class="metric metric-capacity"><span class="small">Active capacity</span><strong id="cap">—</strong><small id="cooldown">Adaptive</small></div>
+<div class="metric metric-spend"><span class="small">OpenRouter usage</span><strong id="spend">—</strong><small id="reserved">Key usage snapshot</small></div>
 </div>
 <div class="workspace">
 <div class="content-column">
-<div class="layout"><section class="panel overview-panel"><div class="overview-columns"><div class="outcomes-pane"><div class="section" style="margin:0 0 12px"><h2>Function outcomes</h2><span class="small" id="runId"></span></div><div id="statusTrack" class="status-track"></div><div class="legend" id="legend"></div><div class="section"><h2>Captured cost per final outcome</h2><span class="small">USD, observed minimum</span></div><div class="outcome-grid" id="costGrid"></div><p class="disclaimer">Per-outcome costs sum recorded OpenCode step costs across a function's attempts, including earlier unsuccessful attempts. Coverage is shown because the final step may be missing. OpenRouter charged usage is authoritative for total spending, not these allocations.</p><div class="section"><h2>FAIL effort distribution</h2><span class="small">Latest result per function</span></div><div class="efforts" id="efforts"></div></div><div class="controls-pane"><h2>Run controls</h2><div id="locked" class="note">Read-only mode. To enable controls, start dashboard with <code>--control</code>.</div><form id="controls" class="control-form" hidden><label>Module<select id="module"></select></label><label>Workers<input id="workersInput" type="number" min="1" max="32" value="16"></label><label>Max in flight<input id="inflightInput" type="number" min="1" max="32" value="16"></label><label>Additional passes<input title="Fresh valid attempts per eligible function each time Launch is clicked" id="passesInput" type="number" min="1" max="24" value="3"></label><label>Idle watchdog (min)<input id="minutesInput" type="number" min="15" max="120" value="20" title="Stops after inactivity, never by total elapsed runtime"></label><label>Budget $<input id="budgetInput" type="number" min="0.01" step="0.01" value="20"></label><button class="primary" type="submit" id="startBtn">Launch</button><button type="button" id="stopBtn" class="danger">Stop</button></form><div class="control-status" id="controlMessage"></div><p class="note">Launch applies the selected module scope before starting paid inference. Stop requests a graceful coordinator shutdown. Existing attempt history is retained.</p><div class="section"><h2>Current run</h2></div><div id="runStats" class="mono small">No data yet</div><div class="mini-bar" style="margin-top:12px"><span id="runProgress" style="background:var(--green);width:0%"></span></div><div class="note" id="runPercent">—</div></div></div></section></div>
+<div class="layout"><section class="panel overview-panel"><div class="overview-columns"><div class="outcomes-pane"><div class="section" style="margin:0 0 12px"><h2>Function outcomes</h2><span class="small" id="runId"></span></div><div id="statusTrack" class="status-track"></div><div class="legend" id="legend"></div><div class="section"><h2>Captured cost by result</h2><span class="small">USD, observed minimum</span></div><div class="outcome-grid" id="costGrid"></div><p class="disclaimer">Per-outcome costs sum recorded OpenCode step costs across a function's attempts, including earlier unsuccessful attempts. Coverage is shown because the final step may be missing. OpenRouter charged usage is authoritative for total spending, not these allocations.</p><div class="section"><h2>Failed passes</h2><span class="small">Latest result per function</span></div><div class="efforts" id="efforts"></div></div><div class="controls-pane"><h2>Run controls</h2><div id="locked" class="note">Read-only mode. To enable controls, start dashboard with <code>--control</code>.</div><form id="controls" class="control-form" hidden><label>Module<select id="module"></select></label><label>Workers<input id="workersInput" type="number" min="1" max="32" value="16"></label><label>Max in flight<input id="inflightInput" type="number" min="1" max="32" value="16"></label><label>Additional passes<input title="Fresh valid attempts per eligible function each time Launch is clicked" id="passesInput" type="number" min="1" max="24" value="3"></label><label>Idle watchdog (min)<input id="minutesInput" type="number" min="15" max="120" value="20" title="Stops after inactivity, never by total elapsed runtime"></label><label>Budget $<input id="budgetInput" type="number" min="0.01" step="0.01" value="20"></label><button class="primary" type="submit" id="startBtn">Launch</button><button type="button" id="stopBtn" class="danger">Stop</button></form><div class="control-status" id="controlMessage"></div><p class="note">Launch applies the selected module scope before starting paid inference. Stop requests a graceful coordinator shutdown. Existing attempt history is retained.</p><div class="section"><h2>Current run</h2></div><div id="runStats" class="mono small">No data yet</div><div class="mini-bar" style="margin-top:12px"><span id="runProgress" style="background:var(--green);width:0%"></span></div><div class="note" id="runPercent">—</div></div></div></section></div>
 <div class="explorer-block">
-<div class="section explorer-heading"><h2>Function explorer <span class="muted small">· newest activity first</span></h2><span class="small">Click any function for attempts and saved checker evidence</span></div><div class="panel"><div class="toolbar"><select id="filter"><option value="ALL">All outcomes</option><option value="MATCH">MATCH</option><option value="FAIL">FAIL</option><option value="DEFER">DEFER</option><option value="SKIP">SKIP</option><option value="PENDING">PENDING</option></select><input id="search" type="search" placeholder="Search address or file"><span class="small" id="resultCount"></span></div><div class="table-scroll"><table><thead><tr><th>Function</th><th>Last activity (UTC)</th><th>Size</th><th>Byte agreement</th><th>Result</th><th>Effort</th><th>Attempts</th><th>Failure reason</th><th>Source</th></tr></thead><tbody id="functions"></tbody></table></div><div class="pager"><button id="prev">Previous</button><span id="pageInfo" class="small"></span><button id="next">Next</button></div></div>
+<div class="section explorer-heading"><h2>Function history <span class="muted small">Newest activity first</span></h2><span class="small">Click any function for attempts and saved checker evidence</span></div><div class="panel"><div class="toolbar"><select id="filter"><option value="ALL">All outcomes</option><option value="MATCH">MATCH</option><option value="FAIL">FAIL</option><option value="DEFER">DEFER</option><option value="SKIP">SKIP</option><option value="PENDING">PENDING</option></select><input id="search" type="search" placeholder="Search address or file"><span class="small" id="resultCount"></span></div><div class="table-scroll"><table><thead><tr><th>Function</th><th>Last activity (UTC)</th><th>Size</th><th>Byte agreement</th><th>Result</th><th>Effort</th><th>Attempts</th><th>Failure reason</th><th>Source</th></tr></thead><tbody id="functions"></tbody></table></div><div class="pager"><button id="prev">Previous</button><span id="pageInfo" class="small"></span><button id="next">Next</button></div></div>
 </div>
 </div>
 <aside class="agent-column">
-<div class="section agent-heading"><h2>Agent grid <span class="muted" id="liveCount"></span></h2><span class="small">Live text and tool-status portals · click a worker for detail</span></div><div class="grid" id="agents"><div class="empty">Waiting for workers…</div></div>
+<div class="section agent-heading"><h2>Worker matrix <span class="muted" id="liveCount"></span></h2><span class="small">Select a worker to inspect its execution stream</span></div><div class="grid" id="agents"><div class="empty">Waiting for workers…</div></div>
 </aside>
 </div>
 <div class="drawer-back" id="backdrop"></div><aside class="drawer" id="drawer"><div class="drawer-head"><div><h2 id="detailTitle" style="font-size:19px">Detail</h2><p id="detailSub"></p></div><button id="close">Close</button></div><div id="detailBody"></div></aside>
@@ -163,7 +337,7 @@ function render(d){
  let done=r.completed||0,targets=r.targets||0;set('runStats',`${r.id||'No run'} · ${r.live_workers||0}/${r.workers||0} agents live · ${c.claims||0} claimed · ${c.incidents||0} provider incidents`);$('runProgress').style.width=(targets?Math.min(100,100*done/targets):0)+'%';set('runPercent',`${done}/${targets} targets complete or exhausted · ${bytes(r.bytes_completed||0)} / ${bytes(r.bytes_target||0)} · ${c.void_provider||0} archived provider passes`);
  set('liveCount',`(${r.live_workers||0} / ${r.workers||0} live)`);
  let work=d.workers||[];
- $('agents').innerHTML=work.length?work.map(w=>{let list=(w.stream||[]).slice(-3);let state=!w.alive?'offline':w.phase==='VERIFIED'?'verified':w.phase==='NO SLOT'?'no-slot':w.phase==='PROBING'?'probing':'idle';return `<button class="agent ${state}" data-worker="${w.worker}"><header><strong>Agent ${String(w.worker).padStart(2,'0')}</strong><span class="tag ${state}">${esc(!w.alive?'OFFLINE':w.phase||'UNKNOWN')}</span><span class="tag ${w.alive?'':'offline'}">${w.alive?'LIVE':'OFFLINE'}</span></header><div class="small mono">${esc(w.current||w.last_function||'Idle / waiting')} · ${w.bytes==null?'—':bytes(w.bytes)} · PID ${esc(w.pid)}</div><div class="mini-stream">${list.length?list.map(e=>`<div class="t"><span class="blue">${esc(e.kind)}</span> ${esc(e.message.slice(0,140))}</div>`).join(''):'<span class="muted">'+esc(w.phase==='NO SLOT'?'No active inference (waiting or checking)':w.phase==='IDLE'?'No active function':'Waiting for first output tokens')+'</span>'}</div></button>`}).join(''):'<div class="empty">No agents in the latest run</div>';
+ $('agents').innerHTML=work.length?work.map(w=>{let list=(w.stream||[]).slice(-3);let state=!w.alive?'offline':w.phase==='VERIFIED'?'verified':w.phase==='NO SLOT'?'no-slot':w.phase==='PROBING'?'probing':'idle';return `<button class="agent ${state}" data-worker="${w.worker}"><header><strong>Agent ${String(w.worker).padStart(2,'0')}</strong><span class="tag ${state}">${esc(!w.alive?'OFFLINE':w.phase||'UNKNOWN')}</span></header><div class="small mono worker-address">${esc(w.current||w.last_function||'Idle / waiting')}<span class="worker-meta">${w.bytes==null?'—':bytes(w.bytes)} · PID ${esc(w.pid)}</span></div><div class="mini-stream">${list.length?list.map(e=>`<div class="t"><span class="blue">${esc(e.kind)}</span> ${esc(e.message.slice(0,140))}</div>`).join(''):'<span class="muted">'+esc(w.phase==='NO SLOT'?'No active inference (waiting or checking)':w.phase==='IDLE'?'No active function':'Waiting for first output tokens')+'</span>'}</div></button>`}).join(''):'<div class="empty">No agents in the latest run</div>';
  $('agents').querySelectorAll('[data-worker]').forEach(n=>n.onclick=()=>openDrawer('agent',n.dataset.worker));
  arrangeWorkers();
  const old=$('module').value;$('module').innerHTML='<option value="*">All confidently classified</option>'+['SPGonzago',...(d.modules||[])].filter((v,i,a)=>a.indexOf(v)===i).map(v=>`<option value="${esc(v)}">${esc(v)}</option>`).join('');if([...$('module').options].some(o=>o.value===old))$('module').value=old;else $('module').value='SPGonzago';
