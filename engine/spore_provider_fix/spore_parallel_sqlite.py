@@ -115,7 +115,8 @@ def make_assignments(queue, workers, mod, passes=None):
     classified = [r['va'] for r in queue if m.eligible(r['va'])]
     if not classified:
         sys.exit('No queued functions passed the selected module confidence filter. No agents started.')
-    limit = passes if passes is not None else store.pass_limit()
+    # Passes now mean fresh attempts granted to every eligible function in this run.
+    # Historic FAIL/DEFER attempts do not exhaust a future run.
     manifested = mod.ManifestIndex().refresh()
     latest = {}
     attempted = Counter()
@@ -126,8 +127,7 @@ def make_assignments(queue, workers, mod, passes=None):
             attempted[va] += 1
     allowed = [va for va in classified
                if va not in manifested
-               and latest.get(va) not in ('MATCH', 'SKIP')
-               and attempted[va] < limit]
+               and latest.get(va) not in ('MATCH', 'SKIP')]
     if not allowed:
         return [], {}, [0] * workers, {}
     groups = source_groups(allowed)
@@ -218,7 +218,7 @@ def run(a):
         queue = read_queue()
         allowed, assignments, counts, group_keys = make_assignments(queue, a.workers, mod, passes=a.passes)
         if not allowed:
-            print(f'No runnable {mod.module_scope()} targets under the {a.passes}-pass limit. No workers launched.')
+            print(f'No runnable {mod.module_scope()} targets for {a.passes} additional passes. No workers launched.')
             return 0
         run_id = datetime.now(timezone.utc).strftime('%Y%m%d-%H%M%S') + f'-{os.getpid()}'
         folder = RUN_LOGS / run_id
@@ -305,7 +305,7 @@ def main():
     sub = p.add_subparsers(dest='command', required=True)
     r = sub.add_parser('run', help='Start N workers using SQLite WAL')
     r.add_argument('--workers', type=int, default=5, help='Number of concurrent agents (default: 5)')
-    r.add_argument('--passes', type=int, default=3, help='Total attempts allowed for each function (1-24)')
+    r.add_argument('--passes', type=int, default=3, help='Additional valid attempts per eligible function in this run (1-24)')
     r.add_argument('--reasoning', choices=['low', 'medium', 'high'], default='medium')
     r.add_argument('--minutes', type=int, default=20, help='Inactivity watchdog minutes (minimum 15); no total runtime limit')
     r.add_argument('--quota-wait', type=int, default=1, help='Minutes to wait on API rate limit; 0 stops that worker')
@@ -329,7 +329,7 @@ def main():
             p.error('--workers must be between 1 and 32')
         mod=load_runner()
         allowed,assignments,counts,_=make_assignments(read_queue(),a.workers,mod)
-        print(f'{mod.module_scope()} runnable functions (pass limit {store.pass_limit()}): {len(allowed)}')
+        print(f'{mod.module_scope()} runnable functions (passes are additional per run): {len(allowed)}')
         print('Assignments:',counts)
         print('No agents started; SQLite history unchanged.')
         return 0
