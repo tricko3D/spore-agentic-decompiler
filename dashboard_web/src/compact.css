@@ -392,3 +392,90 @@ html,body,#root{height:100%;overflow:hidden}
  .agent-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
  .knowledge-return-dock{max-width:calc(100% - 24px)}
 }
+
+
+/* One scroll owner, inexpensive static Knowledge tiles and hover surfaces. */
+.game-shell{background:#091827;background-attachment:scroll}
+.view-content>.knowledge-view{
+ height:100%;min-height:0;overflow-y:auto;overflow-x:hidden;
+ overscroll-behavior:contain;scrollbar-gutter:stable;
+ background:#091827;isolation:isolate;
+}
+.knowledge-view .panel{
+ background:#11283e;box-shadow:none;
+ backdrop-filter:none!important;-webkit-backdrop-filter:none!important;
+ contain:layout paint;
+}
+.knowledge-view .metric{background:#19364e;box-shadow:none}
+.knowledge-view .knowledge-results{
+ max-height:none;overflow:visible;display:grid;contain:layout style;
+}
+.knowledge-view .knowledge-card{
+ contain:layout paint;min-height:105px;background:#15324b;
+ box-shadow:none!important;transition:none!important;
+}
+.knowledge-view .knowledge-card:hover{background:#23475f}
+.knowledge-view .evidence-node,.knowledge-view .evidence-source-row,
+.knowledge-view .brain-match,.knowledge-view .error-record{
+ background:#112d45;box-shadow:none!important;transition:none!important;
+}
+.knowledge-view .evidence-node:hover,.knowledge-view .evidence-source-row:hover,
+.knowledge-view .brain-match:hover,.knowledge-view .error-record:hover{background:#23465e}
+.knowledge-view button{transition:none!important;filter:none!important;box-shadow:none!important}
+.knowledge-view button:hover:not(:disabled){filter:none!important}
+.knowledge-view .knowledge-layout{align-items:start}
+.knowledge-view .knowledge-main>.panel,.knowledge-view .knowledge-side>.panel{min-width:0}
+.knowledge-view .evidence-map{contain:layout style}
+.knowledge-view .metrics{box-shadow:none}
+
+/* Two discrete always-present command bubbles, outside either scroll surface. */
+.persistent-docks{
+ display:flex;align-items:center;justify-content:space-between;
+ gap:10px;flex:none;height:48px;min-height:48px;min-width:0;
+ position:relative;z-index:6;
+}
+.persistent-docks .control-dock{
+ order:0;flex:0 1 auto;max-width:none;width:auto;min-width:0;
+ margin:0;align-self:center;overflow-x:auto;overflow-y:hidden;
+}
+.knowledge-dock{
+ display:flex;align-items:center;gap:10px;
+ flex:0 0 auto;min-width:0;height:46px;padding:3px 11px 3px 8px;
+ border:2px solid #a4cadb;border-radius:25px;
+ background:linear-gradient(#50809d,#315b79 23%,#0e2a45);
+ box-shadow:inset 0 1px #effaff83,0 3px 6px #0008;
+ white-space:nowrap;
+}
+.knowledge-dock-state{display:flex;align-items:center;gap:7px;padding-right:10px;border-right:1px solid #87b5cc77}
+.knowledge-dock-state>div{display:grid;gap:1px}
+.knowledge-dock-state strong{font-size:12px;line-height:1.1}
+.knowledge-dock-state small{font-size:9px;line-height:1.1;color:#b9d5e5}
+.knowledge-dock-limit{font:10px var(--numbers);color:#bfdceb}
+.knowledge-dock-actions{display:flex;align-items:center;gap:5px}
+.knowledge-dock-actions button{flex:none;font-size:11px;height:28px;border-radius:15px;padding:3px 9px}
+.knowledge-dock-message{
+ position:absolute;bottom:55px;right:0;max-width:460px;
+ border:1px solid #82b3cf;border-radius:9px;
+ background:#143a55;color:#e1f5ff;font-size:11px;padding:6px 10px;
+}
+.persistent-docks>.dock-message{position:absolute;bottom:55px;left:90px;max-width:520px}
+@media(max-width:1900px){
+ .knowledge-dock{gap:6px;padding-right:6px}
+ .knowledge-dock-limit{display:none}
+ .persistent-docks .control-dock{max-width:calc(100% - 310px)}
+ .knowledge-dock-actions button{padding:3px 7px}
+}
+@media(max-width:1350px){
+ .persistent-docks{height:48px;gap:6px}
+ .persistent-docks .control-dock{max-width:calc(100% - 255px)}
+ .knowledge-dock-state{gap:5px;padding-right:5px}
+ .knowledge-dock-actions{gap:3px}
+ .knowledge-dock-actions button{font-size:10px;padding:3px 5px}
+}
+@media(max-width:900px){
+ .persistent-docks{height:96px;flex-direction:column;align-items:stretch;justify-content:center;gap:5px}
+ .persistent-docks .control-dock{width:100%;max-width:100%;flex:none}
+ .knowledge-dock{height:42px;flex:none;align-self:flex-end}
+ .persistent-docks>.dock-message{bottom:103px;left:8px}
+ .knowledge-dock-message{bottom:103px}
+}

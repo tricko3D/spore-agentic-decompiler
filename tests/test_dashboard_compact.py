@@ -21,6 +21,8 @@ class CompactUIRegression(unittest.TestCase):
         cls.hooks=(WEB/"hooks.ts").read_text()
         cls.ops=(WEB/"views/Operations.tsx").read_text()
         cls.knowledge=(WEB/"views/Knowledge.tsx").read_text()
+        cls.agent_dock=(WEB/"components/AgentDock.tsx").read_text()
+        cls.knowledge_dock=(WEB/"components/KnowledgeDock.tsx").read_text()
 
     def test_compact_sheet_is_last_and_uses_original_instrument_palette(self):
         main=(WEB/"main.tsx").read_text()
@@ -57,7 +59,7 @@ class CompactUIRegression(unittest.TestCase):
     def test_views_are_lazy_and_only_the_current_view_is_mounted(self):
         self.assertIn("lazy(()=>import('./views/Operations'))",self.app)
         self.assertIn("lazy(()=>import('./views/Knowledge'))",self.app)
-        self.assertIn("view==='operations'?<Operations",self.app)
+        self.assertIn("view==='operations'",self.app)
         self.assertNotIn("<div hidden=",self.app)
         self.assertIn("Suspense",self.app)
 
@@ -69,18 +71,25 @@ class CompactUIRegression(unittest.TestCase):
         self.assertIn("inFlight.current?.abort()",self.hooks)
         self.assertIn("if(disposed||signal.signal.aborted||running)return",self.hooks)
 
-    def test_original_bottom_controls_and_knowledge_navigation(self):
-        self.assertGreater(self.ops.index("<LaunchDock snapshot={d}"),
-                           self.ops.index('<div className="operations-layout">'))
-        self.assertIn('onKnowledge={onKnowledge}',self.ops)
-        self.assertIn('className="dock-knowledge"',self.ops)
-        self.assertIn('className="knowledge-return-dock"',self.app)
+    def test_both_bubbles_persist_across_views(self):
+        self.assertIn('className="persistent-docks"',self.app)
+        self.assertIn('<AgentDock snapshot={snapshot}',self.app)
+        self.assertIn('<KnowledgeDock state={overview?.consolidator',self.app)
+        self.assertIn('className="control-dock"',self.agent_dock)
+        self.assertIn('className="knowledge-dock"',self.knowledge_dock)
+        self.assertIn('className="dock-knowledge"',self.agent_dock)
+        self.assertIn("Stop workers",self.agent_dock)
+        self.assertIn("Retry allowlist",self.agent_dock)
         self.assertNotIn('className="app-header"',self.app)
-        self.assertIn("Stop workers",self.ops)
-        self.assertIn("Retry allowlist",self.ops)
-        self.assertIn("height:46px",self.css)
-        self.assertIn(".ops-left{",self.css)
-        self.assertIn("overflow-y:auto",self.css)
+        self.assertNotIn('className="knowledge-return-dock"',self.app)
+
+    def test_knowledge_one_scroll_owner_and_no_heavy_hover(self):
+        self.assertIn('view-content>.knowledge-view',self.css)
+        self.assertRegex(self.css,r'\.knowledge-view \.knowledge-results\s*\{[^}]*max-height:none')
+        self.assertRegex(self.css,r'\.knowledge-view \.knowledge-results\s*\{[^}]*overflow:visible')
+        self.assertIn('transition:none!important',self.css)
+        self.assertIn('background:#15324b',self.css)
+        self.assertIn('contain:layout paint',self.css)
 
     def test_knowledge_graph_memo_receives_stable_callbacks(self):
         self.assertIn("const openTechnique=useCallback",self.knowledge)

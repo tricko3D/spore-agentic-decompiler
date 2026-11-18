@@ -7,7 +7,9 @@ while providing a separately managed, interactive Collective Memory view.
 
 ## Application boundaries
 
-- dashboard_web/src/App.tsx: top-level shell and Operations/Knowledge navigation.
+- dashboard_web/src/App.tsx: shell, shared telemetry polling and two persistent control bubbles.
+- dashboard_web/src/components/AgentDock.tsx: persistent decompiler launch/stop and view switch.
+- dashboard_web/src/components/KnowledgeDock.tsx: persistent independent consolidator control and settings.
 - dashboard_web/src/views/Operations.tsx: existing worker fleet, byte metrics,
   function explorer, expedition controls, provisional planning, allowlist editor,
   claimed-user selection, attempt history and checker diagnostics.
@@ -51,7 +53,7 @@ large Windows/Chromium displays. The compact mode addresses this structurally:
   desktop displays, with scroll limited to necessary data areas.
 - Keeps 16 agent cards small and fixed-height instead of stretching the grid
   to the entire document's height.
-- Retains launch/stop controls in the Spore-style bottom command dock, with one Knowledge switch. Operations remains the default view, and Knowledge has a bottom Operations return button.
+- The Spore-style Agent bubble and a separate Knowledge service bubble are both fixed to the bottom, in both views. Operations remains the default and the Agent bubble switches views.
 - Replaces the width-scaled SVG graph with a bounded, clickable source-link
   adjacency map. Selecting a technique reveals the investigations supporting
   that specific observation, with explicit access to full details.
@@ -79,7 +81,7 @@ cd ~/spore-agentic-decompiler
 python3 spore_agentic.py dashboard --control
 ~~~
 
-Open http://127.0.0.1:8765. Operations opens by default with the agent fleet and bottom command controls. Switch to Knowledge from the bottom dock and return with the Operations button.
+Open http://127.0.0.1:8765. Operations opens by default with the agent fleet. Both independent command bubbles stay visible in either view; switch via the Agent bubble.
 The old dashboard remains accessible at http://127.0.0.1:8765/legacy and
 is used automatically if the compiled frontend does not exist.
 
@@ -161,3 +163,7 @@ separate read-model and service modules without another frontend rewrite.
 
 This feature is developed on feature/dashboard-knowledge-v2. Main and dev
 continue to work until the feature branch is validated and merged.
+
+## Knowledge interaction performance
+
+Knowledge now has a single native scrolling owner. Its previously nested result-list scroll is removed, and Knowledge panels/cards have static opaque backgrounds, no backdrop blur and no expensive hover transitions. Controls remain mounted outside the scroll surface. CI validates builds and regression tests, but cannot measure actual Windows browser GPU frame time.

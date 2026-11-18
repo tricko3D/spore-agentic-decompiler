@@ -4,7 +4,7 @@ import {usePoll} from '../hooks';
 import {Drawer,ErrorText,Metric,Panel,Tag} from '../components/Panel';
 import BrainGraph from '../components/BrainGraph';
 import BrainSearch from '../components/BrainSearch';
-import type {BrainGraph as Graph,ConsolidatorState,Finding,FindingDetail,
+import type {BrainGraph as Graph,Finding,FindingDetail,
   KnowledgeOverview,Paginated,Technique,TechniqueDetail} from '../types';
 
 type Selection={kind:'technique'|'finding';id:number};
@@ -78,62 +78,7 @@ function EvidenceInspector({selection,onClose,onChoose,refresh}:{selection:Selec
  </Drawer>;
 }
 
-function BrainSettings({state,onRefresh}:{state:ConsolidatorState|null;onRefresh:()=>void}){
- const [editing,setEditing]=useState(false),[budget,setBudget]=useState(0.25),
-  [batch,setBatch]=useState(3),[interval,setIntervalValue]=useState(180),
-  [busy,setBusy]=useState(false),[message,setMessage]=useState('');
- useEffect(()=>{
-  if(!state||editing)return;
-  setBudget(state.settings.daily_usd);
-  setBatch(state.settings.batch);
-  setIntervalValue(state.settings.interval);
- },[state,editing]);
- async function control(action:'start'|'stop'){
-  setBusy(true);
-  try{await post('/api/knowledge/service',{action});setMessage(action==='stop'?'Consolidator paused':'Consolidator running');onRefresh()}
-  catch(e){setMessage((e as Error).message)}
-  finally{setBusy(false)}
- }
- async function save(){
-  setBusy(true);
-  try{await post('/api/knowledge/settings',{daily_usd:budget,batch,interval});
-   setMessage('Settings saved, effective at the next consolidation cycle.');setEditing(false);onRefresh()}
-  catch(e){setMessage((e as Error).message)}
-  finally{setBusy(false)}
- }
- return <Panel title="Knowledge consolidation" subtitle="Independent systemd service · DeepSeek V4.1 Flash">
-  <div className="row-between"><div className="state-line">
-   <span className={'status-dot '+(state?.active?'online':'offline')}></span>
-   <strong>{state?.active?'ONLINE':state?.installed?'OFFLINE':'NOT CONFIGURED'}</strong>
-   <span className="subtle">{state?.mode||'Unavailable'}</span>
-  </div>
-   <div className="inline-actions">
-    <button disabled={!controlsEnabled||!state?.controls_available||busy||state.active}
-      onClick={()=>void control('start')}>Start</button>
-    <button disabled={!controlsEnabled||!state?.controls_available||busy||!state.active}
-      onClick={()=>void control('stop')}>Pause</button>
-   </div>
-  </div>
-  {state?.hint&&<p className="subtle">{state.hint}</p>}
-  <div className="settings-grid">
-   <label>Daily USD cap<input type="number" min=".01" max="10" step=".01"
-    value={budget} disabled={!controlsEnabled||!editing} onChange={e=>setBudget(Number(e.target.value))}/></label>
-   <label>Batch<input type="number" min="1" max="20" value={batch} disabled={!controlsEnabled||!editing}
-    onChange={e=>setBatch(Number(e.target.value))}/></label>
-   <label>Interval (s)<input type="number" min="30" max="7200" value={interval}
-    disabled={!controlsEnabled||!editing} onChange={e=>setIntervalValue(Number(e.target.value))}/></label>
-  </div>
-  <div className="row-between"><p className="subtle">A local admission cap, not a provider-enforced credit limit.</p>
-   <div className="inline-actions">{editing?<><button onClick={()=>setEditing(false)}>Cancel</button>
-    <button className="primary" disabled={busy} onClick={()=>void save()}>Save</button></>:
-    <button disabled={!controlsEnabled} onClick={()=>setEditing(true)}>Configure</button>}</div>
-  </div>
-  {message&&<p className="dock-message" role="status">{message}</p>}
- </Panel>;
-}
-
-export default function Knowledge({active}:{active:boolean}){
- const {value:overview,error:summaryError,refresh}=usePoll<KnowledgeOverview>('/api/knowledge/overview',10000,active);
+export default function Knowledge({active,overview,summaryError,refreshOverview}:{active:boolean;overview:KnowledgeOverview|null;summaryError:string;refreshOverview:()=>void}){
  const {value:graph}=usePoll<Graph>('/api/knowledge/graph?limit=35',45000,active);
  const [mode,setMode]=useState<'techniques'|'findings'>('techniques');
  const [draft,setDraft]=useState(''),[search,setSearch]=useState(''),[category,setCategory]=useState<Category>('all');
@@ -212,7 +157,6 @@ export default function Knowledge({active}:{active:boolean}){
     </Panel>
    </div>
    <div className="knowledge-side">
-    <BrainSettings state={overview?.consolidator||null} onRefresh={()=>void refresh()}/>
     <Panel title="Extraction pipeline" subtitle="Status of the independent, evidence-backed queue">
      <div className="queue-bars">
       {['done','claimed','pending','failed'].map(x=><div key={x} className="queue-row">
@@ -237,6 +181,6 @@ export default function Knowledge({active}:{active:boolean}){
    </div>
   </div>
   {selection&&<EvidenceInspector selection={selection} onChoose={setSelection}
-    onClose={()=>setSelection(null)} refresh={()=>void refresh()}/>}
+    onClose={()=>setSelection(null)} refresh={refreshOverview}/>}
  </section>;
 }
