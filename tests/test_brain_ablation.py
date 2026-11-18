@@ -146,6 +146,38 @@ def run_one():
         plan=json.loads((self.destination/"plan.json").read_text())
         self.assertTrue(all(x["state"]=="prepared" for x in plan["arms"]))
 
+    def test_mocked_paid_run_records_one_independent_trial_only(self):
+        bench.prepare(self.source,self.destination,repeats=1)
+        before=(self.source/bench.slice_path(VA)).read_bytes()
+        def fake_agent(cmd,**kwargs):
+            self.assertIn("--only-va",cmd)
+            self.assertEqual(cmd[cmd.index("--only-va")+1],VA)
+            self.assertEqual(kwargs["env"]["OPENROUTER_API_KEY"],"mock-not-a-real-key")
+            self.assertIn(kwargs["env"]["SAD_BENCH_ARM"],bench.ARMS)
+            with sqlite3.connect(kwargs["cwd"]/bench.OPS) as db:
+                db.execute("INSERT INTO attempts(va,status,note,utc) VALUES(?,?,?,?)",
+                           (VA,"FAIL","checker: size=120/120 diffs=3",bench.now()))
+            return mock.Mock(returncode=0)
+        with mock.patch.dict("os.environ",{"OPENROUTER_API_KEY":"mock-not-a-real-key"}):
+            with mock.patch.object(bench,"_start_vectors",return_value=None):
+                with mock.patch.object(bench.subprocess,"run",side_effect=fake_agent) as runner:
+                    bench.run_next(self.destination,execute=True,budget=.50)
+        self.assertEqual(runner.call_count,1)
+        plan=json.loads((self.destination/"plan.json").read_text())
+        first=plan["arms"][0]
+        self.assertEqual(first["state"],"completed")
+        trial=self.destination/"trials"/first["name"]
+        self.assertTrue(trial.exists())
+        self.assertEqual((self.source/bench.slice_path(VA)).read_bytes(),before)
+        with sqlite3.connect(self.source/bench.OPS) as live:
+            self.assertEqual(live.execute(
+                "SELECT COUNT(*) FROM attempts WHERE va=?",(VA,)).fetchone()[0],7)
+        bench.report(self.destination)
+        data=json.loads((self.destination/"report.json").read_text())
+        row=next(x for x in data["trials"] if x["name"]==first["name"])
+        self.assertFalse(row["match"])
+        self.assertEqual(row["diff_bytes"],3)
+
     def test_isolation_refuses_source_parent_and_existing_output(self):
         with self.assertRaises(ValueError):
             bench.prepare(self.source,self.source/"inside",repeats=1)
