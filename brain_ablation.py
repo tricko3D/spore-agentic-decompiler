@@ -927,6 +927,69 @@ def repair_seed(out):
     print("The next action is retry-invalid (no paid inference), then run-next.")
 
 
+def _audit_preflight_sqlite(out, trial, va):
+    """Prove an orphan's operational rows contain NO post-snapshot activity.
+
+    The old clone copied seed .sqlite3 without its WAL. SQLite opening that
+    stale file may checkpoint or update header pages, making a raw SHA256
+    comparison with either seed or archive unreliable. The only valid
+    automatic recovery is a *subset* of the frozen historical archive,
+    without any newly created attempt, session or payment record.
+    """
+    from collections import Counter
+
+    baseline=out/"archive"/"spore.sqlite3"
+    suspect=trial/OPS
+    if not baseline.is_file() or not suspect.is_file():
+        raise RuntimeError("Missing historical SQLite evidence; manual audit required")
+    tables=(
+        "queue","attempts","attempt_reviews","run_budgets","runs",
+        "agent_sessions","claims","inference_slots","reservations",
+        "assignments","provider_incidents","run_delays",
+        "run_attempt_limits","run_exclusions",
+    )
+    def readonly(path):
+        return sqlite3.connect(f"file:{path.resolve()}?mode=ro",uri=True)
+    with readonly(baseline) as old, readonly(suspect) as live:
+        if old.execute("PRAGMA quick_check").fetchone()[0]!="ok" or (
+                live.execute("PRAGMA quick_check").fetchone()[0]!="ok"):
+            raise RuntimeError("Preflight database failed SQLite integrity validation")
+        for db in (old,live):
+            if db.execute("SELECT COUNT(*) FROM sqlite_master "
+                          "WHERE type='table' AND name='attempts'").fetchone()[0]!=1:
+                raise RuntimeError("Preflight database has no attempt ledger")
+        historical=old.execute(
+            "SELECT COUNT(*) FROM attempts WHERE va=?",(va,)).fetchone()[0]
+        stale=live.execute(
+            "SELECT COUNT(*) FROM attempts WHERE va=?",(va,)).fetchone()[0]
+        if historical==0 or stale==0:
+            raise RuntimeError(
+                "Expected old historical attempts in failed preflight clone; "
+                "cannot prove the WAL-copy failure")
+        for name in tables:
+            table=name.replace('"','""')
+            present=[
+                bool(db.execute(
+                    "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
+                    (name,)).fetchone())
+                for db in (old,live)
+            ]
+            if present!=[True,True] and present!=[False,False]:
+                raise RuntimeError(f"Operational schema changed for {name}")
+            if not present[0]:
+                continue
+            historical_rows=Counter(tuple(row) for row in
+                                    old.execute(f'SELECT * FROM "{table}"'))
+            current_rows=Counter(tuple(row) for row in
+                                 live.execute(f'SELECT * FROM "{table}"'))
+            extras=current_rows-historical_rows
+            if extras:
+                raise RuntimeError(
+                    f"Trial SQLite contains {sum(extras.values())} unarchived "
+                    f"row(s) in {name}; possible agent activity, manual audit required")
+    return stale
+
+
 def _retire_unstarted_clone(out, plan, item):
     """Recover a pre-agent WAL-copy failure, preserving the original directory.
 
@@ -951,10 +1014,10 @@ def _retire_unstarted_clone(out, plan, item):
         raise RuntimeError("Trial contains agent JSONL traces; manual audit required")
     if not (trial/OPS).is_file() or not (out/"seed"/OPS).is_file():
         raise RuntimeError("Missing operational database; cannot certify pre-agent clone")
-    # This exact preflight defect made a byte-for-byte SQLite base-file copy
-    # of the seed. A modified trial database could represent real agent work.
-    if _tool_hash(trial/OPS)!=_tool_hash(out/"seed"/OPS):
-        raise RuntimeError("Trial SQLite differs from seed base; cannot certify no agent work")
+    # Compare the *logical* ledger with the frozen historical archive, not
+    # physical SQLite bytes. WAL recovery/checkpoints may alter those bytes
+    # without ever running a paid agent.
+    old_attempts=_audit_preflight_sqlite(out,trial,plan["target"])
     source=trial/slice_path(plan["target"])
     expected=(out/"seed"/slice_path(plan["target"]))
     if not source.is_file() or not expected.is_file() or source.read_bytes()!=expected.read_bytes():
@@ -976,8 +1039,9 @@ def _retire_unstarted_clone(out, plan, item):
     })
     item["name"]=replacement
     write_json(out/"plan.json",plan)
-    print("Recovered unstarted, unchanged clone",old_name,
-          "; preserving it and retrying as",replacement,flush=True)
+    print("Recovered pre-agent clone",old_name,
+          f"({old_attempts} stale historical attempts, no new ledger rows);",
+          "preserving it and retrying as",replacement,flush=True)
     return True
 
 

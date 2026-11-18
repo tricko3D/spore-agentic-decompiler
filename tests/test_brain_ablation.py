@@ -714,8 +714,15 @@ def run_one():
         seed=self.destination/"seed"
         trial=self.destination/"trials"/item["name"]
         bench._clone(seed,trial)
-        # Keep a stale physically copied SQLite file (same as historical code).
-        shutil.copy2(seed/bench.OPS,trial/bench.OPS)
+        # Reproduce the old trial before any agent work: it sees the archive's
+        # historical rows instead of the seed's logically emptied WAL state.
+        # Its bytes differ from seed, as reported on the real WSL machine.
+        shutil.copy2(self.destination/"archive"/"spore.sqlite3",trial/bench.OPS)
+        with sqlite3.connect(trial/bench.OPS) as db:
+            self.assertGreater(db.execute(
+                "SELECT COUNT(*) FROM attempts WHERE va=?",(VA,)).fetchone()[0],0)
+        self.assertNotEqual(bench._tool_hash(trial/bench.OPS),
+                            bench._tool_hash(seed/bench.OPS))
         bench.write_json(trial/bench.CONFIG, {
             "arm":item["arm"],"repeat":item["repeat"],
             "target":plan["target"],"alias":plan["alias"],
@@ -735,6 +742,29 @@ def run_one():
         self.assertFalse((self.destination/"trials"/item["name"]).exists())
         self.assertFalse(bench._retire_unstarted_clone(self.destination,plan,item))
         # The retry will use the normal snapshot clone, which is checked above.
+
+    def test_recovery_refuses_new_results_despite_missing_agent_logs(self):
+        plan,item,trial=self._make_unstarted_preflight_clone()
+        with sqlite3.connect(trial/bench.OPS) as db:
+            db.execute("INSERT INTO attempts(va,status,note,utc) VALUES(?,?,?,?)",
+                       (VA,"MATCH","new generated candidate",bench.now()))
+        with self.assertRaisesRegex(RuntimeError,"unarchived row"):
+            bench._retire_unstarted_clone(self.destination,plan,item)
+        self.assertEqual(item["state"],"prepared")
+        self.assertEqual(item["name"],plan["arms"][0]["name"])
+        self.assertEqual(len(item.get("invalid_history",[])),0)
+
+    def test_recovery_accepts_archived_subset_even_after_sqlite_header_changes(self):
+        plan,item,trial=self._make_unstarted_preflight_clone()
+        with sqlite3.connect(trial/bench.OPS) as db:
+            db.execute("DELETE FROM attempts WHERE va=? AND id=(SELECT MIN(id) "
+                       "FROM attempts WHERE va=?)",(VA,VA))
+            db.execute("PRAGMA user_version=31")
+        # Old clone's logical ledger is a strict subset of the archive.
+        # Even after SQLite has modified its file, no NEW activity is present.
+        self.assertEqual(
+            bench._audit_preflight_sqlite(self.destination,trial,VA),6)
+        self.assertTrue(bench._retire_unstarted_clone(self.destination,plan,item))
 
     def test_recovery_refuses_started_agent_or_modified_source(self):
         plan,item,trial=self._make_unstarted_preflight_clone()
