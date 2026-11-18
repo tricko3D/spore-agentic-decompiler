@@ -592,6 +592,65 @@ html,body,.grid,.table-scroll,.drawer,.timeline,.control-status{
  .mission-goal{margin:5px 0}
 }
 @media(max-width:500px){.mission-facts{grid-template-columns:1fr}}
+
+/* Allow list, the same blue in-game panel vocabulary as the SAD command deck. */
+.allowlist-overlay{
+ position:fixed;inset:0;z-index:30;
+ display:flex;align-items:center;justify-content:center;
+ padding:16px;background:rgba(1,9,23,.83);
+ backdrop-filter:blur(6px);
+}
+.allowlist-overlay[hidden]{display:none!important}
+.allowlist-panel{
+ display:flex;flex-direction:column;gap:11px;min-width:0;
+ width:min(760px,96vw);max-height:min(92dvh,930px);
+ padding:17px 18px;
+ border:2px solid #8bbbd3;border-radius:20px;
+ background:linear-gradient(150deg,#345d7a,#1e3e5b 13%,#10263d 83%,#153350);
+ color:#e8f7ff;
+ box-shadow:inset 0 2px #d2f4ff77,inset 0 -4px 7px #051628,0 18px 60px #000d;
+}
+.allowlist-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px}
+.allowlist-title{display:flex;align-items:center;gap:10px;min-width:0}
+.allowlist-title>div{min-width:0}
+.allowlist-title h2{font-size:19px;margin:0 0 3px}
+.allowlist-path{color:#9ebfd1;font-size:10px;overflow-wrap:anywhere;max-width:620px}
+.allowlist-description{font-size:12px;color:#c8e1ef;line-height:1.4}
+.allowlist-toolbar{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.allowlist-toolbar input{flex:1 1 200px;min-width:120px}
+.allowlist-count{margin-right:auto;font-size:11px;color:#b0ccdc;white-space:nowrap}
+.allowlist-scroll{
+ flex:1 1 auto;min-height:190px;
+ overflow:auto;padding:7px;scrollbar-gutter:stable;
+ border:1px solid #557b99;border-radius:12px;
+ background:#081d32;box-shadow:inset 0 2px 6px #0007;
+}
+.allowlist-row{display:flex;align-items:center;gap:9px;padding:4px 5px;border-bottom:1px solid #264864}
+.allowlist-row:last-child{border-bottom:0}
+.allowlist-row .allowlist-index{flex:0 0 40px;color:#7da0b9;text-align:right;font:11px var(--numbers)}
+.allowlist-row input{flex:1 1 auto;min-width:0;height:31px;border-radius:7px;padding:5px 8px;font:12px var(--numbers)}
+.allowlist-row button{flex:0 0 auto;font-size:11px;padding:5px 11px!important;border-radius:12px!important}
+.allowlist-row .remove-entry{border-color:#ad7180!important;color:#ffd2d7!important}
+.allowlist-json{
+ flex:1 1 auto;display:block;width:100%;min-height:250px;resize:vertical;
+ padding:12px;border:1px solid #658ea9;border-radius:12px;
+ background:#071c30;color:#d2edf9;
+ font:12px/1.52 var(--numbers);tab-size:2;
+}
+.allowlist-json[hidden]{display:none!important}
+.allowlist-foot{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}
+.allowlist-message{font-size:11px;color:#bbd7e9;line-height:1.4;flex:1 1 260px;overflow-wrap:anywhere}
+.allowlist-message[data-kind="error"]{color:#ffb1bb}
+.allowlist-message[data-kind="saved"]{color:#b6ee9e}
+.allowlist-actions{display:flex;align-items:center;gap:8px;margin-left:auto}
+.allowlist-panel button:disabled,.allowlist-panel input:disabled,.allowlist-panel textarea:disabled{opacity:.5;cursor:not-allowed}
+@media(max-width:600px){
+ .allowlist-panel{padding:12px;max-height:95dvh}
+ .allowlist-path{font-size:9px}
+ .allowlist-row{gap:5px}
+ .allowlist-row .allowlist-index{flex-basis:25px}
+ .allowlist-row button{padding:5px 7px!important}
+}
 </style></head>
 <body>
 <div class="game-shell">
@@ -678,6 +737,7 @@ html,body,.grid,.table-scroll,.drawer,.timeline,.control-status{
       <label class="dock-field dock-number"><span>Passes</span><input id="passesInput" aria-label="Additional passes" title="Additional valid attempts per eligible function each launch" type="number" min="1" max="24" value="3"></label>
       <label class="dock-field dock-number"><span>Idle</span><input id="minutesInput" aria-label="Idle timeout in minutes" title="Stops after inactivity, not total runtime" type="number" min="15" max="120" value="20"></label>
       <label class="dock-field dock-budget"><span>Budget $</span><input id="budgetInput" aria-label="Budget in USD" type="number" min="0.01" step="0.01" value="20"></label>
+      <button type="button" id="allowListBtn" title="Open and edit the active retry allow list">Allow list</button>
       <button class="primary" type="submit" id="runToggle" data-mode="launch" aria-label="Launch decompilation">Launch</button>
       <span class="dock-action-feedback" id="actionFeedback" data-state="idle" aria-live="polite">Ready</span>
     </form>
@@ -688,6 +748,32 @@ html,body,.grid,.table-scroll,.drawer,.timeline,.control-status{
 <div class="status-pod" aria-label="Connection status">
  <div class="up"><span class="dot" id="dot"></span><span id="connection">Connecting…</span><span class="small" id="clock"></span></div>
  <div class="dock-subline">Local dashboard <span id="error"></span></div>
+</div>
+<div class="allowlist-overlay" id="allowListOverlay" hidden>
+ <section class="allowlist-panel" id="allowListPanel" role="dialog" aria-modal="true" aria-labelledby="allowListHeading" tabindex="-1">
+  <header class="allowlist-head">
+   <div class="allowlist-title"><span class="bubble-glyph" aria-hidden="true">▦</span>
+    <div><h2 id="allowListHeading">Allow list</h2><div class="allowlist-path mono" id="allowListPath">Loading…</div></div>
+   </div>
+   <button type="button" id="allowListClose" aria-label="Close allow list">Close</button>
+  </header>
+  <p class="allowlist-description">Only the functions in this JSON list can be assigned when running all modules. Remove or edit addresses, then save. Changes apply to the next launch.</p>
+  <div class="allowlist-toolbar">
+   <input id="allowListFilter" type="search" placeholder="Find address" aria-label="Filter addresses">
+   <span class="allowlist-count" id="allowListCount">Loading…</span>
+   <button id="allowListAdd" type="button">Add address</button>
+   <button id="allowListMode" type="button">Edit JSON</button>
+  </div>
+  <div class="allowlist-scroll" id="allowListRows" aria-label="Allow list addresses"></div>
+  <textarea class="allowlist-json mono" id="allowListJson" aria-label="Raw allow list JSON" spellcheck="false" hidden></textarea>
+  <div class="allowlist-foot">
+   <div class="allowlist-message" id="allowListMessage" role="status" aria-live="polite"></div>
+   <div class="allowlist-actions">
+    <button type="button" id="allowListReload">Reload</button>
+    <button type="button" class="primary" id="allowListSave">Save changes</button>
+   </div>
+  </div>
+ </section>
 </div>
 <div class="drawer-back" id="backdrop"></div>
 <aside class="drawer" id="drawer" aria-label="Function or agent details"><div class="drawer-head"><div><h2 id="detailTitle">Details</h2><p id="detailSub"></p></div><button id="close">Close</button></div><div id="detailBody"></div></aside>
