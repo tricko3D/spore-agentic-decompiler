@@ -39,7 +39,13 @@ import struct
 import sys
 import threading
 import time
-import spore_memory_evidence as evidence
+# Load the sibling parser explicitly without restoring work/scratch to the
+# import search path: upstream dis.py would shadow Python's stdlib dis module.
+import importlib.util as _evidence_util
+_evidence_spec = _evidence_util.spec_from_file_location(
+    "sad_spore_memory_evidence", Path(__file__).with_name("spore_memory_evidence.py"))
+evidence = _evidence_util.module_from_spec(_evidence_spec)
+_evidence_spec.loader.exec_module(evidence)
 
 MODEL = "BAAI/bge-small-en-v1.5"
 DIM = 384
