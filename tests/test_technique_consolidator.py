@@ -93,6 +93,74 @@ class ConsolidationTests(unittest.TestCase):
         # be bypassed with repeated unsuccessful provider requests.
         self.assertGreater(tech.status(self.root)["reserved_or_spent_today_usd"],0)
 
+    def test_malformed_response_does_not_block_other_findings(self):
+        tech.memory.ingest(self.root, OTHER, 1, "FAIL",
+                           note="different stack frame layout and register pressure",
+                           checker="NO MATCH 492/488")
+        call_count = []
+        def partial_failure(key, prompt):
+            call_count.append(prompt)
+            if len(call_count) == 1:
+                invalid = self.proposal()
+                invalid["evidence_quote"] = "Invented source that was never present"
+                return {"techniques":[invalid]}, {
+                    "cost":0.0009,"prompt_tokens":400,"completion_tokens":140}
+            return {"techniques":[]}, {
+                "cost":0.0007,"prompt_tokens":350,"completion_tokens":50}
+        result = tech.process(self.root,max_items=2,daily_usd=0.25,
+                              caller=partial_failure,key="test")
+        self.assertEqual(result["processed"],1)
+        self.assertEqual(result["failed"],1)
+        self.assertEqual(len(call_count),2)
+        self.assertEqual(len(result["errors"]),1)
+        self.assertIn("Unsubstantiated",result["errors"][0]["reason"])
+        self.assertEqual(result["stats"]["queue"]["pending"],1)
+        self.assertEqual(result["stats"]["queue"]["done"],1)
+        self.assertTrue(result["stats"]["recent_errors"])
+        # Invalid DeepSeek JSON is charged at returned actual cost,
+        # not the full $0.01 conservative reservation.
+        with tech.memory.connection(self.root) as con:
+            usage = con.execute("SELECT SUM(cost_usd) FROM technique_spend").fetchone()[0]
+        self.assertAlmostEqual(usage,0.0016)
+
+    def test_failed_finding_cools_down_and_is_not_immediately_retried(self):
+        bad = self.proposal()
+        bad["evidence_quote"] = "Completely unsupported invented text"
+        fake,calls = self.fake_api({"techniques":[bad]})
+        first = tech.process(self.root,max_items=10,caller=fake,key="test")
+        self.assertEqual(first["failed"],1)
+        self.assertEqual(len(calls),1)
+        self.assertEqual(tech.process(self.root,max_items=10,caller=fake,
+                                      key="test")["processed"],0)
+        self.assertEqual(len(calls),1)
+        with tech.memory.connection(self.root) as con:
+            row = con.execute(
+                "SELECT next_retry_utc,failures FROM technique_queue").fetchone()
+            self.assertIsNotNone(row["next_retry_utc"])
+            self.assertEqual(row["failures"],1)
+
+    def test_existing_database_migrates_retry_field_without_losing_queue(self):
+        with tech.memory.connection(self.root) as con:
+            # Reproduce the old schema by reconstructing its queue table
+            # before running the idempotent ensure() migration.
+            con.execute("DROP TABLE technique_queue")
+            con.execute("""CREATE TABLE technique_queue (
+                finding_id INTEGER PRIMARY KEY REFERENCES findings(id),
+                source_hash TEXT NOT NULL,
+                state TEXT NOT NULL DEFAULT 'pending',
+                failures INTEGER NOT NULL DEFAULT 0,
+                lease_utc TEXT,updated_utc TEXT NOT NULL,error TEXT NOT NULL DEFAULT ''
+            )""")
+            con.execute("""INSERT INTO technique_queue
+                (finding_id,source_hash,state,updated_utc)
+                SELECT id,source_hash,'pending',? FROM findings""",(tech.now(),))
+        tech.ensure(self.root)
+        with tech.memory.connection(self.root) as con:
+            cols = {col["name"] for col in con.execute("PRAGMA table_info(technique_queue)")}
+            count = con.execute("SELECT COUNT(*) FROM technique_queue").fetchone()[0]
+        self.assertIn("next_retry_utc",cols)
+        self.assertEqual(count,1)
+
     def test_empty_techniques_is_valid_and_idempotent(self):
         fake,_ = self.fake_api({"techniques":[]})
         result = tech.process(self.root,caller=fake,key="test")
@@ -254,6 +322,17 @@ class ConsolidationTests(unittest.TestCase):
                           cwd=self.root,text=True,capture_output=True,timeout=12)
         self.assertEqual(r.returncode,0,r.stderr)
         self.assertIn('"techniques": 0',r.stdout)
+
+    def test_automatic_service_installation_is_explicit_and_shell_valid(self):
+        helper = ROOT / "enable_automatic_consolidation.sh"
+        self.assertTrue(helper.is_file())
+        result = subprocess.run(["bash","-n",str(helper)],capture_output=True,text=True)
+        self.assertEqual(result.returncode,0,result.stderr)
+        source = helper.read_text()
+        self.assertIn("systemctl --user enable --now",source)
+        self.assertIn("nohup",source)
+        self.assertIn("--disable",source)
+        self.assertIn("--daily-usd",source)
 
     def test_installer_opt_in_and_runner_uses_technique_search(self):
         installer = (ROOT/"install_collective_memory.sh").read_text()
