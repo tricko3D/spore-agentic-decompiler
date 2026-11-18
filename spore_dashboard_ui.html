@@ -719,12 +719,14 @@ function syncRunAction(d){
  if(active){
   commandPhase='running';
   paintRunAction('stop','Running');
+ }else if(commandPhase==='error'){
+  // Retain the immediate API failure instead of replacing it with an
+  // unrelated exit status from an earlier coordinator.
+  paintRunAction('launch','Failed');
  }else if(exitKnown&&state.returncode!==0){
   commandPhase='error';
   paintRunAction('launch','Failed');
   set('controlMessage',state.error||'Coordinator exited with status '+state.returncode);
- }else if(commandPhase==='error'){
-  paintRunAction('launch','Failed');
  }else{
   if(commandPhase==='running'){
    commandPhase='idle';
@@ -765,9 +767,9 @@ async function control(action,payload={}){
   set('controlMessage',e.message||'Control request failed');
  }finally{
   mutating=false;
-  if(lastSnapshot)syncRunAction(lastSnapshot);
-  else paintRunAction(commandPhase==='starting'?'starting':commandPhase==='stopping'?'stopping':'launch',commandPhase==='error'?'Failed':commandPhase==='starting'?'Starting':commandPhase==='stopping'?'Stopping':'Ready');
-  // The next snapshot, not an optimistic click, confirms Running/Stopped.
+  // Keep the newly requested state visible until a FRESH snapshot arrives.
+  // Reusing lastSnapshot here can resurrect a prior run's failed exit code.
+  paintRunAction(commandPhase==='starting'?'starting':commandPhase==='stopping'?'stopping':'launch',commandPhase==='error'?'Failed':commandPhase==='starting'?'Starting':commandPhase==='stopping'?'Stopping':'Ready');
   poll();
  }
 }
