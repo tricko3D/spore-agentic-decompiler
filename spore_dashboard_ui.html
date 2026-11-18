@@ -699,6 +699,7 @@ const bytes=x=>typeof x==='number'?new Intl.NumberFormat('en-US').format(x)+' B'
 const agreement=(x,total,status)=>!x?(status==='FAIL'||status==='DEFER'?`unknown / ${total} bytes`:'—'):x.matched!=null?`${x.matched}/${x.total} bytes`:x.kind==='size_mismatch'?`size ${x.compiled_size}/${x.retail_size} B`:'—';
 let selected=null,off=0,query='',filter='ALL',total=0,mutating=false,detailBusy=false;
 let commandPhase='idle',lastSnapshot=null,pendingLaunchSettings=null;
+let previewKey='',previewState=null,previewSerial=0,previewTimer=null;
 function set(id,v){$(id).textContent=v}
 function eventHtml(e){return `<div class="event"><span class="kind">${esc(e.kind)}</span><div class="body">${esc(e.message)}</div></div>`}
 function openDrawer(type,id){selected={type,id};$('backdrop').classList.add('open');$('drawer').classList.add('open');refreshDetail()}
@@ -714,6 +715,26 @@ function missionSelection(){
   budget_usd:+$('budgetInput').value
  };
 }
+function scheduleMissionPreview(){
+ if(!CONTROL||mutating||commandPhase==='starting'||commandPhase==='running'||commandPhase==='stopping'||runCoordinatorActive(lastSnapshot))return;
+ const selected=missionSelection(),key=selected.module+'|'+selected.workers;
+ if(!selected.workers||selected.workers<1||selected.workers>32||previewKey===key)return;
+ previewKey=key;previewState={key,loading:true};
+ const ticket=++previewSerial;
+ if(previewTimer)clearTimeout(previewTimer);
+ if(lastSnapshot)renderMission(lastSnapshot);
+ previewTimer=setTimeout(async()=>{
+  try{
+   const plan=await json('/api/plan?module='+encodeURIComponent(selected.module)+'&workers='+selected.workers);
+   if(ticket!==previewSerial)return;
+   previewState={key,...plan};
+  }catch(e){
+   if(ticket!==previewSerial)return;
+   previewState={key,error:e.message||'Preview unavailable'};
+  }
+  if(lastSnapshot)renderMission(lastSnapshot);
+ },450);
+}
 function renderMission(d){
  const r=d?.run||{},controller=d?.controller||{};
  const active=runCoordinatorActive(d);
@@ -726,9 +747,15 @@ function renderMission(d){
  set('missionStage',assigned?'Assigned targets':preparing?'Preparing run':'Next launch');
  set('missionGoal','Generate C++ candidates and independently verify byte-exact matches across '+scope+'.');
  const count=assigned?r.targets:null,already=r.initial_outcomes||{};
- set('missionTargets',count===null?
-  'Count determined after classification':
-  count+' functions · '+bytes(r.bytes_target||0));
+ const key=missionSelection().module+'|'+missionSelection().workers;
+ const shownPreview=!assigned&&!preparing&&previewState?.key===key?previewState:null;
+ set('missionTargets',count!==null?count+' functions · '+bytes(r.bytes_target||0):
+  preparing?'Classifying targets, no inference until workers start':
+  shownPreview?.loading?'Calculating eligible targets (free preview)…':
+  shownPreview?.error?'Preview unavailable':
+  typeof shownPreview?.eligible==='number'?
+   shownPreview.eligible+' eligible in current queue (provisional)':
+   'Count determined after classification');
  const types=assigned?[
   ['FAIL','previous failures'],['DEFER','deferred retries'],['PENDING','first attempts']
  ].filter(item=>(already[item[0]]||0)>0).map(item=>already[item[0]]+' '+item[1]):[];
@@ -751,7 +778,10 @@ function renderMission(d){
  const allowText=allow===true?'Retry allowlist enabled, only allowed addresses will run':
   allow===false?'No retry allowlist, all eligible selected addresses may run':
   'Retry allowlist status unavailable for this run';
- set('missionPolicy',allowText+'. MATCH, SKIP and already manifested functions are excluded. Matching stops immediately on success.');
+ const caveat=shownPreview?.error?' Preview error: '+shownPreview.error:
+  shownPreview&&typeof shownPreview.eligible==='number'?
+   ' Preview uses the current queue; applying scope at launch can add targets.':'';
+ set('missionPolicy',allowText+'. MATCH, SKIP and already manifested functions are excluded. Matching stops immediately on success.'+caveat);
 }
 function runCoordinatorActive(d){
  const state=d?.controller||{};
@@ -947,6 +977,7 @@ function render(d){
  const old=$('module').value;$('module').innerHTML='<option value="*">All confidently classified</option>'+['SPGonzago',...(d.modules||[])].filter((v,i,a)=>a.indexOf(v)===i).map(v=>`<option value="${esc(v)}">${esc(v)}</option>`).join('');if([...$('module').options].some(o=>o.value===old))$('module').value=old;else $('module').value='SPGonzago';
  syncRunAction(d);
  renderMission(d);
+ scheduleMissionPreview();
  set('connection','Connected');set('clock',new Date().toLocaleTimeString());$('dot').classList.remove('off');set('error','');
 }
 async function refreshFunctions(){try{const d=await json(`/api/functions?status=${encodeURIComponent(filter)}&search=${encodeURIComponent(query)}&offset=${off}&limit=75`);total=d.total;set('resultCount',`${total} results · ${bytes(d.bytes||0)} total`);set('pageInfo',`${off+1}–${Math.min(off+75,total)} of ${total}`);$('prev').disabled=off<=0;$('next').disabled=off+75>=total;
@@ -962,8 +993,14 @@ $('controls').hidden=!CONTROL;$('locked').hidden=CONTROL;
 if(CONTROL)paintRunAction('launch','Ready');
 if(CONTROL){
  ['module','workersInput','inflightInput','passesInput','minutesInput','budgetInput'].forEach(id=>{
-  $(id).addEventListener('change',()=>{if(lastSnapshot)renderMission(lastSnapshot)});
-  $(id).addEventListener('input',()=>{if(lastSnapshot)renderMission(lastSnapshot)});
+  $(id).addEventListener('change',()=>{
+   if(lastSnapshot)renderMission(lastSnapshot);
+   scheduleMissionPreview();
+  });
+  $(id).addEventListener('input',()=>{
+   if(lastSnapshot)renderMission(lastSnapshot);
+   scheduleMissionPreview();
+  });
  });
 }
 poll();refreshFunctions();setInterval(poll,3000);setInterval(refreshFunctions,15000);setInterval(()=>{if(selected)refreshDetail()},1800);
