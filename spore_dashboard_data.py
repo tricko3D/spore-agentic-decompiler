@@ -349,9 +349,43 @@ def snapshot(repo):
             run_incidents=db.execute(
                 'SELECT COUNT(*) FROM provider_incidents WHERE run_id=?',(rid,)
             ).fetchone()[0]
+            # Distinguish genuine new work from retries already attempted before
+            # this expedition. Previous runs are not charged to the current one.
+            target_addresses={row['va'] for row in targets}
+            before={}
+            for row in db.execute('''SELECT t.va,t.status FROM attempts t
+                JOIN assignments x ON x.va=t.va AND x.run_id=?
+                LEFT JOIN attempt_reviews v ON v.attempt_id=t.id
+                WHERE (t.run_id IS NULL OR t.run_id<>?)
+                  AND v.attempt_id IS NULL ORDER BY t.id''',(rid,rid)):
+                if row['va'] in target_addresses:
+                    before[row['va']]=row['status']
+            initial={key:0 for key in ('MATCH','FAIL','DEFER','SKIP','PENDING')}
+            initial_bytes={key:0 for key in initial}
+            for row in targets:
+                key=before.get(row['va'],'PENDING')
+                if key not in initial:
+                    key='PENDING'
+                initial[key]+=1
+                initial_bytes[key]+=int(row['size'])
+            # Scope selection is saved at dashboard launch, but a standalone
+            # run may have different settings. Do not infer a module from
+            # the current dropdown or mislabel an older expedition.
+            runtime={}
+            try:
+                record=repo/'work/scratch/codex-pass1/parallel/latest.json'
+                runtime=json.loads(record.read_text(encoding='utf-8'))
+                if runtime.get('run_id')!=rid:
+                    runtime={}
+            except (OSError,ValueError,TypeError):
+                runtime={}
             run={'id':rid,'targets':len(targets),'completed':completed,
                  'bytes_target':target_bytes,'bytes_completed':completed_bytes,
-                 'workers':last['workers'],'finished':bool(last['finished_utc']),
+                 'workers':last['workers'],'passes':last['passes'],
+                 'max_inflight':runtime.get('max_inflight'),
+                 'idle_minutes':runtime.get('minutes'),
+                 'initial_outcomes':initial,'initial_bytes':initial_bytes,
+                 'finished':bool(last['finished_utc']),
                  'started':last['started_utc'],'finished_at':last['finished_utc'],
                  'outcomes':outcomes,'outcome_bytes':outcome_bytes,
                  'valid_attempts':valid_attempts,'archived_provider':archived_provider,
