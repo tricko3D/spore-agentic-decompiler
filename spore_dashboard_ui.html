@@ -841,7 +841,7 @@ function allowRenderRows(){
 }
 function allowDisplayDocument(result){
  allowDoc=result;allowEntries=(result.addresses||[]).slice();
- allowMode=result.valid?'rows':'json';allowDirty=false;allowLocked=null;
+ allowMode=(result.valid||!result.exists)?'rows':'json';allowDirty=false;allowLocked=null;
  $('allowListPath').textContent=result.path+(result.source==='SPORE_RETRY_ALLOWLIST'?' (environment override)':'');
  $('allowListFilter').value='';
  $('allowListJson').value=result.content||'[]';
