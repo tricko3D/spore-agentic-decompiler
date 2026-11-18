@@ -136,6 +136,9 @@ def serve(repo:Path,port:int=8765,control:bool=False):
                         params.get("module",["SPGonzago"])[0],
                         _int(params,"workers",16),
                         params.get("claim_user",[None])[0]))
+                if route=="/api/knowledge/search":
+                    return self.respond(knowledge.hybrid_search(
+                        repo,params.get("text",[""])[0]))
                 if route=="/api/knowledge/overview":
                     result=knowledge.overview(repo)
                     result["consolidator"]=consolidation.state(repo)
