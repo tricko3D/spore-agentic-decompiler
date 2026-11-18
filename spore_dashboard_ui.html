@@ -737,7 +737,6 @@ html,body,.grid,.table-scroll,.drawer,.timeline,.control-status{
       <label class="dock-field dock-number"><span>Passes</span><input id="passesInput" aria-label="Additional passes" title="Additional valid attempts per eligible function each launch" type="number" min="1" max="24" value="3"></label>
       <label class="dock-field dock-number"><span>Idle</span><input id="minutesInput" aria-label="Idle timeout in minutes" title="Stops after inactivity, not total runtime" type="number" min="15" max="120" value="20"></label>
       <label class="dock-field dock-budget"><span>Budget $</span><input id="budgetInput" aria-label="Budget in USD" type="number" min="0.01" step="0.01" value="20"></label>
-      <button type="button" id="allowListBtn" title="Open and edit the active retry allow list">Allow list</button>
       <button class="primary" type="submit" id="runToggle" data-mode="launch" aria-label="Launch decompilation">Launch</button>
       <span class="dock-action-feedback" id="actionFeedback" data-state="idle" aria-live="polite">Ready</span>
     </form>
@@ -785,6 +784,7 @@ const bytes=x=>typeof x==='number'?new Intl.NumberFormat('en-US').format(x)+' B'
 const agreement=(x,total,status)=>!x?(status==='FAIL'||status==='DEFER'?`unknown / ${total} bytes`:'—'):x.matched!=null?`${x.matched}/${x.total} bytes`:x.kind==='size_mismatch'?`size ${x.compiled_size}/${x.retail_size} B`:'—';
 let selected=null,off=0,query='',filter='ALL',total=0,mutating=false,detailBusy=false;
 let commandPhase='idle',lastSnapshot=null,pendingLaunchSettings=null;
+let lastModuleValue='SPGonzago';
 let previewKey='',previewState=null,previewSerial=0,previewTimer=null;
 function set(id,v){$(id).textContent=v}
 function eventHtml(e){return `<div class="event"><span class="kind">${esc(e.kind)}</span><div class="body">${esc(e.message)}</div></div>`}
@@ -893,9 +893,9 @@ function closeAllowList(){
  if(allowBusy)return;
  if(allowDirty&&!confirm('Close without saving allow list changes?'))return;
  $('allowListOverlay').hidden=true;
- $('allowListBtn').focus();
+ $('module').focus();
 }
-$('allowListBtn').addEventListener('click',openAllowList);
+
 $('allowListClose').addEventListener('click',closeAllowList);
 $('allowListOverlay').addEventListener('click',e=>{if(e.target===$('allowListOverlay'))closeAllowList()});
 $('allowListReload').addEventListener('click',()=>allowReload());
@@ -965,7 +965,9 @@ document.addEventListener('keydown',e=>{
 
 function missionSelection(){
  return {
-  module:$('module').value||'SPGonzago',
+  // Use the remembered valid module if a keyboard or programmatic select
+  // momentarily exposes the Allow list action option.
+  module:$('module').value==='__allowlist__'?lastModuleValue:($('module').value||lastModuleValue),
   workers:+$('workersInput').value,
   max_inflight:+$('inflightInput').value,
   passes:+$('passesInput').value,
@@ -1165,7 +1167,7 @@ $('controls').addEventListener('submit',e=>{
  }
  if(mode!=='launch')return;
  control('start',{
-  module:$('module').value,workers:+$('workersInput').value,
+  module:missionSelection().module,workers:+$('workersInput').value,
   max_inflight:+$('inflightInput').value,passes:+$('passesInput').value,
   minutes:+$('minutesInput').value,budget:+$('budgetInput').value
  });
@@ -1240,7 +1242,16 @@ function render(d){
  $('agents').innerHTML=work.length?work.map(w=>{let list=(w.stream||[]).slice(-3);let state=!w.alive?'offline':w.phase==='VERIFIED'?'verified':w.phase==='NO SLOT'?'no-slot':w.phase==='PROBING'?'probing':'idle';return `<button class="agent ${state}" data-worker="${w.worker}"><header><strong>Agent ${String(w.worker).padStart(2,'0')}</strong><span class="tag ${state}">${esc(!w.alive?'OFFLINE':w.phase||'UNKNOWN')}</span></header><div class="small mono worker-address">${esc(w.current||w.last_function||'Idle / waiting')}<span class="worker-meta">${w.bytes==null?'—':bytes(w.bytes)} · PID ${esc(w.pid)}</span></div><div class="mini-stream">${list.length?list.map(e=>`<div class="t"><span class="blue">${esc(e.kind)}</span> ${esc(e.message.slice(0,140))}</div>`).join(''):'<span class="muted">'+esc(w.phase==='NO SLOT'?'No active inference (waiting or checking)':w.phase==='IDLE'?'No active function':'Waiting for first output tokens')+'</span>'}</div></button>`}).join(''):'<div class="empty">No agents in the latest run</div>';
  $('agents').querySelectorAll('[data-worker]').forEach(n=>n.onclick=()=>openDrawer('agent',n.dataset.worker));
  arrangeWorkers();
- const old=$('module').value;$('module').innerHTML='<option value="*" title="All classified modules, restricted to retry-all.json or SPORE_RETRY_ALLOWLIST">All modules (retry list)</option>'+['SPGonzago',...(d.modules||[])].filter((v,i,a)=>a.indexOf(v)===i).map(v=>`<option value="${esc(v)}">${esc(v)}</option>`).join('');if([...$('module').options].some(o=>o.value===old))$('module').value=old;else $('module').value='SPGonzago';
+ // "Allow list" is an editor action, never a module scope. Always retain
+ // the previously selected module across the 3-second snapshot refresh.
+ const selector=$('module');
+ const previous=selector.value==='__allowlist__'?lastModuleValue:(selector.value||lastModuleValue);
+ selector.innerHTML='<option value="*">All confidently classified</option>'+
+  '<option value="__allowlist__">Allow list</option>'+
+  ['SPGonzago',...(d.modules||[])].filter((v,i,a)=>a.indexOf(v)===i)
+   .map(v=>`<option value="${esc(v)}">${esc(v)}</option>`).join('');
+ selector.value=[...selector.options].some(o=>o.value===previous)?previous:'SPGonzago';
+ lastModuleValue=selector.value;
  syncRunAction(d);
  renderMission(d);
  scheduleMissionPreview();
@@ -1259,7 +1270,20 @@ async function poll(){try{render(await json('/api/snapshot'));}catch(e){set('con
 $('controls').hidden=!CONTROL;$('locked').hidden=CONTROL;
 if(CONTROL)paintRunAction('launch','Ready');
 if(CONTROL){
- ['module','workersInput','inflightInput','passesInput','minutesInput','budgetInput'].forEach(id=>{
+ $('module').addEventListener('change',()=>{
+  const selection=$('module').value;
+  if(selection==='__allowlist__'){
+   // Restore the real module immediately. This sentinel must never reach
+   // Launch or /api/plan, and polling must never preserve it.
+   $('module').value=lastModuleValue;
+   void openAllowList();
+   return;
+  }
+  lastModuleValue=selection;
+  if(lastSnapshot)renderMission(lastSnapshot);
+  scheduleMissionPreview();
+ });
+ ['workersInput','inflightInput','passesInput','minutesInput','budgetInput'].forEach(id=>{
   $(id).addEventListener('change',()=>{
    if(lastSnapshot)renderMission(lastSnapshot);
    scheduleMissionPreview();
