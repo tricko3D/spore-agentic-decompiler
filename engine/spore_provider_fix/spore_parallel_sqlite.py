@@ -128,6 +128,16 @@ def make_assignments(queue, workers, mod, passes=None):
     allowed = [va for va in classified
                if va not in manifested
                and latest.get(va) not in ('MATCH', 'SKIP')]
+    # An optional retry allowlist limits paid work to explicitly reserved VAs.
+    # Invalid or empty lists fail closed rather than silently running all modules.
+    retry_file = os.environ.get('SPORE_RETRY_ALLOWLIST')
+    if retry_file:
+        selected = json.loads(Path(retry_file).read_text(encoding='utf-8'))
+        if not isinstance(selected, list) or not selected:
+            raise ValueError('SPORE_RETRY_ALLOWLIST must contain a non-empty JSON list')
+        selected = {f'0x{int(va, 16):08x}' for va in selected}
+        allowed = [va for va in allowed if va in selected]
+        print(f'Retry allowlist active: {len(allowed)} eligible targets', flush=True)
     if not allowed:
         return [], {}, [0] * workers, {}
     groups = source_groups(allowed)
