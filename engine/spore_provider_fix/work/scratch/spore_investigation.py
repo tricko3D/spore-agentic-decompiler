@@ -202,6 +202,30 @@ def record_checker_event(root, va, event, seen=None):
             break
     detail = '\n'.join(selected) if selected else output.strip()[:MAX_VERDICT]
     record = f'- checker command: {command[:350]}\n  result: {detail[:MAX_VERDICT].replace(chr(10), chr(10)+"  ")}\n'
+    # Capture the C++ candidate near this observed check event. This is a
+    # best-effort post-check snapshot: tool delivery can race the next edit,
+    # so do NOT claim the snapshot necessarily caused the byte difference.
+    source = _restore_location(root, va)
+    if source and source.is_file():
+        try:
+            cpp = source.read_text(encoding='utf-8', errors='replace')
+            if len(cpp) <= 80000:
+                digest = hashlib.sha256(cpp.encode('utf-8')).hexdigest()[:20]
+                candidate = folder / 'candidates' / (digest + '.cpp')
+                _original_once(candidate, cpp)
+                record += f'  post-check source snapshot: candidates/{digest}.cpp\n'
+                previous_file = folder / 'latest.cpp'
+                if previous_file.is_file():
+                    old = previous_file.read_text(encoding='utf-8', errors='replace')
+                    if old != cpp:
+                        diff = ''.join(difflib.unified_diff(
+                            old.splitlines(keepends=True), cpp.splitlines(keepends=True),
+                            fromfile='previous-snapshot', tofile='post-check-snapshot'))
+                        patch = folder / 'candidate-diffs' / (digest + '.patch')
+                        _original_once(patch, diff[:12000])
+                        record += f'  delta from prior snapshot: candidate-diffs/{digest}.patch\n'
+        except OSError:
+            pass
     with (folder / 'experiments.md').open('a', encoding='utf-8') as f:
         f.write(record + '\n')
     try:
