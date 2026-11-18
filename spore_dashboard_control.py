@@ -18,9 +18,12 @@ import signal
 import subprocess
 import sys
 import threading
+import time
 
 CLI=Path(__file__).resolve().parent/'spore_agentic.py'
 MOD_RE=re.compile(r'[A-Za-z0-9_.+\-]{1,100}\Z')
+CLAIMS_URL='https://raw.githubusercontent.com/NoahBPeterson/spore-decomp/claims/claims.txt'
+CLAIMS_LINE=re.compile(r'^\s*(0x[0-9a-fA-F]{1,8})\s+#\d+\s+([A-Za-z0-9-]{1,39})\s+\d{4}-\d{2}-\d{2}\s*$')
 
 
 def modules(repo):
@@ -71,6 +74,7 @@ class Controller:
         self.last_error=''
         self.launch_settings=None
         self.launch_log_offset=None
+        self.claim_cache=None
 
     def _confirm_idle(self):
         from spore_dashboard_data import connect_ro,proc_running
@@ -188,6 +192,79 @@ class Controller:
                     os.unlink(tmp)
             return self.allowlist_document()
 
+    def _claims_registry(self, force=False):
+        """Read upstream open-PR claims, never a user-controlled URL.
+
+        Cache for one minute to avoid hammering upstream. Launch forces a
+        fresh read so missing/stale claims never silently widen paid scope.
+        """
+        with self.lock:
+            if self.claim_cache and not force and time.monotonic()-self.claim_cache['at']<60:
+                return self.claim_cache['data']
+            req=urllib.request.Request(
+                CLAIMS_URL,headers={'User-Agent':'Spore-Agentic-Decompiler/1.0',
+                                    'Accept':'text/plain','Cache-Control':'no-cache'})
+            try:
+                with urllib.request.urlopen(req,timeout=12) as response:
+                    raw=response.read(512001)
+            except (OSError,TimeoutError,urllib.error.URLError) as exc:
+                raise ValueError('Cannot refresh upstream claims registry: '+str(exc)[:160]) from exc
+            if len(raw)>512000:
+                raise ValueError('Upstream claims registry exceeds safety size limit')
+            try:
+                content=raw.decode('utf-8')
+            except UnicodeDecodeError as exc:
+                raise ValueError('Upstream claims registry is not UTF-8') from exc
+            members={}
+            first=content.splitlines()[0] if content else ''
+            for line in content.splitlines():
+                m=CLAIMS_LINE.fullmatch(line)
+                if m:
+                    va,author=m.group(1),m.group(2)
+                    canonical='0x'+format(int(va,16),'08x')
+                    key=author.casefold()
+                    if key not in members:
+                        members[key]={'name':author,'addresses':set()}
+                    members[key]['addresses'].add(canonical)
+            if not members or 'Generated' not in first or 'claims' not in first.lower():
+                raise ValueError('Upstream claims registry has an unexpected format; no paid work started')
+            data={'users':[
+                    {'name':entry['name'],'count':len(entry['addresses'])}
+                    for entry in sorted(members.values(),key=lambda x:(-len(x['addresses']),x['name'].lower()))],
+                  'claims':members,'source':CLAIMS_URL,'updated':first[:180]}
+            self.claim_cache={'at':time.monotonic(),'data':data}
+            return data
+
+    def claimants(self):
+        registry=self._claims_registry()
+        return {'users':registry['users'],'source':registry['source'],
+                'updated':registry['updated']}
+
+    def _claim_scope(self,user):
+        """Create an immutable private claims snapshot, separate from retry-all.json."""
+        if not isinstance(user,str) or not re.fullmatch(r'[A-Za-z0-9-]{1,39}',user):
+            raise ValueError('Select a GitHub claimant before launching')
+        registry=self._claims_registry(force=True)
+        member=registry['claims'].get(user.casefold())
+        if not member:
+            raise ValueError('GitHub user '+user+' has no current open claims; refresh the claimant list')
+        addresses=sorted(member['addresses'])
+        if not addresses:
+            raise ValueError('Selected claimant has no active function claims')
+        directory=self.repo/'work/scratch/codex-pass1/claim-scopes'
+        directory.mkdir(parents=True,exist_ok=True)
+        fd,path=tempfile.mkstemp(prefix='claimed-',suffix='.json',dir=str(directory))
+        try:
+            with os.fdopen(fd,'w',encoding='utf-8') as out:
+                out.write(json.dumps(addresses,indent=2)+'\n')
+                out.flush()
+                os.fsync(out.fileno())
+        except Exception:
+            Path(path).unlink(missing_ok=True)
+            raise
+        return {'path':path,'source':'upstream claims: '+member['name'],
+                'count':len(addresses),'claim_user':member['name']}
+
     def _retry_allowlist(self,module):
         """All-modules runs use a validated list and never fall back to the queue."""
         path,source=self._allowlist_location()
@@ -253,18 +330,19 @@ print(json.dumps({
         except (OSError,ValueError,subprocess.TimeoutExpired):
             return None
 
-    def preview(self,module,workers):
+    def preview(self,module,workers,claim_user=None):
         """Read-only current-queue plan. No scope --apply and no model calls.
 
         Launch applies the chosen scope first, so it can append previously
         undiscovered queue targets. Report the preview as provisional.
         """
         if not isinstance(module,str) or (
-                module not in ('*','__allowlist__') and module not in modules(self.repo)):
-            raise ValueError('Select a classified module or the allow list')
+                module not in ('*','__allowlist__','__claimed__') and module not in modules(self.repo)):
+            raise ValueError('Select a classified module, allow list, or claimed functions')
         if type(workers) is not int or not 1<=workers<=32:
             raise ValueError('workers must be between 1 and 32')
-        selected=self._retry_allowlist(module)
+        selected=(self._claim_scope(claim_user) if module=='__claimed__'
+                  else self._retry_allowlist(module))
         env=os.environ.copy()
         if selected:
             env['SPORE_RETRY_ALLOWLIST']=selected['path']
@@ -272,16 +350,20 @@ print(json.dumps({
             # Mirror the CLI module scope for the local diagnostic fallback.
             from spore_agentic import config as scope_config
             saved=scope_config()
-            env['SPORE_TARGET_MODULES']='*' if module in ('*','__allowlist__') else module
+            env['SPORE_TARGET_MODULES']='*' if module in ('*','__allowlist__','__claimed__') else module
             env['SPORE_MIN_MODULE_CONFIDENCE']=str(saved.get('min_confidence',0.70))
         cmd=[sys.executable,str(CLI),'plan','--repo',str(self.repo),
              '--workers',str(workers)]
-        cmd+=['--all-modules'] if module in ('*','__allowlist__') else ['--module',module]
+        cmd+=['--all-modules'] if module in ('*','__allowlist__','__claimed__') else ['--module',module]
         try:
-            result=subprocess.run(cmd,cwd=CLI.parent,stdin=subprocess.DEVNULL,
-                                  capture_output=True,text=True,timeout=60,env=env)
-        except subprocess.TimeoutExpired:
-            raise ValueError('Preview timed out. No agents started.')
+            try:
+                result=subprocess.run(cmd,cwd=CLI.parent,stdin=subprocess.DEVNULL,
+                                      capture_output=True,text=True,timeout=60,env=env)
+            except subprocess.TimeoutExpired:
+                raise ValueError('Preview timed out. No agents started.')
+        finally:
+            if module=='__claimed__':
+                Path(selected['path']).unlink(missing_ok=True)
         if result.returncode:
             raise ValueError('Preview unavailable: '+
                              (result.stdout+' '+result.stderr)[-300:])
@@ -310,6 +392,8 @@ print(json.dumps({
                 'allowlist_active':bool(selected),
                 'allowlist_count':selected['count'] if selected else 0,
                 'allowlist_source':selected['source'] if selected else None,
+                'claim_user':selected.get('claim_user') if selected else None,
+                'claim_count':selected['count'] if module=='__claimed__' else None,
                 'allowlist_breakdown':breakdown}
 
     def _launch_environment(self):
@@ -398,8 +482,8 @@ print(json.dumps({
         if not isinstance(data,dict):raise ValueError('Invalid settings')
         module=data.get('module','SPGonzago')
         if not isinstance(module,str) or (
-                module not in ('*','__allowlist__') and module not in modules(self.repo)):
-            raise ValueError('Select a classified module or the allow list')
+                module not in ('*','__allowlist__','__claimed__') and module not in modules(self.repo)):
+            raise ValueError('Select a classified module, allow list, or claimed functions')
         values={}
         for field,minimum,maximum in (('workers',1,32),('max_inflight',1,32),('passes',1,24),('minutes',1,120)):
             value=data.get(field)
@@ -413,7 +497,8 @@ print(json.dumps({
         with self.lock:
             self._confirm_idle()
             self.process=None  # Do not replay a previous launch failure after a new attempt.
-            selected=self._retry_allowlist(module)
+            selected=(self._claim_scope(data.get('claim_user')) if module=='__claimed__'
+                      else self._retry_allowlist(module))
             launch_env=self._launch_environment()
             # Fail before expanding queue or spawning workers if the provider
             # key cannot fund a single inference. This is an unpaid /key GET.
@@ -422,7 +507,7 @@ print(json.dumps({
                 launch_env['SPORE_RETRY_ALLOWLIST']=selected['path']
             # Scope selection can add functions but never deletes historical work.
             scope=[sys.executable,str(CLI),'scope','--repo',str(self.repo)]
-            scope+=['--all-modules'] if module in ('*','__allowlist__') else ['--module',module]
+            scope+=['--all-modules'] if module in ('*','__allowlist__','__claimed__') else ['--module',module]
             scope+=['--apply']
             try:
                 result=subprocess.run(scope,cwd=CLI.parent,stdin=subprocess.DEVNULL,
@@ -433,7 +518,7 @@ print(json.dumps({
                 raise ValueError('Module selection failed: '+(result.stdout+' '+result.stderr)[-700:])
             # CLI owns API-key validation. If it fails, dashboard records failure.
             cmd=[sys.executable,str(CLI),'run','--repo',str(self.repo)]
-            cmd+=['--all-modules'] if module in ('*','__allowlist__') else ['--module',module]
+            cmd+=['--all-modules'] if module in ('*','__allowlist__','__claimed__') else ['--module',module]
             for name,value in values.items():cmd+=['--'+name.replace('_','-'),str(value)]
             work=self.repo/'work/scratch/codex-pass1'
             work.mkdir(parents=True,exist_ok=True)
@@ -447,6 +532,7 @@ print(json.dumps({
                                               env=launch_env,start_new_session=True)
             self.launch_settings={
                 'module':module,
+                'claim_user':selected.get('claim_user') if selected else None,
                 'workers':values['workers'],
                 'max_inflight':values['max_inflight'],
                 'passes':values['passes'],
@@ -456,7 +542,8 @@ print(json.dumps({
                 'allowlist_count':selected['count'] if selected else 0,
                 'allowlist_source':selected['source'] if selected else None
             }
-            return {'started':True,'controller_pid':self.process.pid,'module':module}
+            return {'started':True,'controller_pid':self.process.pid,'module':module,
+                    'claim_user':selected.get('claim_user') if selected else None}
 
     def _launch_diagnostics(self):
         """Return a bounded, sanitized exit reason from the current launch."""
