@@ -110,6 +110,10 @@ if [[ -z "${OPENROUTER_API_KEY:-}" && ! -s "$KEYFILE" ]]; then
 fi
 
 echo "Enabling paid consolidation with USD $DAILY_USD estimated daily cap."
+if systemd_ready && [[ ! -s "$KEYFILE" ]]; then
+  echo "Systemd does not inherit terminal-only API keys. Store the key using SAD setup first." >&2
+  exit 1
+fi
 if systemd_ready; then
   mkdir -p "$USER_UNIT_DIR"
   chmod 700 "$USER_UNIT_DIR"
