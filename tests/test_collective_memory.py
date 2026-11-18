@@ -3,6 +3,8 @@ import importlib.util
 import json
 from pathlib import Path
 import sqlite3
+import subprocess
+import sys
 import tempfile
 import threading
 import unittest
@@ -175,6 +177,21 @@ class MemoryTests(unittest.TestCase):
         self.assertEqual(svc.index_once(), 2)
         self.assertEqual(svc.index_once(), 0)
         self.assertEqual(svc.search("EAX ABI stack cleanup", 1)[0]["va"], VA)
+
+    def test_script_entrypoint_ignores_shadowing_dis_module(self):
+        """The upstream checkout's scratch/dis.py must not shadow stdlib dis."""
+        scratch = self.root / "work/scratch"
+        scratch.mkdir(parents=True, exist_ok=True)
+        script = scratch / "spore_collective_memory.py"
+        script.write_text(FILE.read_text(encoding="utf-8"), encoding="utf-8")
+        (scratch / "dis.py").write_text(
+            'raise RuntimeError("shadowed dis.py was imported")\n', encoding="utf-8")
+        result = subprocess.run(
+            [sys.executable, str(script), "--repo", str(self.root), "status"],
+            cwd=self.root, text=True, capture_output=True, timeout=10)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('"installed": true', result.stdout)
+        self.assertNotIn("shadowed dis.py", result.stderr)
 
     def test_pinned_fastembed_api_and_model_registry(self):
         try:
