@@ -16,7 +16,10 @@ on:
       - "tests/test_dashboard_compact.py"
       - "brain_ablation.py"
       - "brain_ablation_query.py"
+      - "brain_ablation_suite.py"
+      - "brain_ablation_prune.py"
       - "tests/test_brain_ablation.py"
+      - "tests/test_brain_ablation_suite.py"
       - ".github/workflows/dashboard-v2.yml"
   workflow_dispatch:
 
@@ -54,6 +57,7 @@ jobs:
           python -m unittest discover -s tests -p 'test_dashboard_compact.py' -v
           python -m unittest discover -s tests -p 'test_technique_consolidator.py' -v
           python -m unittest discover -s tests -p 'test_brain_ablation.py' -v
+          python -m unittest discover -s tests -p 'test_brain_ablation_suite.py' -v
       - name: Ensure bundled UI is fully offline
         run: |
           test -s dashboard_web/dist/index.html

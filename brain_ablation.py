@@ -638,6 +638,7 @@ def prepare(repo, out, va=None, repeats=3, minimum=7, seed=20261118,
             shutil.copytree(repo,seed_tree,symlinks=True,ignore=_copy_ignore(repo))
         else:
             print("Resuming validated partial seed without recopying:",seed_tree,flush=True)
+        prune_metrics=None
         if not staged:
             remapped=_relocate_symlinks(seed_tree,repo)
             if remapped:

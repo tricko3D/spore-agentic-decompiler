@@ -84,7 +84,9 @@ def main(va):
         self.assertEqual(set(found),set(self.targets))
         self.assertTrue(all(r["failures"]==4 for r in found.values()))
         with sqlite3.connect(self.source/brain.OPS) as db:
-            db.execute("UPDATE attempts SET status='DEFER' WHERE id=1")
+            first=db.execute("SELECT id FROM attempts WHERE va=? ORDER BY id LIMIT 1",
+                             (self.targets[0],)).fetchone()[0]
+            db.execute("UPDATE attempts SET status='DEFER' WHERE id=?",(first,))
         self.assertEqual(brain.known_solutions(self.source,4)[0]["failures"],4)
 
     def test_suite_prepare_isolation_wipes_all_three_holdouts(self):
