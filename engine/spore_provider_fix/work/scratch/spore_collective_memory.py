@@ -194,6 +194,50 @@ def ingest(repo, va, pass_number, status, *, note, checker, evidence_path=""):
         con.close()
 
 
+def backfill(repo, limit=10000):
+    """Read historical SQLite attempts without writing to operational state.
+
+    Only the runner's independently checked MATCH notes are promoted to
+    verified. Older unverified MATCH records are skipped. Invalidated passes
+    are omitted. Repeated imports are idempotent.
+    """
+    operational = Path(repo).expanduser().resolve() / "work/scratch/codex-pass1/spore.sqlite3"
+    if not operational.is_file():
+        return {"imported": 0, "skipped": 0, "reason": "No operational database"}
+    initialize(repo)
+    src = sqlite3.connect(operational.as_uri() + "?mode=ro", uri=True)
+    src.row_factory = sqlite3.Row
+    imported = skipped = 0
+    try:
+        rows = src.execute("""SELECT a.va,a.pass_number,a.status,a.note
+            FROM attempts a
+            WHERE NOT EXISTS (SELECT 1 FROM attempt_reviews v
+                              WHERE v.attempt_id=a.id)
+            ORDER BY a.id LIMIT ?""", (max(1, min(100000, limit)),))
+        for row in rows:
+            va, status = row["va"], row["status"]
+            note = row["note"] or ""
+            if status == "MATCH" and "independently byte-exact" not in note.lower():
+                skipped += 1
+                continue
+            if not isinstance(va, str) or not ADDRESS.fullmatch(va):
+                skipped += 1
+                continue
+            if status not in ("MATCH", "FAIL", "DEFER", "SKIP"):
+                skipped += 1
+                continue
+            checker = note.rsplit("| checker:", 1)[-1] if "| checker:" in note else note
+            evidence = (Path("work/scratch/codex-pass1/investigations") / va).as_posix()
+            try:
+                imported += int(ingest(repo, va, int(row["pass_number"]), status,
+                                       note=note, checker=checker, evidence_path=evidence))
+            except (sqlite3.Error, OSError, ValueError):
+                skipped += 1
+        return {"imported": imported, "skipped": skipped}
+    finally:
+        src.close()
+
+
 def _candidate_rows(con, query, limit=40):
     terms = list(dict.fromkeys(WORDS.findall(query.lower())))[:16]
     if not terms:
@@ -445,6 +489,8 @@ def main(argv=None):
     command.add_parser("warmup", help="Download and cache the local embedding model")
     command.add_parser("serve", help="Start local persistent model and vector service")
     command.add_parser("status", help="Show service state and indexed findings")
+    backfill_cmd = command.add_parser("backfill", help="Import prior independently checked attempts")
+    backfill_cmd.add_argument("--limit", type=int, default=100000)
     query_cmd = command.add_parser("query", help="Retrieve reusable evidence from all functions")
     query_cmd.add_argument("--text", required=True)
     query_cmd.add_argument("--top", type=int, default=4)
@@ -471,6 +517,8 @@ def main(argv=None):
         print(json.dumps(stats(args.repo), indent=2))
     elif args.command == "query":
         print(print_findings(query(args.repo, args.text, args.top)))
+    elif args.command == "backfill":
+        print(json.dumps(backfill(args.repo, args.limit)))
     elif args.command == "ingest":
         result = ingest(args.repo, args.va, args.pass_number, args.status,
                         note=args.note, checker=args.checker, evidence_path=args.evidence_path)
