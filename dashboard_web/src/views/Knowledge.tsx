@@ -1,5 +1,5 @@
 import {useEffect,useState} from 'react';
-import {controlsEnabled,get,money,post,pretty,query} from '../api';
+import {controlsEnabled,money,post,pretty,query} from '../api';
 import {usePoll} from '../hooks';
 import {Drawer,ErrorText,Metric,Panel,Tag} from '../components/Panel';
 import BrainGraph from '../components/BrainGraph';
