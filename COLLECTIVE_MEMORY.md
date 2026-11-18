@@ -63,6 +63,51 @@ bash install_collective_memory.sh --repo ~/spore-decomp --no-start
 The installer can be re-run, and retains existing knowledge. Run from WSL's
 Linux filesystem (not /mnt/c) for Unix socket permissions and SQLite I/O.
 
+## Improved evidence quality (v2)
+
+Findings are not just closing notes. The importer parses completed actual
+check.py tool calls in each historical JSONL attempt, capturing the precise
+invoked command, compiler flags, compiled size, retail size, differences where
+the tool actually reported a count, and diagnostic result. Reading check.py
+source is never counted as a checker run. Checks with no reported byte-diff
+count retain an unknown value, rather than an invented measurement.
+
+The summary normalizer removes repeated historical notes. Results now include
+up to three recent checker experiments and prefer distinct function addresses.
+An independently proven byte match gets a relevance boost, but never forces
+an unrelated verified function into a query. Use --verified-only to restrict
+results to relevant verified matches. Matched functions can also contribute a
+small excerpt of their existing locally verified C++ source for technical
+retrieval.
+
+During new investigations, actual checker events additionally produce a
+best-effort post-check C++ snapshot and source delta in the per-function
+candidates/ and candidate-diffs/ folders. These snapshots are captured when
+the runner observes the tool result, potentially after a subsequent edit.
+They are supporting evidence, **not proof** that an edit caused a reduction
+in mismatching bytes.
+
+Re-running the installer migrates the independent knowledge schema, imports
+historical checker logs again, and restarts only an outdated Collective
+Memory daemon after validating its PID and command line. It never kills SAD
+workers or modifies operational attempt history. Source observations are
+re-indexed locally by the daemon. The memory model does not need downloading
+again when its cache is intact.
+
+
+~~~bash
+cd ~/spore-agentic-decompiler
+git pull --ff-only origin dev
+bash install_collective_memory.sh --repo ~/spore-decomp
+
+cd ~/spore-decomp
+.venv/bin/python work/scratch/spore_collective_memory.py --repo . query \
+  --text "EAX calling convention register allocation stack cleanup" --top 4
+.venv/bin/python work/scratch/spore_collective_memory.py --repo . query \
+  --text "EAX calling convention register allocation stack cleanup" \
+  --top 4 --verified-only
+~~~
+
 ## Using Collective Memory
 
 From within ~/spore-decomp:
