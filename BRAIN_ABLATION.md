@@ -134,6 +134,16 @@ The report uses `match: null` for `NO_RESULT` trials and excludes these from mat
 
 
 ## Evaluation
+## Evaluating SKIP and treatment exposure
+
+An agent may legitimately report `SKIP` (e.g. shared-header changes forbidden by the runner) before attempting compiler experiments. The normal Spore checker still runs after the agent terminates, but a `SKIP` is an **agent outcome**, not proof of a byte mismatch. The previous `CHECKS` counter only counted `check.py` commands in the **agent JSONL**, not the runner's post-agent verifier. The report now labels this `AGENT CHECKS`, prints the recorded SQLite outcome explanation and retains the unabridged note in `report.json`.
+
+A trial with 0 Brain queries in a knowledge treatment never exercised retrieval. It remains in the **intention-to-treat** operational match-rate denominator as an unmatched run, but is tagged `treatment_adherent: false` and `exposure: not_queried`. Real raw treatment exposure requires at least one original finding returned; consolidated treatment exposure requires at least one consolidated technique returned. Placebo exposure requires a nonempty placebo response. The baseline deliberately lacks knowledge and is not subject to that treatment-use requirement.
+
+Do not selectively drop or rerun `SKIP` outcomes to improve an arm's observed match rate. If the agent's stated SKIP reason reflects a common early blocker, investigate it before making a new, consistently applied experimental protocol. Existing completed results and their original prompts must remain archived. A stronger study can analyze both intention-to-treat (assignment) and treatment-used cohorts, reporting the latter as observational rather than a randomized causal estimate.
+
+For an example pilot with `raw, repeat 3, SKIP, 0 agent checker calls, 0 Brain queries`, the valid conclusion is only that the runner delivered a terminal SKIP and did not expose raw evidence to the agent. It cannot establish that retrieving or consolidating knowledge was ineffective.
+
 
 ```bash
 python3 brain_ablation.py report --out ~/sad-brain-benchmark

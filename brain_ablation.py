@@ -838,6 +838,43 @@ def _checker_calls(folder):
     return calls,input_tokens,output_tokens
 
 
+def _knowledge_exposure(arm, audit_path):
+    """Measure real tool responses, not only assignment to a treatment arm."""
+    counts={"calls":0,"findings":0,"techniques":0,"characters":0}
+    if audit_path.is_file():
+        for line in audit_path.read_text(encoding="utf-8",errors="replace").splitlines():
+            try:
+                record=json.loads(line)
+            except (ValueError,TypeError):
+                continue
+            if not isinstance(record,dict):
+                continue
+            counts["calls"]+=1
+            for field,source in (("findings","findings"),("techniques","techniques"),
+                                 ("characters","characters")):
+                try:
+                    counts[field]+=max(0,int(record.get(source,0)))
+                except (ValueError,TypeError):
+                    continue
+    if arm=="baseline":
+        # Baseline is intentionally not given knowledge, even if it tries.
+        counts["exposure"]="none"
+        counts["adherent"]=True
+    elif counts["calls"]==0:
+        counts["exposure"]="not_queried"
+        counts["adherent"]=False
+    elif arm=="raw":
+        counts["exposure"]="raw" if counts["findings"] else "queried_empty"
+        counts["adherent"]=counts["findings"]>0
+    elif arm=="consolidated":
+        counts["exposure"]="consolidated" if counts["techniques"] else "no_techniques"
+        counts["adherent"]=counts["techniques"]>0
+    else:
+        counts["exposure"]="placebo" if counts["characters"] else "queried_empty"
+        counts["adherent"]=counts["characters"]>0
+    return counts
+
+
 def report(out):
     out=out.resolve()
     plan=json.loads((out/"plan.json").read_text(encoding="utf-8"))
@@ -847,14 +884,19 @@ def report(out):
         data={"name":item["name"],"repeat":item["repeat"],
               "arm":item["arm"],"state":item["state"],
               "match":None,"checker_calls":None,"input_tokens":None,
-              "output_tokens":None,"brain_queries":None,"cost_usd":None}
+              "output_tokens":None,"brain_queries":None,"cost_usd":None,
+              "result_note":None, "exposure":None, "treatment_adherent":None}
         if (trial/OPS).exists():
             with sqlite3.connect(trial/OPS) as con:
                 result=con.execute("SELECT status,note,utc FROM attempts WHERE va=? ORDER BY id DESC LIMIT 1",
                                    (plan["target"],)).fetchone()
                 data["status"]=result[0] if result else "NO_RESULT"
+                # SKIP is an agent verdict, not a byte mismatch. Keep it in the
+                # intention-to-treat match denominator, but distinguish it
+                # from an independently checked FAIL.
                 data["match"]=(result[0]=="MATCH") if result else None
-                diff=re.search(r"\bdiffs?\s*[=:]\s*(\d+)",result[1],re.I) if result else None
+                data["result_note"]=result[1] if result else None
+                diff=re.search(r"\bdiffs?\s*[=:]\s*(\d+)",result[1],re.I) if result and result[1] else None
                 data["diff_bytes"]=int(diff.group(1)) if diff else None
                 budget=con.execute(
                     "SELECT COALESCE(SUM(last_usage-baseline_usage),0) FROM run_budgets").fetchone()
@@ -862,29 +904,46 @@ def report(out):
             c,t1,t2=_checker_calls(trial)
             data.update(checker_calls=c,input_tokens=t1,output_tokens=t2)
             audit=trial/WORK/"brain-queries.jsonl"
-            data["brain_queries"]=sum(1 for _ in audit.open()) if audit.exists() else 0
+            exposure=_knowledge_exposure(item["arm"],audit)
+            data["brain_queries"]=exposure["calls"]
+            data["findings_returned"]=exposure["findings"]
+            data["techniques_returned"]=exposure["techniques"]
+            data["exposure"]=exposure["exposure"]
+            data["treatment_adherent"]=exposure["adherent"]
         rows.append(data)
     write_json(out/"report.json",{"target":plan["target"],"generated":now(),"trials":rows})
-    print("ARM             REP  STATE       RESULT     CHECKS  BRAIN  INPUT TOK.   OUTPUT TOK.  $ (shared key)")
+    print("ARM             REP  STATE       RESULT     AGENT CHECKS  BRAIN  INPUT TOK.   OUTPUT TOK.  $ (shared key)")
     for x in rows:
         print(f"{x['arm']:<16}{x['repeat']:>3}  {x['state']:<12}"
-              f"{x.get('status','-'):<10} {str(x['checker_calls']):>6}  "
+              f"{x.get('status','-'):<10} {str(x['checker_calls']):>12}  "
               f"{str(x['brain_queries']):>5}  {str(x['input_tokens']):>10}  "
               f"{str(x['output_tokens']):>11}  {str(x['cost_usd']):>8}")
-    print("\nSummary by arm:")
+        if x.get("status") in ("SKIP","FAIL","DEFER") and x.get("result_note"):
+            print("     Note:",str(x["result_note"]).replace("\n"," ")[:500])
+        if x.get("brain_queries") is not None and x["state"]=="completed":
+            print("     Exposure:",x["exposure"],"| treatment used:",
+                  "yes" if x["treatment_adherent"] else "NO",
+                  "| findings:",x.get("findings_returned",0),
+                  "| techniques:",x.get("techniques_returned",0))
+    print("\nSummary by arm (intention to treat, includes SKIP as no match):")
     for arm in ARMS:
         group=[x for x in rows if x["arm"]==arm and x["match"] is not None]
         if group:
             matches=sum(int(x["match"]) for x in group)
+            tested=sum(x.get("status")!="SKIP" for x in group)
+            adhered=sum(bool(x.get("treatment_adherent")) for x in group)
             avg_checks=sum(x["checker_calls"] or 0 for x in group)/len(group)
             avg_tokens=sum((x["input_tokens"] or 0)+(x["output_tokens"] or 0)
                            for x in group)/len(group)
             print(f"  {arm:<13}: {matches}/{len(group)} MATCH,"
-                  f" {avg_checks:.1f} checks/trial, {avg_tokens:.0f} tokens/trial")
-    print("\nAll values are per-trial, and a MATCH is valid only if independently recorded.")
-    print("Cost is inferred from shared OpenRouter key usage; pause other paid jobs for accuracy.")
-    print("Use at least 3 repeated trials per arm, then expand to more functions for inference.")
-
+                  f" {tested}/{len(group)} non-SKIP outcomes,"
+                  f" {adhered}/{len(group)} treatment adherence,"
+                  f" {avg_checks:.1f} agent checks/trial, {avg_tokens:.0f} tokens/trial")
+    print("\nSKIP is the agent's decision, not an independently verified mismatch.")
+    print("AGENT CHECKS count shell check.py calls observed in the agent's JSONL;")
+    print("the runner's independent verification is separate and is recorded in result notes.")
+    print("Assignment without Brain retrieval is not proof that knowledge was evaluated.")
+    print("Provider-key cost may include other paid jobs; pause them for reliable comparison.")
 
 def main(argv=None):
     parser=argparse.ArgumentParser(description=__doc__)

@@ -540,6 +540,45 @@ def run_one():
         with sqlite3.connect(self.destination/"seed"/bench.OPS) as db:
             self.assertEqual(db.execute("SELECT COUNT(*) FROM attempts").fetchone()[0],0)
 
+    def test_report_skip_is_not_a_byte_mismatch_or_knowledge_exposure(self):
+        bench.prepare(self.source,self.destination,repeats=1)
+        plan=json.loads((self.destination/"plan.json").read_text())
+        raw=next(item for item in plan["arms"] if item["arm"]=="raw")
+        trial=self.destination/"trials"/raw["name"]
+        bench._clone(self.destination/"seed",trial)
+        with sqlite3.connect(trial/bench.OPS) as db:
+            db.execute("INSERT INTO attempts(va,status,note,utc) VALUES(?,?,?,?)",
+                       (VA,"SKIP","Pass 1: shared-header change required | checker: NO MATCH",bench.now()))
+        raw["state"]="completed"
+        bench.write_json(self.destination/"plan.json",plan)
+        bench.report(self.destination)
+        rows=json.loads((self.destination/"report.json").read_text())["trials"]
+        actual=next(item for item in rows if item["name"]==raw["name"])
+        self.assertEqual(actual["status"],"SKIP")
+        self.assertEqual(actual["match"],False)
+        self.assertIn("shared-header change required",actual["result_note"])
+        self.assertEqual(actual["exposure"],"not_queried")
+        self.assertFalse(actual["treatment_adherent"])
+        self.assertEqual(actual["brain_queries"],0)
+        self.assertEqual(actual["checker_calls"],0)
+
+    def test_exposure_requires_actual_returned_findings_and_techniques(self):
+        audit=self.base/"brain-queries.jsonl"
+        self.assertEqual(bench._knowledge_exposure("raw",audit)["exposure"],"not_queried")
+        self.assertTrue(bench._knowledge_exposure("baseline",audit)["adherent"])
+        audit.write_text('{"findings":0,"techniques":0,"characters":100}\n')
+        self.assertFalse(bench._knowledge_exposure("raw",audit)["adherent"])
+        self.assertFalse(bench._knowledge_exposure("consolidated",audit)["adherent"])
+        self.assertTrue(bench._knowledge_exposure("placebo",audit)["adherent"])
+        with audit.open("a") as h:
+            h.write('{"findings":5,"techniques":2,"characters":2500}\n')
+        raw=bench._knowledge_exposure("raw",audit)
+        self.assertEqual(raw["findings"],5)
+        self.assertTrue(raw["adherent"])
+        cons=bench._knowledge_exposure("consolidated",audit)
+        self.assertEqual(cons["techniques"],2)
+        self.assertTrue(cons["adherent"])
+
     def test_report_no_results_is_not_claimed_success(self):
         bench.prepare(self.source,self.destination,repeats=1)
         bench.report(self.destination)
