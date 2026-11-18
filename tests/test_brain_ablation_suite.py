@@ -23,7 +23,7 @@ class SolvedSuiteTests(unittest.TestCase):
         self.source=fixture.source
         self.destination=fixture.destination
         self.original=fixture.original
-        self.targets=suite.TARGETS
+        self.targets=suite.TARGET_CANDIDATES[:3]
         self.out=self.base/"solved-suite"
         (self.source/brain.TASK).parent.mkdir(parents=True,exist_ok=True)
         (self.source/brain.TASK).write_text("""import os
@@ -159,11 +159,22 @@ def main(va):
         self.assertEqual(len(result["trials"]),12)
         self.assertTrue(all(not x["valid"] for x in result["trials"]))
 
+    def test_multi_function_source_is_rejected_before_spending(self):
+        offender=self.targets[2]
+        path=self.source/brain.slice_path(offender)
+        with path.open("a") as f:
+            f.write("// @ 0x00400040\nvoid unrelated() {}\n")
+        with mock.patch.object(suite.brain,"run_next",
+                               side_effect=AssertionError("paid agent started")):
+            with self.assertRaisesRegex(RuntimeError,"Only 2 of 3 required"):
+                suite.run(self.source,self.out,repeats=1,execute=True)
+        self.assertFalse((self.out/"functions").exists())
+
     def test_missing_match_history_fails_before_preparation(self):
         with sqlite3.connect(self.source/brain.OPS) as db:
             db.execute("DELETE FROM attempts WHERE va=? AND status='MATCH'",
                        (self.targets[0],))
-        with self.assertRaisesRegex(RuntimeError,"lack >=3 failures"):
+        with self.assertRaisesRegex(RuntimeError,"Only 2 of 3 required"):
             suite.prepare(self.source,self.out,repeats=1)
         self.assertFalse((self.out/"functions").exists())
 

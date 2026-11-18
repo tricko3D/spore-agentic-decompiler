@@ -16,7 +16,9 @@ import random
 
 import brain_ablation as brain
 
-TARGETS=("0x00c45760","0x00c2f1f0","0x00b8d190")
+TARGET_CANDIDATES=("0x00c45760","0x00c2f1f0","0x00b8d190",
+                   "0x00dba2f0","0x00c9ae30","0x00c9aa10")
+MAX_TARGETS=3
 SUITE_VERSION=1
 
 
@@ -35,6 +37,44 @@ def _target_dir(out,va):
     return out/"functions"/va[2:]
 
 
+def _eligible_solved_sources(repo):
+    """Predeclared history list, filtered by actual source and manifest safety."""
+    from collections import OrderedDict
+    history={c["va"]:c for c in brain.known_solutions(repo,minimum=3)}
+    included=[]
+    rejected={}
+    manifests=set()
+    for path in brain._manifest_files(repo):
+        for line in path.read_text(encoding="utf-8",errors="replace").splitlines():
+            fields=line.split("#",1)[0].split()
+            if len(fields)>2 and len(fields[2])==8:
+                try:
+                    manifests.add("0x"+f"{int(fields[2],16):08x}")
+                except ValueError:
+                    continue
+    for va in TARGET_CANDIDATES:
+        record=history.get(va)
+        source=repo/brain.slice_path(va)
+        if not record:
+            rejected[va]="No accepted MATCH after >=3 failed attempts, or missing dedicated slice"
+            continue
+        if va not in manifests:
+            rejected[va]="No independently registered MATCH manifest entry"
+            continue
+        if not source.is_file() or source.is_symlink():
+            rejected[va]="Source is absent or symlinked"
+            continue
+        import re
+        markers=[x.lower() for x in re.findall(
+            r"(?mi)^\s*//\s*@\s*(0x[0-9a-f]{8})",
+            source.read_text(encoding="utf-8",errors="replace"))]
+        if markers!=[va]:
+            rejected[va]="Not an isolated one-function source marker (found "+str(markers[:8])+")"
+            continue
+        included.append(va)
+    return included[:MAX_TARGETS],rejected,history
+
+
 def prepare(repo,out,repeats=3,seed=20261118):
     repo=repo.resolve()
     out=out.resolve()
@@ -47,16 +87,18 @@ def prepare(repo,out,repeats=3,seed=20261118):
         if out.exists() and any(out.iterdir()):
             raise FileExistsError("Nonempty output has no suite-plan.json; refusing to overwrite")
         out.mkdir(parents=True,exist_ok=True)
-        found={c["va"]:c for c in brain.known_solutions(repo,minimum=3)}
-        if not set(TARGETS)<=found.keys():
-            missing=sorted(set(TARGETS)-found.keys())
-            raise RuntimeError("Selected functions lack >=3 failures before recorded MATCH: "+", ".join(missing))
+        targets,rejected,found=_eligible_solved_sources(repo)
+        if len(targets)!=MAX_TARGETS:
+            message=" ; ".join(f"{va}: {reason}" for va,reason in rejected.items())
+            raise RuntimeError(
+                f"Only {len(targets)} of {MAX_TARGETS} required independent solved "
+                "functions qualify. No paid work started. "+message)
         rng=random.Random(seed)
         # Randomize which function goes first in each block of three,
         # preserving the randomized within-function arm order.
         schedule=[]
         for repetition in range(4*repeats):
-            trio=list(TARGETS)
+            trio=list(targets)
             rng.shuffle(trio)
             schedule+=trio
         plan={
@@ -64,8 +106,9 @@ def prepare(repo,out,repeats=3,seed=20261118):
             "benchmark_protocol":brain.PROTOCOL_VERSION,
             "created":brain.now(),
             "source":str(repo),
-            "targets":list(TARGETS),
-            "historical_failures_before_match":{va:found[va]["failures"] for va in TARGETS},
+            "targets":list(targets),
+            "excluded_candidates":rejected,
+            "historical_failures_before_match":{va:found[va]["failures"] for va in targets},
             "repeats":repeats,
             "random_seed":seed,
             "schedule":schedule,
@@ -76,23 +119,26 @@ def prepare(repo,out,repeats=3,seed=20261118):
     if (plan.get("suite_version")!=SUITE_VERSION or
             plan.get("benchmark_protocol")!=brain.PROTOCOL_VERSION or
             plan.get("source")!=str(repo) or
-            plan.get("targets")!=list(TARGETS) or
+            (not plan.get("targets") or
+             not set(plan["targets"])<=set(TARGET_CANDIDATES) or
+             len(plan["targets"])!=MAX_TARGETS) or
             plan.get("repeats")!=repeats or
             plan.get("random_seed")!=seed):
         raise RuntimeError("Suite configuration changed. Refusing to mix experimental protocols")
-    if len(plan["schedule"])!=len(TARGETS)*4*repeats:
+    targets=tuple(plan["targets"])
+    if len(plan["schedule"])!=len(targets)*4*repeats:
         raise RuntimeError("Invalid randomized suite schedule")
-    for i,va in enumerate(TARGETS):
+    for i,va in enumerate(targets):
         sub=_target_dir(out,va)
         if not (sub/"plan.json").is_file():
             if sub.exists():
                 raise RuntimeError(f"Partial target preparation in {sub}; preserve for inspection")
-            print(f"Preparing heldout {va} ({i+1}/{len(TARGETS)})...",flush=True)
+            print(f"Preparing heldout {va} ({i+1}/{len(targets)})...",flush=True)
             brain.prepare(repo,sub,va=va,repeats=repeats,minimum=3,
-                          seed=seed+i,solved=True,holdouts=TARGETS)
+                          seed=seed+i,solved=True,holdouts=targets)
         inner=json.loads((sub/"plan.json").read_text(encoding="utf-8"))
         if (not inner.get("solved_cohort") or
-                tuple(inner.get("holdouts") or ())!=tuple(sorted(TARGETS)) or
+                tuple(inner.get("holdouts") or ())!=tuple(sorted(targets)) or
                 inner.get("target")!=va or inner.get("repeats")!=repeats):
             raise RuntimeError(f"Target {va} does not have a validated solved-cohort protocol")
         brain._seed_tooling(sub,inner)
@@ -141,9 +187,9 @@ def compare(out):
         wr=csv.DictWriter(f,fieldnames=cols,extrasaction="ignore")
         wr.writeheader()
         wr.writerows(rows)
-    print(f"\nKNOWN-SOLVABLE SUITE | {len(rows)}/{len(TARGETS)*4*plan['repeats']} prepared trials")
+    print(f"\nKNOWN-SOLVABLE SUITE | {len(rows)}/{len(plan['targets'])*4*plan['repeats']} prepared trials")
     print("Function       "+"  ".join(f"{arm:>13}" for arm in brain.ARMS))
-    for va in TARGETS:
+    for va in plan["targets"]:
         cells=[]
         for arm in brain.ARMS:
             active=[r for r in rows if r["target"]==va and r["arm"]==arm and r["valid"]]
@@ -157,7 +203,7 @@ def compare(out):
         wins=sum(bool(r["match"]) for r in measured)
         adherent=sum(bool(r.get("treatment_adherent")) for r in measured)
         print(f"  {arm:<13} MATCH {wins}/{len(measured)}, "
-              f"measured {len(measured)}/{len(TARGETS)*plan['repeats']}, "
+              f"measured {len(measured)}/{len(plan['targets'])*plan['repeats']}, "
               f"treatment exposed {adherent}/{len(measured)}")
         successful=[r for r in measured if r["match"]]
         if successful:
@@ -179,7 +225,7 @@ def run(repo,out,repeats=3,seed=20261118,*,execute=False,budget=.50,minutes=20):
         raise ValueError("Trial budget must be $0.10-$25; inactivity minutes 1-180")
     plan=prepare(repo,out,repeats,seed)
     total=len(plan["schedule"])
-    print(f"Suite ready: {len(TARGETS)} known MATCH functions x 4 arms x "
+    print(f"Suite ready: {len(plan['targets'])} known MATCH functions x 4 arms x "
           f"{repeats} repetitions = {total} trials")
     print(f"Per-trial spending guard: USD {budget:.2f}; "
           f"nominal sum of per-trial budgets: USD {total*budget:.2f}")
@@ -187,7 +233,7 @@ def run(repo,out,repeats=3,seed=20261118,*,execute=False,budget=.50,minutes=20):
         print("DRY RUN ONLY, no agent inference. Add --execute to run every trial.")
         return compare(out)
     remaining={va:list(json.loads((_target_dir(out,va)/"plan.json").read_text())
-                        ["arms"]) for va in TARGETS}
+                        ["arms"]) for va in plan["targets"]}
     # Each target plan is pre-randomized. The suite schedule interleaves target
     # blocks, ensuring no arm consistently runs first across all functions.
     for n,va in enumerate(plan["schedule"],start=1):

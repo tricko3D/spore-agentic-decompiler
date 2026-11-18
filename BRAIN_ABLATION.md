@@ -1,6 +1,6 @@
 ## One-command known-solvable suite
 
-**Main experiment, separate from the unsolved-function pilot.** The study uses three previously matched functions: 0x00c45760, 0x00c2f1f0, and 0x00b8d190. Each had four failures before an independently accepted MATCH in the locally reported history. The suite verifies this chronology against the source checkout's SQLite history. It creates four conditions (baseline, raw findings, consolidated findings/techniques, unrelated placebo evidence), three repetitions per function, and 36 total trials.
+**Main experiment, separate from the unsolved-function pilot.** The predeclared candidate pool consists of six historically solved functions: 0x00c45760, 0x00c2f1f0, 0x00b8d190, 0x00dba2f0, 0x00c9ae30, and 0x00c9aa10. The suite deterministically selects the **first three eligible** from that ordered list, requiring at least three attempts marked FAIL/DEFER *before* an accepted MATCH, a real MATCH manifest row, and exactly one dedicated source marker in the corresponding C++ file. This last condition prevents erasing a multi-function source file or testing the wrong function. If fewer than three qualify, preparation stops before inference and prints the precise rejected candidates. It creates four conditions (baseline, raw findings, consolidated findings/techniques, unrelated placebo evidence), three repetitions per selected function, and 36 total trials.
 
 To execute the entire suite locally with one command, including preparation, execution and final comparison:
 
