@@ -36,3 +36,16 @@ jobs:
         run: python -m unittest discover -s tests -p 'test_collective_memory.py' -v
       - name: Test durable investigation evidence
         run: python -m unittest discover -s tests -p 'test_investigation_evidence.py' -v
+
+  python314-stdlib:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+      - name: Verify Python 3.14 scratch/dis.py isolation without dependencies
+        run: |
+          python -m unittest discover -s tests -p 'test_collective_memory.py' -v
+          python -m unittest discover -s tests -p 'test_investigation_evidence.py' -v
