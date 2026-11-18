@@ -202,6 +202,53 @@ class Controller:
             raise ValueError('Retry allow list must be UTF-8 JSON') from exc
         return {'path':str(path),'source':source,'count':len(addresses)}
 
+    def _allowlist_breakdown_fallback(self, env):
+        """Read-only reconciliation against the currently INSTALLED local runner.
+
+        This works without reinstalling the bundled runner following git pull.
+        It reads the identical SQLite queue, valid attempts and module/manifest
+        classifier as make_assignments, without calling inference providers.
+        """
+        script = r'''
+import json, os
+from pathlib import Path
+import spore_parallel_sqlite as runner
+module=runner.load_runner()
+selected={f'0x{int(va,16):08x}' for va in json.loads(
+    Path(os.environ['SPORE_RETRY_ALLOWLIST']).read_text(encoding='utf-8'))}
+queue=runner.read_queue()
+queued={row['va'] for row in queue}
+classifier=module.ModuleIndex()
+classifier.refresh()
+classified={va for va in queued if classifier.eligible(va)}
+manifested=module.ManifestIndex().refresh()
+latest={row['va']:row['status'] for row in runner.store.read_attempts()}
+reasons={k:[] for k in (
+    'not_in_queue','outside_classified_scope','already_manifested',
+    'latest_match','latest_skip','other')}
+for va in sorted(selected):
+    if va not in queued: reasons['not_in_queue'].append(va)
+    elif va not in classified: reasons['outside_classified_scope'].append(va)
+    elif va in manifested: reasons['already_manifested'].append(va)
+    elif latest.get(va)=='MATCH': reasons['latest_match'].append(va)
+    elif latest.get(va)=='SKIP': reasons['latest_skip'].append(va)
+eligible=len(selected)-sum(map(len,reasons.values()))
+print(json.dumps({
+    'listed':len(selected),'eligible':eligible,
+    'excluded':len(selected)-eligible,
+    'reasons':{k:len(v) for k,v in reasons.items()},
+    'addresses':reasons},separators=(',',':')))
+'''
+        try:
+            proc=subprocess.run([sys.executable,'-c',script],
+                cwd=self.repo,env=env,stdin=subprocess.DEVNULL,
+                capture_output=True,text=True,timeout=60)
+            if proc.returncode != 0:
+                return None
+            return json.loads(proc.stdout)
+        except (OSError,ValueError,subprocess.TimeoutExpired):
+            return None
+
     def preview(self,module,workers):
         """Read-only current-queue plan. No scope --apply and no model calls.
 
@@ -217,6 +264,12 @@ class Controller:
         env=os.environ.copy()
         if selected:
             env['SPORE_RETRY_ALLOWLIST']=selected['path']
+            env['SPORE_ALLOWLIST_BREAKDOWN']='1'
+            # Mirror the CLI module scope for the local diagnostic fallback.
+            from spore_agentic import config as scope_config
+            saved=scope_config()
+            env['SPORE_TARGET_MODULES']='*' if module in ('*','__allowlist__') else module
+            env['SPORE_MIN_MODULE_CONFIDENCE']=str(saved.get('min_confidence',0.70))
         cmd=[sys.executable,str(CLI),'plan','--repo',str(self.repo),
              '--workers',str(workers)]
         cmd+=['--all-modules'] if module in ('*','__allowlist__') else ['--module',module]
@@ -232,11 +285,28 @@ class Controller:
                         result.stdout)
         if not found:
             raise ValueError('Preview output could not be interpreted. No agents started.')
-        return {'eligible':int(found.group(1)),'module':module,
+        eligible=int(found.group(1))
+        breakdown=None
+        if selected:
+            match=re.search(r'^SPORE_ALLOWLIST_BREAKDOWN=(\{[^\n]*\})$',
+                            result.stdout,re.MULTILINE)
+            if match:
+                try:breakdown=json.loads(match.group(1))
+                except ValueError:pass
+            if not breakdown:
+                breakdown=self._allowlist_breakdown_fallback(env)
+            # If the reconciliation disagrees with the authoritative plan,
+            # do not show potentially stale or misleading category counts.
+            if breakdown and (
+                    breakdown.get('eligible')!=eligible
+                    or breakdown.get('listed')!=selected['count']):
+                breakdown=None
+        return {'eligible':eligible,'module':module,
                 'workers':workers,'provisional':True,
                 'allowlist_active':bool(selected),
                 'allowlist_count':selected['count'] if selected else 0,
-                'allowlist_source':selected['source'] if selected else None}
+                'allowlist_source':selected['source'] if selected else None,
+                'allowlist_breakdown':breakdown}
 
     def _launch_environment(self):
         """Read the current key at launch, not the dashboard's old environment.
