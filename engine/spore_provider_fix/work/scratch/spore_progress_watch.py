@@ -55,7 +55,7 @@ def stop_process_group(proc):
         proc.wait()
 
 
-def watch(proc, log, idle_seconds, on_output=None, poll_seconds=0.5):
+def watch(proc, log, idle_seconds, on_output=None, poll_seconds=0.5, on_event=None):
     """Return (result, exit_code). Result is complete, provider_429 or idle.
 
     Parsing is incremental and leaves JSONL source and session state intact.
@@ -85,6 +85,12 @@ def watch(proc, log, idle_seconds, on_output=None, poll_seconds=0.5):
                     continue
                 if not isinstance(event, dict):
                     continue
+                if on_event:
+                    # Diagnostic bookkeeping must never stop a healthy agent.
+                    try:
+                        on_event(event)
+                    except (OSError, ValueError, TypeError):
+                        pass
                 if is_provider_429(event):
                     stop_process_group(proc)
                     return 'provider_429', proc.returncode
