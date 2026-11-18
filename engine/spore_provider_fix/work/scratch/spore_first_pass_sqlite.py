@@ -7,6 +7,7 @@ from spore_provider_log import provider_only, provider_pressure
 import spore_adaptive as adaptive_ctl
 import spore_progress_watch as progress_watch
 import spore_investigation as investigation
+import spore_collective_memory as collective_memory
 import fcntl
 from contextlib import contextmanager
 import glob
@@ -682,6 +683,33 @@ Do not dump entire compiler logs or broad repository search output into chat.
 Prefer targeted source reads and bounded tool outputs. Continue investigating
 while meaningful progress remains; there is no arbitrary model-step cutoff.
 """
+    # Collective Memory works through stdlib SQL/Unix sockets. It is a
+    # reference source, never an external API or a prerequisite to inference.
+    if collective_memory.paths(ROOT)[2].is_file():
+        prompt += f"""
+
+CROSS-FUNCTION KNOWLEDGE (local, no network or model API calls):
+Before repeating an ABI/compiler investigation, query the shared knowledge DB
+using a small, specific technical question, for example:
+.venv/bin/python work/scratch/spore_collective_memory.py --repo . query --text "EAX register calling convention stack cleanup"
+Only independently verified MATCH findings are proven byte-exact. Other records
+are negative/partial experiments and hypotheses, not authoritative instructions.
+Use evidence paths to inspect relevant snippets, never paste entire old logs.
+Record successful hypotheses in your own keep.md evidence file.
+"""
+        if pass_number > 1 and isinstance(prompt_override, str):
+            # Query from the previous independent diagnosis, not the entire
+            # history, preserving a bounded and useful initial context.
+            seed = re.search(r'Previous result: ([^\n]+)', prompt_override)
+            lookup = (seed.group(1)[:260] if seed else '')
+            if lookup:
+                try:
+                    hits = collective_memory.query(ROOT, lookup, limit=3)
+                    if hits:
+                        prompt += '\nRelated cross-function evidence (reference only):\n' + (
+                            collective_memory.print_findings(hits, max_chars=1400))
+                except (OSError, ValueError, RuntimeError):
+                    pass
     if os.environ.get('SPORE_SQLITE_RUN_ID'):
         prompt += f"""
 PARALLEL WORKER SAFETY: Other agents are working in this repository concurrently.
@@ -1327,6 +1355,18 @@ def process(minutes, unsafe, backend, quota_wait, max_functions,
                     except (OSError, ValueError, RuntimeError) as exc:
                         print(f'  Evidence update skipped ({exc}).', flush=True)
                 record(va, *outcome, log_path=log)
+                # The operational result is authoritative. Shared memory
+                # learns ONLY after this independently checked record exists.
+                # Memory is optional; its failures cannot consume an attempt
+                # or stop any worker.
+                try:
+                    collective_memory.ingest(
+                        ROOT, va, pass_number, outcome[0],
+                        note=outcome[2], checker=check_note,
+                        evidence_path=str(evidence) if evidence else '')
+                except Exception as exc:
+                    print(f'  Shared memory note skipped: {type(exc).__name__}: {str(exc)[:120]}',
+                          flush=True)
                 history.setdefault(va, []).append({'va': va, 'status': outcome[0],
                                                       'effort': outcome[1], 'note': outcome[2]})
                 print(f'    {outcome[0]} {outcome[1]} {outcome[2]}', flush=True)
