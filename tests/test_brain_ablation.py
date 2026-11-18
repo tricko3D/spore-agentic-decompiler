@@ -251,6 +251,70 @@ def run_one():
         self.assertFalse(row["match"])
         self.assertEqual(row["diff_bytes"],3)
 
+    def test_zero_evidence_runner_failure_is_unscored_and_requeue_preserves_log(self):
+        bench.prepare(self.source,self.destination,repeats=1)
+        with mock.patch.dict("os.environ",{"OPENROUTER_API_KEY":"mock-not-a-real-key"}):
+            with mock.patch.object(bench,"_start_vectors",return_value=None):
+                with mock.patch.object(bench.subprocess,"run",
+                                       return_value=mock.Mock(returncode=1)) as runner:
+                    bench.run_next(self.destination,execute=True,budget=.50)
+        self.assertEqual(runner.call_count,1)
+        plan=json.loads((self.destination/"plan.json").read_text())
+        item=plan["arms"][0]
+        old_name=item["name"]
+        self.assertEqual(item["state"],"error")
+        logfile=self.destination/"trials"/old_name/"benchmark-run.log"
+        self.assertTrue(logfile.is_file())
+        bench.report(self.destination)
+        data=json.loads((self.destination/"report.json").read_text())
+        result=next(x for x in data["trials"] if x["name"]==old_name)
+        self.assertIsNone(result["match"])
+        self.assertEqual(result["status"],"NO_RESULT")
+        bench.retry_invalid(self.destination)
+        plan=json.loads((self.destination/"plan.json").read_text())
+        refreshed=plan["arms"][0]
+        self.assertNotEqual(refreshed["name"],old_name)
+        self.assertEqual(refreshed["state"],"prepared")
+        self.assertEqual(refreshed["invalid_history"][0]["name"],old_name)
+        self.assertTrue(logfile.is_file())
+        self.assertFalse((self.destination/"trials"/refreshed["name"]).exists())
+        with mock.patch.object(bench.subprocess,"run",
+                               side_effect=AssertionError("Dry-run tried to invoke agent")):
+            bench.run_next(self.destination,execute=False)
+        with self.assertRaisesRegex(RuntimeError,"exactly one"):
+            bench.retry_invalid(self.destination)
+
+    def test_invalid_trial_with_agent_evidence_cannot_be_requeued(self):
+        bench.prepare(self.source,self.destination,repeats=1)
+        with mock.patch.dict("os.environ",{"OPENROUTER_API_KEY":"mock-not-a-real-key"}):
+            with mock.patch.object(bench,"_start_vectors",return_value=None):
+                with mock.patch.object(bench.subprocess,"run",
+                                       return_value=mock.Mock(returncode=1)):
+                    bench.run_next(self.destination,execute=True,budget=.50)
+        plan=json.loads((self.destination/"plan.json").read_text())
+        trial=self.destination/"trials"/plan["arms"][0]["name"]
+        audit=trial/bench.WORK/"logs/attempt.jsonl"
+        audit.parent.mkdir(parents=True,exist_ok=True)
+        audit.write_text('{"type":"tool_use"}\n')
+        with self.assertRaisesRegex(RuntimeError,"JSONL evidence"):
+            bench.retry_invalid(self.destination)
+        self.assertEqual(json.loads((self.destination/"plan.json").read_text())["arms"][0]["state"],
+                         "error")
+
+    def test_zero_exit_without_recorded_attempt_is_invalid(self):
+        bench.prepare(self.source,self.destination,repeats=1)
+        with mock.patch.dict("os.environ",{"OPENROUTER_API_KEY":"mock-not-a-real-key"}):
+            with mock.patch.object(bench,"_start_vectors",return_value=None):
+                with mock.patch.object(bench.subprocess,"run",
+                                       return_value=mock.Mock(returncode=0)):
+                    bench.run_next(self.destination,execute=True,budget=.50)
+        plan=json.loads((self.destination/"plan.json").read_text())
+        self.assertEqual(plan["arms"][0]["state"],"error")
+        bench.report(self.destination)
+        matches=[x["match"] for x in
+                 json.loads((self.destination/"report.json").read_text())["trials"]]
+        self.assertTrue(all(x is None for x in matches))
+
     def test_isolation_refuses_source_parent_and_existing_output(self):
         with self.assertRaises(ValueError):
             bench.prepare(self.source,self.source/"inside",repeats=1)

@@ -516,10 +516,23 @@ def run_next(out, execute=False, budget=DEFAULT_BUDGET, minutes=20):
         with (trial/"benchmark-run.log").open("w",encoding="utf-8") as log:
             proc=subprocess.run(cmd,cwd=trial,env=env,stdout=log,stderr=subprocess.STDOUT)
         item["exit_code"]=proc.returncode
-        item["state"]="completed" if proc.returncode==0 else "error"
+        with sqlite3.connect(trial/OPS) as db:
+            completed=db.execute("SELECT 1 FROM attempts WHERE va=? LIMIT 1",
+                                  (plan["target"],)).fetchone() is not None
+        item["state"]="completed" if proc.returncode==0 and completed else "error"
+        if not completed:
+            item["error"]="Runner exited without a recorded decompilation attempt"
         item["finished"]=now()
         write_json(planpath,plan)
-        print("Trial",item["name"],"finished with exit code",proc.returncode)
+        print("Trial",item["name"],"finished with exit code",proc.returncode,
+              "and",("an independent result" if completed else "NO_RESULT"),flush=True)
+        if item["state"]=="error":
+            logfile=trial/"benchmark-run.log"
+            print("Trial invalid. Diagnostics:",logfile,flush=True)
+            if logfile.exists():
+                # Reproduce only a bounded tail, never print credentials.
+                lines=logfile.read_text(encoding="utf-8",errors="replace").splitlines()
+                print("Last runner output:\n"+ "\n".join(lines[-35:]),flush=True)
     except BaseException as exc:
         item["state"]="blocked" if item["state"]=="prepared" else "interrupted"
         item["error"]=type(exc).__name__+": "+str(exc)[:350]
@@ -534,6 +547,63 @@ def run_next(out, execute=False, budget=DEFAULT_BUDGET, minutes=20):
             except subprocess.TimeoutExpired:
                 service.kill()
                 service.wait()
+
+
+def retry_invalid(out, name=None):
+    """Requeue a demonstrably unmeasured slot, preserving all previous diagnostics.
+
+    No API calls. Never overwrite, delete or reuse the failed sandbox. Refuse
+    uncertain attempts: a result, an agent JSONL trace, Brain activity, or
+    charged usage is enough to prohibit an automatic replacement.
+    """
+    import uuid
+    out=out.resolve()
+    planpath=out/"plan.json"
+    plan=json.loads(planpath.read_text(encoding="utf-8"))
+    found=[i for i in plan["arms"] if i["state"] in {"error","blocked","interrupted"}]
+    if name:
+        found=[i for i in found if i["name"]==name]
+    if len(found)!=1:
+        raise RuntimeError("Select one invalid trial with --name, or ensure exactly one exists")
+    item=found[0]
+    trial=out/"trials"/item["name"]
+    if not trial.is_dir():
+        raise RuntimeError("Trial directory missing; cannot audit before retry")
+    with sqlite3.connect(f"file:{(trial/OPS).resolve()}?mode=ro",uri=True) as con:
+        counted=con.execute("SELECT COUNT(*) FROM attempts WHERE va=?",
+                            (plan["target"],)).fetchone()[0]
+        usage=con.execute("SELECT COALESCE(SUM(last_usage-baseline_usage),0) "
+                          "FROM run_budgets").fetchone()[0]
+    if counted:
+        raise RuntimeError("Trial has recorded decompilation attempts; refusing a replacement")
+    if float(usage or 0)>0.000001:
+        raise RuntimeError("Trial recorded paid inference; manual review required")
+    logs=trial/WORK/"logs"
+    if logs.exists() and any(logs.rglob("*.jsonl")):
+        raise RuntimeError("Agent JSONL evidence exists; manual review required before retry")
+    audit=trial/WORK/"brain-queries.jsonl"
+    if audit.exists() and audit.stat().st_size:
+        raise RuntimeError("Brain was queried; cannot label this a pre-agent failure")
+    original=trial/slice_path(plan["target"])
+    expected=f"// @ {plan['target']}\n// Controlled blank-slate experiment."
+    if not original.read_text(encoding="utf-8").startswith(expected):
+        raise RuntimeError("Target source was changed; cannot safely classify as pre-agent failure")
+    old_name=item["name"]
+    replacement="trial-retry-"+uuid.uuid4().hex[:16]
+    if (out/"trials"/replacement).exists():
+        raise RuntimeError("Replacement sandbox name collides")
+    item.setdefault("invalid_history",[]).append({
+        "name":old_name,"state":item["state"],"exit_code":item.get("exit_code"),
+        "reason":item.get("error",""),"retired_utc":now()
+    })
+    item["name"]=replacement
+    item["state"]="prepared"
+    for field in ("error","started","finished","exit_code"):
+        item.pop(field,None)
+    write_json(planpath,plan)
+    print(f"Requeued {item['arm']} repeat {item['repeat']} as {replacement}.")
+    print(f"Original invalid trial preserved, including benchmark-run.log: {trial}")
+    print("No inference started. Inspect the old log before using run-next --execute.")
 
 
 def _checker_calls(folder):
@@ -576,7 +646,7 @@ def report(out):
                 result=con.execute("SELECT status,note,utc FROM attempts WHERE va=? ORDER BY id DESC LIMIT 1",
                                    (plan["target"],)).fetchone()
                 data["status"]=result[0] if result else "NO_RESULT"
-                data["match"]=bool(result and result[0]=="MATCH")
+                data["match"]=(result[0]=="MATCH") if result else None
                 diff=re.search(r"\bdiffs?\s*[=:]\s*(\d+)",result[1],re.I) if result else None
                 data["diff_bytes"]=int(diff.group(1)) if diff else None
                 budget=con.execute(
@@ -631,6 +701,9 @@ def main(argv=None):
     r.add_argument("--minutes",type=int,default=20)
     o=sub.add_parser("report",help="Read-only comparison from independently checked trial logs")
     o.add_argument("--out",type=Path,default=Path.home()/"sad-brain-benchmark")
+    retry=sub.add_parser("retry-invalid",help="Requeue an auditable zero-evidence infrastructure failure")
+    retry.add_argument("--out",type=Path,default=Path.home()/"sad-brain-benchmark")
+    retry.add_argument("--name",help="The prior invalid sandbox name, if more than one")
     a=parser.parse_args(argv)
     if a.command=="candidates":
         for x in candidates(a.repo.resolve(),a.min_failures)[:25]:
@@ -644,6 +717,8 @@ def main(argv=None):
         run_next(a.out,a.execute,a.budget,a.minutes)
     elif a.command=="report":
         report(a.out)
+    elif a.command=="retry-invalid":
+        retry_invalid(a.out,a.name)
 
 
 if __name__=="__main__":

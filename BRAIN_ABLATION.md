@@ -69,6 +69,26 @@ The existing OpenRouter key's provider-side spending limit remains the actual ha
 
 The command runs exactly one randomized treatment each invocation. Before any paid request in a knowledge arm, a copied offline embedding service must reach ready status. It also refuses to resume an existing sandbox silently. There is no auto-purchasing from prepare, candidates, report, or the dry-run version of run-next.
 
+### Infrastructure failures and retry
+
+A nonzero runner exit or a zero exit without a recorded attempt is an **invalid trial**, not a FAIL or a zero MATCH in the experimental denominator. The runner prints a bounded diagnostic tail. The complete `benchmark-run.log` is retained in the original sandbox:
+
+```bash
+tail -n 80 ~/sad-brain-benchmark/trials/trial-00-b40b0394/benchmark-run.log
+```
+
+Once the underlying infrastructure problem is corrected, requeue the **same arm and repeat** into a fresh independent copy of the original seed:
+
+```bash
+python3 brain_ablation.py retry-invalid --out ~/sad-brain-benchmark
+python3 brain_ablation.py run-next --out ~/sad-brain-benchmark
+```
+
+This prepares, but does not execute, the replacement. The old invalid sandbox and log stay intact and its name is kept in `plan.json` under `invalid_history`. Retry refuses any attempt containing a recorded result, an agent JSONL trace, Brain queries or measured provider spending. If there was meaningful agent activity, investigate the attempt manually rather than silently rerunning it.
+
+The report uses `match: null` for `NO_RESULT` trials and excludes these from match-rate denominators. A `0/1 MATCH` result must represent a genuinely recorded nonmatching attempt, not an infrastructure crash.
+
+
 ## Evaluation
 
 ```bash
