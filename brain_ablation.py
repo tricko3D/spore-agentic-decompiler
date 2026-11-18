@@ -545,11 +545,12 @@ def _clone(seed, destination):
         raise FileExistsError(f"Experiment sandbox exists: {destination}")
     shutil.copytree(seed,destination,symlinks=True,ignore=_copy_ignore(seed))
     _relocate_symlinks(destination,seed)
-    # Ignore logic removes SQLite files; install immutable prepared snapshots.
-    shutil.copy2(seed/OPS,destination/OPS)
+    # The source database may have an uncheckpointed WAL: raw copy2()
+    # resurrects historical attempts and stale knowledge vectors. Use the
+    # SQLite online backup API so the *committed logical state* is cloned.
+    snapshot_db(seed/OPS,destination/OPS)
     if (seed/KNOW).is_file():
-        (destination/KNOW).parent.mkdir(parents=True,exist_ok=True)
-        shutil.copy2(seed/KNOW,destination/KNOW)
+        snapshot_db(seed/KNOW,destination/KNOW)
     # The virtualenv is a shared dependency only, never a source workspace.
     if (seed/".venv").is_symlink():
         (destination/".venv").symlink_to(os.readlink(seed/".venv"),target_is_directory=True)
@@ -926,6 +927,60 @@ def repair_seed(out):
     print("The next action is retry-invalid (no paid inference), then run-next.")
 
 
+def _retire_unstarted_clone(out, plan, item):
+    """Recover a pre-agent WAL-copy failure, preserving the original directory.
+
+    The old clone carries an orphaned CONFIG and stale base SQLite pages but
+    never reached vector-service startup or the paid agent. No existing
+    experimental result, tool trace, spend ledger or modified source can be
+    retired automatically.
+    """
+    import uuid
+    old_name=item["name"]
+    trial=out/"trials"/old_name
+    if not trial.exists():
+        return False
+    if not trial.is_dir() or item["state"]!="prepared":
+        raise RuntimeError("Existing trial is not an auditable unstarted clone")
+    if any((trial/name).exists() for name in (
+            "benchmark-run.log",WORK/"benchmark-memory-service.log",
+            WORK/"brain-queries.jsonl")):
+        raise RuntimeError("Trial contains runner or Brain evidence; manual audit required")
+    logs=trial/WORK/"logs"
+    if logs.exists() and any(logs.rglob("*.jsonl")):
+        raise RuntimeError("Trial contains agent JSONL traces; manual audit required")
+    if not (trial/OPS).is_file() or not (out/"seed"/OPS).is_file():
+        raise RuntimeError("Missing operational database; cannot certify pre-agent clone")
+    # This exact preflight defect made a byte-for-byte SQLite base-file copy
+    # of the seed. A modified trial database could represent real agent work.
+    if _tool_hash(trial/OPS)!=_tool_hash(out/"seed"/OPS):
+        raise RuntimeError("Trial SQLite differs from seed base; cannot certify no agent work")
+    source=trial/slice_path(plan["target"])
+    expected=(out/"seed"/slice_path(plan["target"]))
+    if not source.is_file() or not expected.is_file() or source.read_bytes()!=expected.read_bytes():
+        raise RuntimeError("Trial C++ differs from frozen seed; manual audit required")
+    config=trial/CONFIG
+    if not config.is_file():
+        raise RuntimeError("Missing preflight configuration; refusing to overwrite trial")
+    data=json.loads(config.read_text(encoding="utf-8"))
+    if (data.get("target")!=plan["target"] or data.get("arm")!=item["arm"] or
+            data.get("repeat")!=item["repeat"] or data.get("seed")!=item["seed"]):
+        raise RuntimeError("Preflight configuration does not match randomized assignment")
+    replacement="trial-retry-"+uuid.uuid4().hex[:16]
+    if (out/"trials"/replacement).exists():
+        raise RuntimeError("Retry sandbox name collides")
+    item.setdefault("invalid_history",[]).append({
+        "name":old_name,"state":"unstarted_clone","reason":
+        "Orphan created before agent start by SQLite WAL base-file copy",
+        "retired_utc":now()
+    })
+    item["name"]=replacement
+    write_json(out/"plan.json",plan)
+    print("Recovered unstarted, unchanged clone",old_name,
+          "; preserving it and retrying as",replacement,flush=True)
+    return True
+
+
 def run_next(out, execute=False, budget=DEFAULT_BUDGET, minutes=20):
     out=out.resolve()
     planpath=out/"plan.json"
@@ -957,6 +1012,7 @@ def run_next(out, execute=False, budget=DEFAULT_BUDGET, minutes=20):
             env_key=keyfile.read_text(encoding="utf-8").strip()
     if not env_key:
         raise RuntimeError("OpenRouter key missing (environment or private SAD key file); no paid work started")
+    _retire_unstarted_clone(out,plan,item)
     trial=out/"trials"/item["name"]
     _clone(out/"seed",trial)
     if item["arm"]=="baseline":

@@ -665,6 +665,91 @@ def run_one():
         with sqlite3.connect(self.destination/"seed"/bench.OPS) as db:
             self.assertEqual(db.execute("SELECT COUNT(*) FROM attempts").fetchone()[0],0)
 
+    def test_wal_backed_seed_clone_includes_committed_deletions_and_masking(self):
+        """A bare copy2 of seed/*.sqlite3 must FAIL this regression."""
+        import shutil
+        bench.prepare(self.source,self.destination,repeats=1)
+        seed=self.destination/"seed"
+        ops=sqlite3.connect(seed/bench.OPS)
+        know=sqlite3.connect(seed/bench.KNOW)
+        self.addCleanup(ops.close)
+        self.addCleanup(know.close)
+        self.assertEqual(ops.execute("PRAGMA journal_mode=WAL").fetchone()[0],"wal")
+        self.assertEqual(know.execute("PRAGMA journal_mode=WAL").fetchone()[0],"wal")
+        ops.execute("INSERT INTO attempts(va,status,note,utc) VALUES(?,?,?,?)",
+                    (VA,"FAIL","historical record still in base file",bench.now()))
+        ops.commit()
+        ops.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        ops.execute("DELETE FROM attempts WHERE va=?",(VA,))
+        ops.commit()
+        self.assertEqual(ops.execute("SELECT COUNT(*) FROM attempts").fetchone()[0],0)
+        know.execute("UPDATE findings SET summary='STALE KNOWLEDGE' WHERE id=1")
+        know.commit()
+        know.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        know.execute("UPDATE findings SET summary='FROZEN MASKED KNOWLEDGE' WHERE id=1")
+        know.commit()
+        # Demonstrate that the old code would have resurrected the old state.
+        naive=self.base/"stale-physical-pages.sqlite3"
+        shutil.copy2(seed/bench.OPS,naive)
+        with sqlite3.connect(naive) as check:
+            self.assertEqual(check.execute(
+                "SELECT COUNT(*) FROM attempts WHERE va=?",(VA,)).fetchone()[0],1)
+        trial=self.destination/"trials"/"logical-backup"
+        bench._clone(seed,trial)
+        with sqlite3.connect(trial/bench.OPS) as check:
+            self.assertEqual(check.execute(
+                "SELECT COUNT(*) FROM attempts WHERE va=?",(VA,)).fetchone()[0],0)
+        with sqlite3.connect(trial/bench.KNOW) as check:
+            self.assertEqual(check.execute(
+                "SELECT summary FROM findings WHERE id=1").fetchone()[0],
+                "FROZEN MASKED KNOWLEDGE")
+
+    def _make_unstarted_preflight_clone(self):
+        """Construct exactly the copy-before-agent failure, without paid work."""
+        import shutil
+        bench.prepare(self.source,self.destination,repeats=1)
+        planpath=self.destination/"plan.json"
+        plan=json.loads(planpath.read_text(encoding="utf-8"))
+        item=plan["arms"][0]
+        seed=self.destination/"seed"
+        trial=self.destination/"trials"/item["name"]
+        bench._clone(seed,trial)
+        # Keep a stale physically copied SQLite file (same as historical code).
+        shutil.copy2(seed/bench.OPS,trial/bench.OPS)
+        bench.write_json(trial/bench.CONFIG, {
+            "arm":item["arm"],"repeat":item["repeat"],
+            "target":plan["target"],"alias":plan["alias"],
+            "seed":item["seed"],"source_sha256":plan["original_cpp_sha256"]})
+        return plan,item,trial
+
+    def test_recover_only_unstarted_preflight_clone_and_preserve_evidence(self):
+        plan,item,oldtrial=self._make_unstarted_preflight_clone()
+        original_name=item["name"]
+        self.assertTrue(bench._retire_unstarted_clone(self.destination,plan,item))
+        self.assertNotEqual(item["name"],original_name)
+        self.assertTrue(oldtrial.is_dir())
+        self.assertEqual(item["invalid_history"][-1]["name"],original_name)
+        self.assertEqual(item["invalid_history"][-1]["state"],"unstarted_clone")
+        saved=json.loads((self.destination/"plan.json").read_text())
+        self.assertEqual(saved["arms"][0]["name"],item["name"])
+        self.assertFalse((self.destination/"trials"/item["name"]).exists())
+        self.assertFalse(bench._retire_unstarted_clone(self.destination,plan,item))
+        # The retry will use the normal snapshot clone, which is checked above.
+
+    def test_recovery_refuses_started_agent_or_modified_source(self):
+        plan,item,trial=self._make_unstarted_preflight_clone()
+        original=item["name"]
+        (trial/"benchmark-run.log").write_text("Agent may have started\n")
+        with self.assertRaisesRegex(RuntimeError,"runner or Brain evidence"):
+            bench._retire_unstarted_clone(self.destination,plan,item)
+        (trial/"benchmark-run.log").unlink()
+        (trial/bench.slice_path(VA)).write_text("// changed by an agent\n")
+        with self.assertRaisesRegex(RuntimeError,"Trial C.. differs"):
+            bench._retire_unstarted_clone(self.destination,plan,item)
+        self.assertEqual(item["name"],original)
+        self.assertEqual(json.loads((self.destination/"plan.json").read_text())
+                         ["arms"][0]["name"],original)
+
     def test_report_skip_is_not_a_byte_mismatch_or_knowledge_exposure(self):
         bench.prepare(self.source,self.destination,repeats=1)
         plan=json.loads((self.destination/"plan.json").read_text())

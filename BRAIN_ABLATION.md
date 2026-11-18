@@ -1,3 +1,11 @@
+## Recovery: prepared trial contains historical attempts (WAL copy defect)
+
+Before the trial runner starts, the cloned source SQLite DB can have a WAL containing the deleted historical attempts. Older trial-copy code used shutil.copy2() on the seed's .sqlite3 file but ignored its -wal file. This copied old pages, resurrected the archived attempts, and stopped with "Old target attempts leaked into trial." The **same bug could also omit knowledge redaction**, so these are protocol-integrity failures rather than decompilation failures.
+
+Trial cloning now uses SQLite's online backup API, copying committed logical state of both the operational and knowledge databases, including changes present only in WAL. Regression tests demonstrate the old file copy resurrecting history and the fixed backup preserving deletion and knowledge masking.
+
+If the user hit this before vector-service startup on the first trial, the unstarted clone directory remains on disk with its frozen source, preflight configuration, and untouched raw seed SQLite base file. Running the SAME suite command again automatically audits that precise state, archives the old trial ID in invalid_history, and gives it a fresh trial sandbox before starting inference. It never overwrites the failed clone. The automatic recovery **refuses** any agent log, Brain query log, changed source, mismatched configuration, or modified operational SQLite file. A genuinely started experiment must be manually investigated and cannot be silently replayed. All already frozen suite source/knowledge snapshots remain unchanged.
+
 ## One-command known-solvable suite
 
 **Main experiment, separate from the unsolved-function pilot.** The study uses three previously matched functions: 0x00c45760, 0x00c2f1f0, and 0x00b8d190. Each had four failures before an independently accepted MATCH in the locally reported history. The suite verifies this chronology against the source checkout's SQLite history. It creates four conditions (baseline, raw findings, consolidated findings/techniques, unrelated placebo evidence), three repetitions per function, and 36 total trials.
