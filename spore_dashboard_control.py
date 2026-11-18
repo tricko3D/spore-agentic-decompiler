@@ -357,11 +357,10 @@ print(json.dumps({
                  '--workers',str(workers)]
             cmd+=['--all-modules'] if module in ('*','__allowlist__','__claimed__') else ['--module',module]
             try:
-                try:
-                    result=subprocess.run(cmd,cwd=CLI.parent,stdin=subprocess.DEVNULL,
-                                          capture_output=True,text=True,timeout=60,env=env)
-                except subprocess.TimeoutExpired:
-                    raise ValueError('Preview timed out. No agents started.')
+                result=subprocess.run(cmd,cwd=CLI.parent,stdin=subprocess.DEVNULL,
+                                      capture_output=True,text=True,timeout=60,env=env)
+            except subprocess.TimeoutExpired:
+                raise ValueError('Preview timed out. No agents started.')
             if result.returncode:
                 raise ValueError('Preview unavailable: '+
                                  (result.stdout+' '+result.stderr)[-300:])
