@@ -380,7 +380,7 @@ def snapshot(repo):
         module_names=known_modules(repo)
     workers=worker_info(repo,rid,claims,last_by_worker,byte_sizes,active_slots=active_slots)
     run['live_workers']=sum(w['alive'] for w in workers)
-    if not run:
+    if not rid:
         run['state']='none'
     elif run['finished']:
         # Finished may also mean budget, watchdog or manual shutdown.
