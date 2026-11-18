@@ -933,7 +933,7 @@ def parse_agent_verdict(answer):
     pattern = re.compile(
         r'^[ \t]*(?:#{1,6}[ \t]+|[-*][ \t]+)?'
         r'(?P<fmt>\*\*|__|\x60)?'
-        r'(?P<verdict>FAIL[ \t]*\+[1-5]|SKIP)'
+        r'(?P<verdict>FAIL[ \t]*\+[ \t]*[1-5]|SKIP)'
         r'(?P<inner_colon>:)?'
         r'(?(fmt)(?P=fmt))'
         r'(?=$|[ \t]|:|—|–|-)'
