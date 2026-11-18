@@ -1,0 +1,16 @@
+# SAD_BRAIN_ABLATION_OWN_CLAIM_V2
+CONTROLLED BYTE-EXACT DECOMPILATION EXPERIMENT. Your only target is Spore function {VA}.
+
+The experiment orchestrator has already acquired the exclusive SQLite claim for {VA}. This claim is EXPECTED and belongs to your own run. If task.py reports that {VA} is claimed, CONTINUE the investigation; never return SKIP merely because of that claim. Do not release, reset, modify or steal claims, and never work on another function. Other instructions about protecting another worker's claims do not apply to this orchestrator-owned claim.
+
+BEFORE your first compiler hypothesis or source edit, run this exact research query from the clone root:
+.venv/bin/python brain_trial_entry.py query --text "MSVC 32-bit x86 EBP stack frame register allocation calling convention"
+The response may contain original findings, consolidated compiler techniques, unrelated control evidence or no knowledge at all. Those differences are assigned by the scientific experiment. Do not attempt to discover your assignment, read old attempt logs, inspect prior implementations or query historical SQLite databases. You may ask additional specific technical questions through the same tool.
+
+Start from the blank target source slice. Read the genuine task card with
+.venv/bin/python tools/contrib/task.py {VA}
+Inspect the retail assembly, PDB-derived names in symbols/pdb_names.json and relevant type layouts where available. Do not assume a development-build layout matches retail. Write real C++ only, with no inline assembly, byte spoofing, or placeholders. Compile and test your candidate with the genuine checker:
+.venv/bin/python tools/contrib/check.py {VA}
+Use the emitted retail assembly differences to refine the *same* target. Do not edit shared headers, other functions, tooling, benchmark configuration, queue, SQLite files or manifests manually. Do not make Git commits, change branches or reset the repository.
+
+An exact MATCH requires independent checker confirmation. Otherwise leave your latest tested C++ attempt in the target source and report FAIL +N with a brief technical blocker (N=1 nearly matching through N=5 major unknown), or SKIP only if the task genuinely cannot proceed for a reason unrelated to the orchestrator-owned claim. Never claim success without a checker result.

@@ -28,6 +28,7 @@ OPS = WORK / "spore.sqlite3"
 KNOW = WORK / "memory/knowledge.sqlite3"
 RUNNER = Path("work/scratch/spore_first_pass_sqlite.py")
 PROMPT = Path("work/scratch/spore_first_pass_prompt.txt")
+PROMPT_SOURCE = Path(__file__).resolve().parent / "brain_ablation_prompt.txt"
 PROTOCOL_VERSION = 2
 PROTOCOL_MARKER = "SAD_BRAIN_ABLATION_OWN_CLAIM_V2"
 MEMORY = Path("work/scratch/spore_collective_memory.py")
@@ -162,75 +163,98 @@ def _relocate_symlinks(tree, source):
 
 
 def _validate_partial(repo, out, va, original):
-    """Resume only the exact pre-snapshot-copy failure state of prepare()."""
+    """Recover only audited preparation stages, without recopying upstream.
+
+    Stage A: checkout fully copied, operational DB not installed.
+    Stage B: DBs reset/masked, runner patched, source blanked, no plan/trials.
+    Stage B matches the failed protocol-v2 prompt installation.
+    """
     archive=out/"archive"
     seed_tree=out/"seed"
     required=[
         archive/"spore.sqlite3", archive/"knowledge.sqlite3",
         archive/"original-target.cpp", archive/"original-target.sha256",
         archive/"target-attempts.json", seed_tree/RUNNER,
-        seed_tree/MEMORY, seed_tree/slice_path(va)
+        seed_tree/MEMORY, seed_tree/PROMPT, seed_tree/slice_path(va)
     ]
     if any(not p.is_file() for p in required):
         raise RuntimeError("Partial preparation is missing required backups or seed files; "
                            "keep this directory and start a new output directory")
     if (out/"plan.json").exists() or (out/"trials").exists():
         raise RuntimeError("Refusing to resume a finalized or trial-bearing experiment")
-    if (seed_tree/OPS).exists() or (seed_tree/KNOW).exists():
-        raise RuntimeError("Cannot resume after trial database installation; use a new directory")
     digest=hashlib.sha256(original.encode()).hexdigest()
     if archive.joinpath("original-target.sha256").read_text().strip()!=digest:
         raise RuntimeError("Live target changed since the backup; refusing to mix source versions")
     if archive.joinpath("original-target.cpp").read_text()!=original:
         raise RuntimeError("Archived C++ differs from the live target")
-    if (seed_tree/slice_path(va)).read_text()!=original:
-        raise RuntimeError("Seed target differs from the archived C++; refusing unsafe resume")
-    if (seed_tree/RUNNER).read_bytes()!=(repo/RUNNER).read_bytes():
-        raise RuntimeError("Runner changed after failed copy; start a new experiment")
-    # Ensure the two WAL-consistent backups can be opened and contain the target.
     with sqlite3.connect(f"file:{(archive/'spore.sqlite3').resolve()}?mode=ro",uri=True) as db:
         if not db.execute("SELECT 1 FROM attempts WHERE va=? LIMIT 1",(va,)).fetchone():
-            raise RuntimeError("Partial operational backup lacks the target attempts")
+            raise RuntimeError("Partial operational backup lacks target attempt history")
     with sqlite3.connect(f"file:{(archive/'knowledge.sqlite3').resolve()}?mode=ro",uri=True) as db:
         db.execute("SELECT 1 FROM findings LIMIT 1").fetchone()
-    return seed_tree
-
+    ops_exists=(seed_tree/OPS).exists()
+    know_exists=(seed_tree/KNOW).exists()
+    if ops_exists!=know_exists:
+        raise RuntimeError("One staged SQLite database is missing; cannot safely resume")
+    runner=seed_tree/RUNNER
+    target=seed_tree/slice_path(va)
+    if not ops_exists:
+        if target.read_text(encoding="utf-8")!=original:
+            raise RuntimeError("Seed target differs from archived C++; refusing unsafe resume")
+        if runner.read_bytes()!=(repo/RUNNER).read_bytes():
+            raise RuntimeError("Runner changed after failed copy; start a new experiment")
+        return seed_tree,False
+    blank=(f"// @ {va}\n"
+           "// Controlled blank-slate experiment. Rebuild using task.py and check.py.\n")
+    if target.read_text(encoding="utf-8")!=blank:
+        raise RuntimeError("Partially prepared target is not the expected untouched blank slice")
+    compiled_runner=runner.read_text(encoding="utf-8")
+    if ("if not os.environ.get('SAD_BENCH_ACTIVE')" not in compiled_runner
+            or compiled_runner.count("brain_trial_entry.py query")==0):
+        raise RuntimeError("Partial seed runner is not the expected benchmark-patched version")
+    with sqlite3.connect(f"file:{(seed_tree/OPS).resolve()}?mode=ro",uri=True) as db:
+        if db.execute("SELECT COUNT(*) FROM attempts").fetchone()[0]:
+            raise RuntimeError("Partial seed operational attempts are not empty")
+        if db.execute("SELECT COUNT(*) FROM agent_sessions").fetchone()[0]:
+            raise RuntimeError("Partial seed retained agent sessions")
+    alias="0xff"+hashlib.sha256(va.encode()).hexdigest()[:6]
+    with sqlite3.connect(f"file:{(seed_tree/KNOW).resolve()}?mode=ro",uri=True) as db:
+        if db.execute("SELECT COUNT(*) FROM findings WHERE va=?",(va,)).fetchone()[0]:
+            raise RuntimeError("Partial seed still exposes the target's original address")
+        # A target may not have consolidated records; alias presence is optional.
+        if db.execute("SELECT COUNT(*) FROM embedding_jobs").fetchone()[0]:
+            raise RuntimeError("Partial seed contains unfinished embedding jobs")
+    if (repo/".venv").is_dir() and not (seed_tree/".venv").is_symlink():
+        raise RuntimeError("Partial seed lacks the expected shared Python environment")
+    if (repo/WORK/"memory/.venv").is_dir() and not (seed_tree/WORK/"memory/.venv").is_symlink():
+        raise RuntimeError("Partial seed lacks the dedicated embedding environment")
+    _relocate_symlinks(seed_tree,repo)
+    return seed_tree,True
 
 def _patch_prompt(path):
-    """Eliminate the orchestrator-own-claim SKIP defect in the cloned prompt.
+    """Install a controlled, versioned task prompt, independent of local prose.
 
-    The production decompiler claims the target before launching the agent,
-    while its ordinary prompt says to SKIP when claimed. This instruction is
-    contradictory in a controlled one-agent/one-function experiment.
+    Live Spore checkouts use different revisions of spore_first_pass_prompt.txt.
+    Searching for a literal claim/SKIP sentence is not scientifically stable.
+    Use one canonical prompt for ALL treatment arms, only in the copied seed.
     """
     if not path.is_file() or path.is_symlink():
         raise RuntimeError(f"Missing standalone benchmark prompt: {path}")
-    original=path.read_text(encoding="utf-8")
-    if PROTOCOL_MARKER in original:
-        if "if claimed, reply SKIP" in original:
-            raise RuntimeError("Partially patched benchmark prompt")
+    if not PROMPT_SOURCE.is_file():
+        raise RuntimeError(f"Canonical benchmark prompt missing: {PROMPT_SOURCE}")
+    content=PROMPT_SOURCE.read_text(encoding="utf-8")
+    if content.count(PROTOCOL_MARKER)!=1 or content.count("{VA}")<2:
+        raise RuntimeError("Invalid canonical benchmark prompt; cannot start study")
+    if "if claimed, reply" in content.lower():
+        raise RuntimeError("Canonical benchmark prompt includes forbidden claim rule")
+    existing=path.read_text(encoding="utf-8")
+    if existing==content:
         return False
-    needle="if claimed, reply "+chr(96)+"SKIP: claimed"+chr(96)
-    if original.count(needle)!=1:
-        raise RuntimeError("Unknown original claim rule. Refusing to change benchmark semantics blindly")
-    replacement=(
-        "if task.py reports this target as claimed, CONTINUE: the current "
-        "single-function benchmark runner itself owns that claim. "
-        "A self-owned claim is NOT a reason to SKIP. Never release, edit or "
-        "reset claims, and do not work on another function"
-    )
-    preface=(
-        "# "+PROTOCOL_MARKER+"\n"
-        "CONTROLLED BENCHMARK: Work only on the runner-assigned function {VA}. "
-        "The runner's existing claim on {VA} is EXPECTED. Do not terminate "
-        "because that claim exists. Before developing the first compiler "
-        "hypothesis, query the benchmark Brain tool from the additional runner "
-        "instructions. Its response may be empty by design. Keep testing "
-        "the assigned C++ candidate with the genuine checker.\n\n"
-    )
-    path.write_text(preface+original.replace(needle,replacement),encoding="utf-8")
+    tmp=path.with_name(path.name+".prompt-repair.tmp")
+    tmp.write_text(content,encoding="utf-8")
+    tmp.chmod(path.stat().st_mode & 0o777)
+    tmp.replace(path)
     return True
-
 
 def _patch_runner(path):
     source=path.read_text(encoding="utf-8")
@@ -426,8 +450,9 @@ def prepare(repo, out, va=None, repeats=3, minimum=7, seed=20261118,
     others=set(re.findall(r"(?mi)^\s*//\s*@\s*(0x[0-9a-f]{8})",original))
     if others-{va}:
         raise ValueError("Source contains other function anchors; refusing to erase a shared file")
+    staged=False
     if resume_partial:
-        seed_tree=_validate_partial(repo,out,va,original)
+        seed_tree,staged=_validate_partial(repo,out,va,original)
     else:
         out.mkdir(parents=True,exist_ok=False)
     try:
@@ -450,27 +475,30 @@ def prepare(repo, out, va=None, repeats=3, minimum=7, seed=20261118,
             shutil.copytree(repo,seed_tree,symlinks=True,ignore=_copy_ignore(repo))
         else:
             print("Resuming validated partial seed without recopying:",seed_tree,flush=True)
-        remapped=_relocate_symlinks(seed_tree,repo)
-        if remapped:
-            print(f"Relocated {remapped} in-repository symlink(s) into isolated seed.",flush=True)
-        if (repo/".venv").is_dir():
-            (seed_tree/".venv").symlink_to(repo/".venv",target_is_directory=True)
-        if (repo/WORK/"memory/.venv").is_dir():
-            (seed_tree/WORK/"memory/.venv").symlink_to(
-                repo/WORK/"memory/.venv",target_is_directory=True)
-        shutil.copy2(archive/"spore.sqlite3",seed_tree/OPS)
-        shutil.copy2(archive/"knowledge.sqlite3",seed_tree/KNOW)
-        # Source reset only in the seed, never in the live checkout.
-        blank=(f"// @ {va}\n"
-               "// Controlled blank-slate experiment. Rebuild using task.py and check.py.\n")
-        (seed_tree/slice_path(va)).write_text(blank,encoding="utf-8")
-        _clean_operational(seed_tree/OPS,va)
-        alias="0xff"+hashlib.sha256(va.encode()).hexdigest()[:6]
-        with sqlite3.connect(seed_tree/KNOW) as con:
-            if con.execute("SELECT 1 FROM findings WHERE va=?",(alias,)).fetchone():
-                raise RuntimeError("Address anonymization collision")
-        _mask_memory(seed_tree/KNOW,va,alias)
-        _patch_runner(seed_tree/RUNNER)
+        if not staged:
+            remapped=_relocate_symlinks(seed_tree,repo)
+            if remapped:
+                print(f"Relocated {remapped} in-repository symlink(s) into isolated seed.",flush=True)
+            if (repo/".venv").is_dir():
+                (seed_tree/".venv").symlink_to(repo/".venv",target_is_directory=True)
+            if (repo/WORK/"memory/.venv").is_dir():
+                (seed_tree/WORK/"memory/.venv").symlink_to(
+                    repo/WORK/"memory/.venv",target_is_directory=True)
+            shutil.copy2(archive/"spore.sqlite3",seed_tree/OPS)
+            shutil.copy2(archive/"knowledge.sqlite3",seed_tree/KNOW)
+            # Source reset only in the seed, never in the live checkout.
+            blank=(f"// @ {va}\n"
+                   "// Controlled blank-slate experiment. Rebuild using task.py and check.py.\n")
+            (seed_tree/slice_path(va)).write_text(blank,encoding="utf-8")
+            _clean_operational(seed_tree/OPS,va)
+            alias="0xff"+hashlib.sha256(va.encode()).hexdigest()[:6]
+            with sqlite3.connect(seed_tree/KNOW) as con:
+                if con.execute("SELECT 1 FROM findings WHERE va=?",(alias,)).fetchone():
+                    raise RuntimeError("Address anonymization collision")
+            _mask_memory(seed_tree/KNOW,va,alias)
+            _patch_runner(seed_tree/RUNNER)
+        else:
+            print("Recovering post-database, pre-plan seed; leaving frozen SQLite unchanged.",flush=True)
         _patch_prompt(seed_tree/PROMPT)
         _patch_memory_socket(seed_tree/MEMORY)
         shutil.copy2(RETRIEVAL_SOURCE,seed_tree/RETRIEVAL)
@@ -701,6 +729,12 @@ def repair_seed(out):
 def run_next(out, execute=False, budget=DEFAULT_BUDGET, minutes=20):
     out=out.resolve()
     planpath=out/"plan.json"
+    if not planpath.is_file():
+        raise RuntimeError(
+            "Benchmark preparation has not finished; plan.json is missing. "
+            "Inspect preparation errors and recover with: "
+            "python3 brain_ablation.py prepare --repo ~/spore-decomp "
+            "--out "+str(out)+" --repeats 3 --resume-partial")
     plan=json.loads(planpath.read_text(encoding="utf-8"))
     item=next((x for x in plan["arms"] if x["state"]=="prepared"),None)
     if item is None:
@@ -1022,7 +1056,7 @@ def main(argv=None):
     p.add_argument("--min-failures",type=int,default=7)
     p.add_argument("--seed",type=int,default=20261118)
     p.add_argument("--resume-partial",action="store_true",
-                   help="Validate and resume a pre-database partial preparation without recopying")
+                   help="Validate and resume a partial preparation without recopying source or databases")
     r=sub.add_parser("run-next",help="Run one randomized arm, paid only with --execute")
     r.add_argument("--out",type=Path,default=Path.home()/"sad-brain-benchmark")
     r.add_argument("--execute",action="store_true")

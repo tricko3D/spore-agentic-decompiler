@@ -375,6 +375,70 @@ def run_one():
         self.assertEqual(rows[0]["failures"],7)
         self.assertEqual(bench.candidates(self.source,8),[])
 
+    def test_canonical_benchmark_prompt_ignores_custom_live_prompt_wording(self):
+        local=self.source/bench.PROMPT
+        local.write_text(
+            "Local Spore prompt version 2000. No claim skip wording at all.\n"
+            "Only implement byte-exact x86 code for {VA}.\n",encoding="utf-8")
+        original=local.read_bytes()
+        bench.prepare(self.source,self.destination,repeats=1)
+        seed_prompt=(self.destination/"seed"/bench.PROMPT).read_text(encoding="utf-8")
+        canonical=bench.PROMPT_SOURCE.read_text(encoding="utf-8")
+        self.assertEqual(seed_prompt,canonical)
+        self.assertIn("CONTINUE the investigation",seed_prompt)
+        self.assertIn(bench.PROTOCOL_MARKER,seed_prompt)
+        self.assertEqual(local.read_bytes(),original)
+        trial=self.destination/"trials/test-identical-prompt"
+        bench._clone(self.destination/"seed",trial)
+        self.assertEqual((trial/bench.PROMPT).read_text(),canonical)
+
+    def test_resume_after_prompt_patch_crash_keeps_sqlite_and_full_copy(self):
+        # Exact phase seen in the November 18 real environment: cloned,
+        # history cleared, knowledge masked, runner patched, prompt failed.
+        self.source.joinpath(bench.PROMPT).write_text(
+            "Unexpected local prompt wording with no literal claim rule\n")
+        with mock.patch.object(bench,"_patch_prompt",
+                               side_effect=RuntimeError("old claim-rule mismatch")):
+            with self.assertRaisesRegex(RuntimeError,"old claim-rule mismatch"):
+                bench.prepare(self.source,self.destination,repeats=1)
+        self.assertFalse((self.destination/"plan.json").exists())
+        seed=self.destination/"seed"
+        self.assertTrue((seed/bench.OPS).is_file())
+        self.assertTrue((seed/bench.KNOW).is_file())
+        self.assertIn("SAD_BENCH_ACTIVE",(seed/bench.RUNNER).read_text())
+        expected="// Controlled blank-slate experiment."
+        self.assertIn(expected,(seed/bench.slice_path(VA)).read_text())
+        saved={str(p):bench._tool_hash(p) for p in (
+            seed/bench.OPS, seed/bench.KNOW,
+            self.destination/"archive/spore.sqlite3",
+            self.destination/"archive/knowledge.sqlite3")}
+        with mock.patch.object(bench.shutil,"copytree",
+                               side_effect=AssertionError("repository recopied during resume")):
+            with mock.patch.object(bench,"snapshot_db",
+                                   side_effect=AssertionError("SQLite snapshot repeated")):
+                bench.prepare(self.source,self.destination,repeats=1,resume_partial=True)
+        self.assertEqual(saved,{str(p):bench._tool_hash(p) for p in (
+            seed/bench.OPS, seed/bench.KNOW,
+            self.destination/"archive/spore.sqlite3",
+            self.destination/"archive/knowledge.sqlite3")})
+        plan=json.loads((self.destination/"plan.json").read_text())
+        self.assertEqual(plan["protocol_version"],bench.PROTOCOL_VERSION)
+        self.assertEqual(len(plan["arms"]),4)
+        self.assertTrue(all(i["state"]=="prepared" for i in plan["arms"]))
+        self.assertEqual((seed/bench.PROMPT).read_text(),bench.PROMPT_SOURCE.read_text())
+        self.assertEqual((self.source/bench.slice_path(VA)).read_text(),self.original)
+
+    def test_partial_resume_after_stage_b_rejects_modified_target(self):
+        with mock.patch.object(bench,"_patch_prompt",
+                               side_effect=RuntimeError("failed to install prompt")):
+            with self.assertRaises(RuntimeError):
+                bench.prepare(self.source,self.destination,repeats=1)
+        (self.destination/"seed"/bench.slice_path(VA)).write_text(
+            "// agent or external process changed the blank slice\n")
+        with self.assertRaisesRegex(RuntimeError,"not the expected untouched blank slice"):
+            bench.prepare(self.source,self.destination,repeats=1,resume_partial=True)
+        self.assertFalse((self.destination/"plan.json").exists())
+
     def test_prepare_never_writes_live_repo_and_retains_vectors(self):
         with mock.patch.object(bench.subprocess,"run",
                                side_effect=AssertionError("Preparation ran a command")):
@@ -393,7 +457,7 @@ def run_one():
         self.assertEqual(plan["protocol_version"],2)
         prompt=(self.destination/"seed"/bench.PROMPT).read_text()
         self.assertIn(bench.PROTOCOL_MARKER,prompt)
-        self.assertIn("self-owned claim is NOT a reason to SKIP",prompt)
+        self.assertIn("never return SKIP merely because of that claim",prompt)
         self.assertNotIn("if claimed, reply "+chr(96)+"SKIP: claimed"+chr(96),prompt)
         self.assertIn("if claimed, reply "+chr(96)+"SKIP: claimed"+chr(96),
                       (self.source/bench.PROMPT).read_text())

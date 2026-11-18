@@ -25,7 +25,7 @@ The production prompt contains the instruction to return `SKIP: claimed` wheneve
 
 Protocol v2 patches the **copied experiment prompt only** so the runner's own claim is explicitly expected. It retains the claim lock for correct concurrency and forbids modifying or releasing it. The agent must investigate the exact assigned target and is instructed to query the Brain before its first compiler hypothesis, even in the baseline where no knowledge will be supplied.
 
-The patch and its SHA-256 are identical for every treatment arm. The actual production prompt and SQLite checkout are left untouched. The old protocol v1 experiment and its terminal SKIP remain archived; its result should be reported in a **protocol-validation log**, not interpreted as evidence of a measured difference between knowledge conditions.
+Protocol v2 installs a **canonical benchmark-only prompt** from `brain_ablation_prompt.txt`, independent of the text in the user's local `spore_first_pass_prompt.txt`. Earlier code searched for an exact `if claimed, reply SKIP` sentence and could fail when that local prompt differed. This canonical prompt explicitly treats the runner's own claim as expected, requires the Brain query before the first compiler hypothesis, and restricts edits to the selected target. It replaces only the copied experiment prompt, never the installed live Spore prompt. Its SHA-256 is identical for every treatment arm. The old protocol v1 experiment and its terminal SKIP remain archived; its result should be reported in a **protocol-validation log**, not interpreted as evidence of a measured difference between knowledge conditions.
 
 To run a new and internally consistent study, use a **new** experiment output directory instead of changing only the remaining v1 trials:
 
@@ -36,6 +36,18 @@ python3 brain_ablation.py prepare --repo ~/spore-decomp \
   --out ~/sad-brain-benchmark-v2 --repeats 3 --va 0x00b848f0
 python3 brain_ablation.py run-next --out ~/sad-brain-benchmark-v2
 ```
+
+If preparation already failed at `_patch_prompt` after cloning, the experiment may be recovered without deleting or recopying the repository. This is a different partial stage from the earlier symlink failure: the SQLite backups have already been installed, previous attempts cleared, and knowledge masked. The guarded resume validates those facts, keeps the frozen SQLite bytes untouched, and completes prompt installation and plan creation:
+
+```bash
+cd ~/spore-agentic-decompiler
+git pull --ff-only
+python3 brain_ablation.py prepare --repo ~/spore-decomp \
+  --out ~/sad-brain-benchmark-v2 --repeats 3 --resume-partial
+python3 brain_ablation.py run-next --out ~/sad-brain-benchmark-v2
+```
+
+The recoverable directory must have `archive/` and `seed/` but no `plan.json` or `trials/`. A modified target source, an existing trial, old sessions or unexpected database state blocks recovery rather than mixing evidence or overwriting results.
 
 The above is preparation and a dry run only. If the target's 7-failure eligibility changes, `candidates` shows other targets. Protocol v2 refuses to execute old v1 plans, even if their remaining arms are still prepared, to prevent contamination by mixed prompts. Re-running the original v1 trial selectively as if it were a missing baseline would compromise randomization.
 
