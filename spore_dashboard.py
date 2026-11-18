@@ -75,6 +75,8 @@ def serve(repo:Path,port:int=8765,control:bool=False):
                             except (BrokenPipeError,ConnectionResetError):pass
                             return
                     return self.respond({'error':'No SAD wallpaper configured'},404)
+                if route.path=='/api/allowlist':
+                    return self.respond(controller.allowlist_document())
                 if route.path=='/api/plan':
                     return self.respond(controller.preview(
                         params.get('module',['SPGonzago'])[0],
@@ -110,10 +112,14 @@ def serve(repo:Path,port:int=8765,control:bool=False):
                 return self.respond({'error':'Expected JSON'},415)
             try:
                 size=int(self.headers.get('Content-Length','0'))
-                if not 0<size<=4096:raise ValueError('Payload exceeds limit or is missing')
-                data=json.loads(self.rfile.read(size))
+                # Full allow lists may contain thousands of addresses.
+                # Keep the smaller limit for start/stop controls.
                 route=urlparse(self.path).path
-                if route=='/api/control/start':result=controller.start(data)
+                limit=300000 if route=='/api/allowlist' else 4096
+                if not 0<size<=limit:raise ValueError('Payload exceeds limit or is missing')
+                data=json.loads(self.rfile.read(size))
+                if route=='/api/allowlist':result=controller.save_allowlist(data)
+                elif route=='/api/control/start':result=controller.start(data)
                 elif route=='/api/control/stop':result=controller.stop()
                 else:return self.respond({'error':'Unknown control action'},404)
                 return self.respond(result)
