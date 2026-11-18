@@ -568,6 +568,30 @@ html,body,.grid,.table-scroll,.drawer,.timeline,.control-status{
  .run-outcome{padding:7px}
 }
 @media(prefers-reduced-motion:reduce){.run-outcome-track span{transition:none}}
+
+/* Mission brief: describe intended work and current run assignments. */
+.mission-brief{
+ margin-top:11px;padding:10px 11px 9px;
+ border:1px solid #6a94ae;border-radius:12px;
+ background:linear-gradient(145deg,#234766d6,#0d2943e8);
+ box-shadow:inset 0 1px #badbe544,inset 0 -2px #071a2d;
+}
+.mission-heading{display:flex;justify-content:space-between;align-items:center;gap:9px}
+.mission-heading h3{font-size:13px;color:#e4f6ff}
+.mission-stage{padding:2px 8px;border-radius:13px;border:1px solid #73a3be;color:#cae6f7;background:#214763;font-weight:750;font-size:10px}
+.mission-goal{margin:7px 0 9px;font-size:12px;color:#d1e8f5;line-height:1.3}
+.mission-facts{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));column-gap:13px;row-gap:9px}
+.mission-facts>div{min-width:0}
+.mission-facts span{display:block;font-size:10px;color:#9ebbd0;margin-bottom:2px}
+.mission-facts strong{display:block;color:#eaf8ff;font-size:11px;font-weight:700;line-height:1.35;overflow-wrap:anywhere}
+.mission-policy{border-top:1px solid #6287a07a;padding-top:7px;margin-top:9px;color:#9fcbdb;font-size:10px;line-height:1.35}
+.controls-pane .run-block{margin-top:10px}
+@media(min-width:1900px) and (max-height:850px){
+ .mission-brief{padding:8px}
+ .mission-facts{row-gap:5px}
+ .mission-goal{margin:5px 0}
+}
+@media(max-width:500px){.mission-facts{grid-template-columns:1fr}}
 </style></head>
 <body>
 <div class="game-shell">
@@ -597,6 +621,17 @@ html,body,.grid,.table-scroll,.drawer,.timeline,.control-status{
      <span class="bubble-glyph" aria-hidden="true">◌</span>
      <h2 id="expeditionTitle">Last expedition</h2>
      <span class="run-state" id="runState">No run</span>
+    </div>
+    <div class="mission-brief" id="missionBrief" aria-live="polite">
+     <div class="mission-heading"><h3>Mission brief</h3><span class="mission-stage" id="missionStage">Next launch</span></div>
+     <p class="mission-goal" id="missionGoal">Prepare byte-exact matching for the selected module.</p>
+     <div class="mission-facts">
+      <div><span>Target selection</span><strong id="missionTargets">Count determined at launch</strong></div>
+      <div><span>Function history</span><strong id="missionOrigin">Unmatched and deferred</strong></div>
+      <div><span>Attempts</span><strong id="missionPasses">3 additional per function</strong></div>
+      <div><span>Resources</span><strong id="missionResources">16 workers</strong></div>
+     </div>
+     <div class="mission-policy" id="missionPolicy">MATCH, SKIP and already manifested functions are excluded.</div>
     </div>
     <div class="run-block">
      <div id="runStats" class="mono small">No run recorded</div>
@@ -663,12 +698,61 @@ const fmt=x=>typeof x==='number'?'$'+x.toFixed(x<0.01?5:3):'—';
 const bytes=x=>typeof x==='number'?new Intl.NumberFormat('en-US').format(x)+' B':'—';
 const agreement=(x,total,status)=>!x?(status==='FAIL'||status==='DEFER'?`unknown / ${total} bytes`:'—'):x.matched!=null?`${x.matched}/${x.total} bytes`:x.kind==='size_mismatch'?`size ${x.compiled_size}/${x.retail_size} B`:'—';
 let selected=null,off=0,query='',filter='ALL',total=0,mutating=false,detailBusy=false;
-let commandPhase='idle',lastSnapshot=null;
+let commandPhase='idle',lastSnapshot=null,pendingLaunchSettings=null;
 function set(id,v){$(id).textContent=v}
 function eventHtml(e){return `<div class="event"><span class="kind">${esc(e.kind)}</span><div class="body">${esc(e.message)}</div></div>`}
 function openDrawer(type,id){selected={type,id};$('backdrop').classList.add('open');$('drawer').classList.add('open');refreshDetail()}
 function closeDrawer(){selected=null;$('backdrop').classList.remove('open');$('drawer').classList.remove('open')}
 async function json(path){const r=await fetch(path,{cache:'no-store'});const j=await r.json();if(!r.ok||j.error)throw Error(j.error||'HTTP '+r.status);return j}
+function missionSelection(){
+ return {
+  module:$('module').value||'SPGonzago',
+  workers:+$('workersInput').value,
+  max_inflight:+$('inflightInput').value,
+  passes:+$('passesInput').value,
+  idle_minutes:+$('minutesInput').value,
+  budget_usd:+$('budgetInput').value
+ };
+}
+function renderMission(d){
+ const r=d?.run||{},controller=d?.controller||{};
+ const active=runCoordinatorActive(d);
+ const assigned=active&&r.state==='running'&&!!r.id;
+ const preparing=commandPhase==='starting'||(active&&!assigned);
+ const config=assigned?(controller.external?{}:(controller.settings||{})):
+   (preparing?(pendingLaunchSettings||missionSelection()):missionSelection());
+ const scope=config.module==='*'?'all confidently classified modules':
+   (config.module||'the selected module scope');
+ set('missionStage',assigned?'Assigned targets':preparing?'Preparing run':'Next launch');
+ set('missionGoal','Generate C++ candidates and independently verify byte-exact matches across '+scope+'.');
+ const count=assigned?r.targets:null,already=r.initial_outcomes||{};
+ set('missionTargets',count===null?
+  'Count determined after classification':
+  count+' functions · '+bytes(r.bytes_target||0));
+ const types=assigned?[
+  ['FAIL','previous failures'],['DEFER','deferred retries'],['PENDING','first attempts']
+ ].filter(item=>(already[item[0]]||0)>0).map(item=>already[item[0]]+' '+item[1]):[];
+ set('missionOrigin',types.length?types.join(' · '):
+  assigned?'Eligible functions selected':'Only currently eligible, unmatched functions');
+ const passes=assigned?(r.passes||config.passes):config.passes;
+ set('missionPasses',(passes||'—')+' additional valid attempts per function');
+ const workers=assigned?(r.workers||config.workers):config.workers;
+ const inflight=assigned?(r.max_inflight||config.max_inflight):config.max_inflight;
+ const idle=assigned?(r.idle_minutes||config.idle_minutes):config.idle_minutes;
+ const budget=config.budget_usd;
+ const resources=[
+  (workers||'—')+' workers',
+  inflight?'max '+inflight+' simultaneous':'adaptive concurrency',
+  idle?idle+' min inactivity limit':null,
+  Number.isFinite(budget)?'$'+budget+' budget':null
+ ].filter(Boolean).join(' · ');
+ set('missionResources',resources);
+ const allow=assigned?controller.settings?.allowlist_active:controller.next_launch_allowlist;
+ const allowText=allow===true?'Retry allowlist enabled, only allowed addresses will run':
+  allow===false?'No retry allowlist, all eligible selected addresses may run':
+  'Retry allowlist status unavailable for this run';
+ set('missionPolicy',allowText+'. MATCH, SKIP and already manifested functions are excluded. Matching stops immediately on success.');
+}
 function runCoordinatorActive(d){
  const state=d?.controller||{};
  if(typeof state.running==='boolean')return state.running;
@@ -740,6 +824,7 @@ async function control(action,payload={}){
  mutating=true;
  const starting=action==='start';
  commandPhase=starting?'starting':'stopping';
+ if(starting)pendingLaunchSettings={...payload};
  paintRunAction(commandPhase,starting?'Starting':'Stopping');
  set('controlMessage',starting?
   'Starting: validating settings and preparing module scope. This may take a moment.':
@@ -747,6 +832,7 @@ async function control(action,payload={}){
  set('expeditionTitle','Current expedition');
  set('runState',starting?'Starting':'Stopping');
  set('runActivity',starting?'Applying module selection before inference':'Stopping the coordinator and its workers');
+ if(lastSnapshot)renderMission(lastSnapshot);
  try{
   const r=await fetch('/api/control/'+action,{
    method:'POST',headers:{'Content-Type':'application/json','X-Spore-Token':TOKEN},
@@ -860,6 +946,7 @@ function render(d){
  arrangeWorkers();
  const old=$('module').value;$('module').innerHTML='<option value="*">All confidently classified</option>'+['SPGonzago',...(d.modules||[])].filter((v,i,a)=>a.indexOf(v)===i).map(v=>`<option value="${esc(v)}">${esc(v)}</option>`).join('');if([...$('module').options].some(o=>o.value===old))$('module').value=old;else $('module').value='SPGonzago';
  syncRunAction(d);
+ renderMission(d);
  set('connection','Connected');set('clock',new Date().toLocaleTimeString());$('dot').classList.remove('off');set('error','');
 }
 async function refreshFunctions(){try{const d=await json(`/api/functions?status=${encodeURIComponent(filter)}&search=${encodeURIComponent(query)}&offset=${off}&limit=75`);total=d.total;set('resultCount',`${total} results · ${bytes(d.bytes||0)} total`);set('pageInfo',`${off+1}–${Math.min(off+75,total)} of ${total}`);$('prev').disabled=off<=0;$('next').disabled=off+75>=total;
@@ -873,6 +960,12 @@ async function refreshDetail(){if(!selected||detailBusy)return;detailBusy=true;l
 async function poll(){try{render(await json('/api/snapshot'));}catch(e){set('connection','Disconnected');$('dot').classList.add('off');set('error',e.message)}}
 $('controls').hidden=!CONTROL;$('locked').hidden=CONTROL;
 if(CONTROL)paintRunAction('launch','Ready');
+if(CONTROL){
+ ['module','workersInput','inflightInput','passesInput','minutesInput','budgetInput'].forEach(id=>{
+  $(id).addEventListener('change',()=>{if(lastSnapshot)renderMission(lastSnapshot)});
+  $(id).addEventListener('input',()=>{if(lastSnapshot)renderMission(lastSnapshot)});
+ });
+}
 poll();refreshFunctions();setInterval(poll,3000);setInterval(refreshFunctions,15000);setInterval(()=>{if(selected)refreshDetail()},1800);
 </script>
 </body></html>
