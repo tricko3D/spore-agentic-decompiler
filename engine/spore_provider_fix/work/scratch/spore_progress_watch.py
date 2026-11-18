@@ -89,7 +89,8 @@ def watch(proc, log, idle_seconds, on_output=None, poll_seconds=0.5, on_event=No
                     # Diagnostic bookkeeping must never stop a healthy agent.
                     try:
                         on_event(event)
-                    except (OSError, ValueError, TypeError):
+                    except Exception:
+                        # Evidence capture is diagnostic, never a run-stopping policy.
                         pass
                 if is_provider_429(event):
                     stop_process_group(proc)
