@@ -293,6 +293,37 @@ class MemoryTests(unittest.TestCase):
         self.assertEqual(len(found), 1)
         self.assertEqual(found[0].get("dim"), mem.DIM)
 
+    def test_verified_match_retrieves_real_local_cpp_not_made_up_advice(self):
+        source = (self.root / "match/slices/s00e61d90/s00e61d90.cpp")
+        source.parent.mkdir(parents=True)
+        source.write_text("// @ 0x00e61d90\n__fastcall int f(int a) { return a + 1; }\n")
+        self.assertTrue(self.add(status="MATCH", note="independently byte-exact",
+                                 checker="MATCH"))
+        con = mem.connection(self.root)
+        try:
+            text = con.execute("SELECT details FROM findings").fetchone()[0]
+            self.assertIn("__fastcall", text)
+            self.assertIn("Locally verified source excerpt", text)
+        finally:
+            con.close()
+        self.assertTrue(mem.query(self.root, "fastcall", 2, verified_only=True))
+
+    def test_unverified_experiment_never_claims_verified_cpp(self):
+        source = self.root / "match/slices/s00e61d90/s00e61d90.cpp"
+        source.parent.mkdir(parents=True)
+        source.write_text("// @ 0x00e61d90\nint unreliable() { return 0; }\n")
+        self.add(note="something failed")
+        with mem.connection(self.root) as con:
+            details = con.execute("SELECT details FROM findings").fetchone()[0]
+        self.assertNotIn("unreliable", details)
+
+    def test_stale_socket_protocol_falls_back_to_fresh_sqlite(self):
+        self.add(note="EAX calling convention")
+        with mock.patch.object(mem, "request", return_value={
+            "results": [{"va": OTHER, "summary": "stale output"}]}):
+            got = mem.query(self.root, "EAX calling", 1)
+        self.assertEqual(got[0]["va"], VA)
+
     def test_runner_integration_and_independent_install_location(self):
         engine = (ROOT / "engine/spore_provider_fix/work/scratch/spore_first_pass_sqlite.py").read_text()
         setup = (ROOT / "spore_agentic.py").read_text()
