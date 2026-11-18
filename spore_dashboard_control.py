@@ -82,6 +82,36 @@ class Controller:
         except FileNotFoundError:
             raise ValueError('SQLite not initialized. Run setup first.')
 
+    def preview(self,module,workers):
+        """Read-only current-queue plan. No scope --apply and no model calls.
+
+        Launch applies the chosen scope first, so it can append previously
+        undiscovered queue targets. Report the preview as provisional.
+        """
+        if not isinstance(module,str) or (
+                module!='*' and module not in modules(self.repo)):
+            raise ValueError('Select a classified module from the list')
+        if type(workers) is not int or not 1<=workers<=32:
+            raise ValueError('workers must be between 1 and 32')
+        cmd=[sys.executable,str(CLI),'plan','--repo',str(self.repo),
+             '--workers',str(workers)]
+        cmd+=['--all-modules'] if module=='*' else ['--module',module]
+        try:
+            result=subprocess.run(cmd,cwd=CLI.parent,stdin=subprocess.DEVNULL,
+                                  capture_output=True,text=True,timeout=60)
+        except subprocess.TimeoutExpired:
+            raise ValueError('Preview timed out. No agents started.')
+        if result.returncode:
+            raise ValueError('Preview unavailable: '+
+                             (result.stdout+' '+result.stderr)[-300:])
+        found=re.search(r'runnable functions \\(passes are additional per run\\): (\\d+)',
+                        result.stdout)
+        if not found:
+            raise ValueError('Preview output could not be interpreted. No agents started.')
+        return {'eligible':int(found.group(1)),'module':module,
+                'workers':workers,'provisional':True,
+                'allowlist_active':bool(os.environ.get('SPORE_RETRY_ALLOWLIST'))}
+
     def _launch_environment(self):
         """Read the current key at launch, not the dashboard's old environment.
 
