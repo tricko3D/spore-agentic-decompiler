@@ -67,6 +67,7 @@ class Controller:
         self.process=None
         self.last_error=''
         self.launch_settings=None
+        self.launch_log_offset=None
 
     def _confirm_idle(self):
         from spore_dashboard_data import connect_ro,proc_running
@@ -384,6 +385,9 @@ print(json.dumps({
             work.mkdir(parents=True,exist_ok=True)
             output=work/'dashboard-controller.log'
             with output.open('ab') as file:
+                file.write(('\n=== SAD dashboard launch '+module+' ===\n').encode())
+                file.flush()
+                self.launch_log_offset=file.tell()
                 self.process=subprocess.Popen(cmd,cwd=CLI.parent,stdin=subprocess.DEVNULL,
                                               stdout=file,stderr=subprocess.STDOUT,
                                               env=launch_env,start_new_session=True)
@@ -399,6 +403,65 @@ print(json.dumps({
                 'allowlist_source':selected['source'] if selected else None
             }
             return {'started':True,'controller_pid':self.process.pid,'module':module}
+
+    def _launch_diagnostics(self):
+        """Return a bounded, sanitized exit reason from the current launch."""
+        from spore_dashboard_data import sanitize
+        work=self.repo/'work/scratch/codex-pass1'
+        logfile=work/'dashboard-controller.log'
+        if self.launch_log_offset is None:
+            return None
+        try:
+            with logfile.open('rb') as f:
+                f.seek(0,2)
+                end=f.tell()
+                start=min(end,self.launch_log_offset)
+                f.seek(max(start,end-131072))
+                output=f.read(131072).decode('utf-8','replace')
+        except (OSError,ValueError):
+            return None
+        lines=[line.strip() for line in output.splitlines() if line.strip()]
+        keywords=(
+            'traceback','error','exception','failed','missing','not found',
+            'no runnable','budget','spending guard','quota','rate limit',
+            'provider unavailable','refusing','stopped without',
+            'no workers launched','invalid','exited with status','cannot',
+            'not set','exhausted',
+        )
+        match=re.findall(r'\b(20\d{6}-\d{6}-\d{2,12})\b',output)
+        worker_reasons=[]
+        if match:
+            directory=work/'parallel'/match[-1]
+            if directory.is_dir():
+                for file in sorted(directory.glob('worker-??.log'))[:32]:
+                    try:
+                        with file.open('rb') as f:
+                            f.seek(0,2)
+                            f.seek(max(0,f.tell()-16384))
+                            tail=f.read(16384).decode('utf-8','replace').splitlines()
+                    except (OSError,ValueError):
+                        continue
+                    candidates=[line.strip() for line in tail if
+                                line.strip() and any(k in line.lower() for k in keywords)]
+                    if candidates:
+                        direct=[line for line in candidates if any(k in line.lower() for k in (
+                            'budget or api key limit','spending guard','openrouter',
+                            'traceback','error:','exception','no runnable',
+                            'provider unavailable','not found','not set','limit remaining'))]
+                        reason=sanitize((direct or candidates)[-1],280)
+                        if reason not in worker_reasons:
+                            worker_reasons.append(reason)
+                    if len(worker_reasons)>=3:break
+        if worker_reasons:
+            return ' | '.join(worker_reasons[:3])[:900]
+        main=[line for line in lines if any(k in line.lower() for k in keywords)]
+        if main:
+            preferred=[line for line in main if not re.search(
+                r'worker \d+ exited with status',line,re.I)]
+            return sanitize((preferred or main)[-1],700)
+        if lines:
+            return sanitize(lines[-1],350)
+        return None
 
     def state(self):
         """Report both dashboard-launched and existing local coordinator state.
@@ -425,18 +488,12 @@ print(json.dumps({
               'next_launch_allowlist':bool(os.environ.get('SPORE_RETRY_ALLOWLIST')),
               'allowlist_available':(self.repo/'work/scratch/codex-pass1/retry-all.json').is_file(),
               'settings':self.launch_settings}
-        if not running and rc is not None and rc != 0:
-            from spore_dashboard_data import sanitize
-            logfile=self.repo/'work/scratch/codex-pass1/dashboard-controller.log'
-            try:
-                with logfile.open('rb') as f:
-                    f.seek(0,2)
-                    f.seek(max(0,f.tell()-3600))
-                    lines=f.read().decode('utf-8','replace').splitlines()
-                error=next((x for x in reversed(lines) if 'Error:' in x or 'failed' in x.lower()),None)
-                info['error']=sanitize(error or ('Coordinator exited with status '+str(rc)),350)
-            except OSError:
-                info['error']='Coordinator exited with status '+str(rc)
+        if not running and rc is not None:
+            detail=self._launch_diagnostics()
+            if detail:
+                info['exit_reason']=detail
+            if rc != 0:
+                info['error']=detail or ('Coordinator exited with status '+str(rc))
         return info
 
     def stop(self):
