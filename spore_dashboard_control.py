@@ -65,6 +65,7 @@ class Controller:
         self.lock=threading.RLock()
         self.process=None
         self.last_error=''
+        self.launch_settings=None
 
     def _confirm_idle(self):
         from spore_dashboard_data import connect_ro,proc_running
@@ -156,6 +157,15 @@ class Controller:
                 self.process=subprocess.Popen(cmd,cwd=CLI.parent,stdin=subprocess.DEVNULL,
                                               stdout=file,stderr=subprocess.STDOUT,
                                               env=launch_env,start_new_session=True)
+            self.launch_settings={
+                'module':module,
+                'workers':values['workers'],
+                'max_inflight':values['max_inflight'],
+                'passes':values['passes'],
+                'idle_minutes':values['minutes'],
+                'budget_usd':values['budget'],
+                'allowlist_active':bool(launch_env.get('SPORE_RETRY_ALLOWLIST'))
+            }
             return {'started':True,'controller_pid':self.process.pid,'module':module}
 
     def state(self):
@@ -169,7 +179,8 @@ class Controller:
         if self.process is None:
             return {'running':bool(active),
                     'pid':active[0] if active else None,
-                    'external':bool(active),'returncode':None}
+                    'external':bool(active),'returncode':None,
+                    'next_launch_allowlist':bool(os.environ.get('SPORE_RETRY_ALLOWLIST'))}
         rc=self.process.poll()
         # A dashboard-owned CLI can have already exited while its spawned
         # coordinator is still active. Keep Stop available until all finish.
@@ -177,7 +188,9 @@ class Controller:
         info={'pid':self.process.pid if rc is None or not active else active[0],
               'running':running,
               'external':bool(active) and rc is not None,
-              'returncode':None if running else rc}
+              'returncode':None if running else rc,
+              'next_launch_allowlist':bool(os.environ.get('SPORE_RETRY_ALLOWLIST')),
+              'settings':self.launch_settings}
         if not running and rc is not None and rc != 0:
             from spore_dashboard_data import sanitize
             logfile=self.repo/'work/scratch/codex-pass1/dashboard-controller.log'
