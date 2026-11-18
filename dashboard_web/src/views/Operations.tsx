@@ -65,7 +65,7 @@ function AllowListEditor({onClose}:{onClose:()=>void}){
   <button className="primary" disabled={!controlsEnabled||saving||!doc} onClick={()=>void save()}>{saving?'Saving…':'Save allowlist'}</button>
  </Drawer>;
 }
-function LaunchDock({snapshot,onUpdated}:{snapshot:Snapshot|null;onUpdated:()=>void}){
+function LaunchDock({snapshot,onUpdated,onKnowledge}:{snapshot:Snapshot|null;onUpdated:()=>void;onKnowledge:()=>void}){
  const [form,setForm]=useState<Launch>(START),[busy,setBusy]=useState(false),[notice,setNotice]=useState('');
  const [preview,setPreview]=useState<Plan|null>(null),[claimants,setClaimants]=useState<Claimants|null>(null),[editor,setEditor]=useState(false);
  const running=Boolean(snapshot?.controller?.running||snapshot?.run?.state==='running');
@@ -124,6 +124,7 @@ function LaunchDock({snapshot,onUpdated}:{snapshot:Snapshot|null;onUpdated:()=>v
    <button className={running?'danger':'primary'} disabled={!controlsEnabled||busy}
      onClick={()=>void toggle()}>{busy?'Working…':running?'Stop workers':'Launch'}</button>
   </div>
+  <button type="button" className="dock-knowledge" onClick={onKnowledge} aria-label="Open Knowledge view">Knowledge</button>
  </div>
   {(notice||preview)&&<div className="dock-message" role="status">
    {notice||(String(preview?.eligible||0)+' eligible functions · '+String(preview?.workers||0)+' workers · provisional scope')}
@@ -131,7 +132,7 @@ function LaunchDock({snapshot,onUpdated}:{snapshot:Snapshot|null;onUpdated:()=>v
   {editor&&<AllowListEditor onClose={()=>setEditor(false)}/>}
  </>;
 }
-export default function Operations({active}:{active:boolean}){
+export default function Operations({active,onKnowledge}:{active:boolean;onKnowledge:()=>void}){
  const {value:d,error,refresh}=usePoll<Snapshot>('/api/snapshot',3000,active);
  const [status,setStatus]=useState('ALL'),[search,setSearch]=useState(''),[typed,setTyped]=useState(''),[offset,setOffset]=useState(0);
  const [detail,setDetail]=useState<Detail|null>(null);
@@ -152,7 +153,6 @@ export default function Operations({active}:{active:boolean}){
    <Metric label="Run spend" value={money(budget.run_spend)} detail={'Limit '+money(budget.run_limit)}/>
   </div>
   <ErrorText error={error}/>
-  <LaunchDock snapshot={d} onUpdated={()=>{void refresh();void refreshTable()}}/>
   <div className="operations-layout">
    <div className="ops-left">
     <Panel title="Evolution progress" subtitle="Cumulative function outcomes and checked bytes">
@@ -217,6 +217,7 @@ export default function Operations({active}:{active:boolean}){
      {!d?.workers?.length&&<div className="empty">No worker activity recorded</div>}</div>
    </Panel>
   </div>
-  {detail&&<Details item={detail} onClose={()=>setDetail(null)}/>}
+  <LaunchDock snapshot={d} onUpdated={()=>{void refresh();void refreshTable()}} onKnowledge={onKnowledge}/>
+  {detail&&<Details item={detail} onClose={()=>setDetail(null)}/>} 
  </section>;
 }

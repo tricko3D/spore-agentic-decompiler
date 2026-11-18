@@ -51,7 +51,7 @@ large Windows/Chromium displays. The compact mode addresses this structurally:
   desktop displays, with scroll limited to necessary data areas.
 - Keeps 16 agent cards small and fixed-height instead of stretching the grid
   to the entire document's height.
-- Moves launch/stop controls above the main explorer to remain visible.
+- Retains launch/stop controls in the Spore-style bottom command dock, with one Knowledge switch. Operations remains the default view, and Knowledge has a bottom Operations return button.
 - Replaces the width-scaled SVG graph with a bounded, clickable source-link
   adjacency map. Selecting a technique reveals the investigations supporting
   that specific observation, with explicit access to full details.
@@ -79,7 +79,7 @@ cd ~/spore-agentic-decompiler
 python3 spore_agentic.py dashboard --control
 ~~~
 
-Open http://127.0.0.1:8765. The header has two views, Operations and Knowledge.
+Open http://127.0.0.1:8765. Operations opens by default with the agent fleet and bottom command controls. Switch to Knowledge from the bottom dock and return with the Operations button.
 The old dashboard remains accessible at http://127.0.0.1:8765/legacy and
 is used automatically if the compiled frontend does not exist.
 

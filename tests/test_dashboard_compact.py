@@ -69,13 +69,18 @@ class CompactUIRegression(unittest.TestCase):
         self.assertIn("inFlight.current?.abort()",self.hooks)
         self.assertIn("if(disposed||signal.signal.aborted||running)return",self.hooks)
 
-    def test_controls_are_visible_above_data_explorer(self):
-        self.assertLess(self.ops.index("<LaunchDock snapshot={d}"),
-                        self.ops.index('<div className="operations-layout">'))
-        self.assertLess(self.ops.index('<div className="operations-layout">'),
-                        self.ops.index('title="Function collection"'))
+    def test_original_bottom_controls_and_knowledge_navigation(self):
+        self.assertGreater(self.ops.index("<LaunchDock snapshot={d}"),
+                           self.ops.index('<div className="operations-layout">'))
+        self.assertIn('onKnowledge={onKnowledge}',self.ops)
+        self.assertIn('className="dock-knowledge"',self.ops)
+        self.assertIn('className="knowledge-return-dock"',self.app)
+        self.assertNotIn('className="app-header"',self.app)
         self.assertIn("Stop workers",self.ops)
         self.assertIn("Retry allowlist",self.ops)
+        self.assertIn("height:46px",self.css)
+        self.assertIn(".ops-left{",self.css)
+        self.assertIn("overflow-y:auto",self.css)
 
     def test_knowledge_graph_memo_receives_stable_callbacks(self):
         self.assertIn("const openTechnique=useCallback",self.knowledge)

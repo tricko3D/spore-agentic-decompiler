@@ -1,7 +1,7 @@
 import {lazy,Suspense,useEffect,useState} from 'react';
 import {controlsEnabled} from './api';
 import type {View} from './types';
-// Load each view only when opened; the inactive view no longer mounts, polls or paints.
+// Inactive views are unmounted and do not poll.
 const Operations=lazy(()=>import('./views/Operations'));
 const Knowledge=lazy(()=>import('./views/Knowledge'));
 
@@ -20,20 +20,19 @@ export default function App(){
   setView(next);
  };
  return <div className="game-shell">
-  <header className="app-header">
-   <div className="brand"><span className="orb-mark">S</span><div><strong>SAD <span>MISSION CONTROL</span></strong>
-    <p>Agentic Spore decompilation and shared compiler intelligence</p></div></div>
-   <nav className="view-switch" aria-label="Dashboard views">
-    <button className={view==='operations'?'selected':''} aria-current={view==='operations'?'page':undefined} onClick={()=>navigate('operations')}>◈ Operations</button>
-    <button className={view==='knowledge'?'selected':''} aria-current={view==='knowledge'?'page':undefined} onClick={()=>navigate('knowledge')}>◎ Knowledge</button>
-   </nav>
-   <div className="mode-note"><span className={'status-dot '+(controlsEnabled?'online':'idle')}></span>{controlsEnabled?'Controls enabled':'Read-only'}</div>
-  </header>
   <main className="view-content">
    <Suspense fallback={<div className="panel">Loading dashboard…</div>}>
-    {view==='operations'?<Operations active/>:<Knowledge active/>}
+    {view==='operations'?<Operations active onKnowledge={()=>navigate('knowledge')}/>:<Knowledge active/>}
    </Suspense>
   </main>
-  <footer className="app-footer"><span>SAD · Localhost only</span><span>Operations and knowledge run independently · <a href="/legacy">Legacy interface</a></span></footer>
+  {view==='knowledge'&&<nav className="knowledge-return-dock" aria-label="Dashboard navigation">
+   <span className="dock-id"><span className="mini-orb">S</span><strong>SAD</strong></span>
+   <button className="primary" onClick={()=>navigate('operations')}>Operations</button>
+   <span className="subtle">Knowledge</span>
+  </nav>}
+  <footer className="app-footer status-pod">
+   <span className={'status-dot '+(controlsEnabled?'online':'idle')}></span>
+   <span>{controlsEnabled?'Controls enabled':'Read-only'}</span>
+  </footer>
  </div>;
 }
