@@ -96,9 +96,14 @@ def main(va):
         plan=json.loads((self.out/"suite-plan.json").read_text())
         self.assertEqual(len(plan["schedule"]),12)
         self.assertEqual(set(plan["targets"]),set(self.targets))
+        frozen=self.out/"frozen"/"knowledge.sqlite3"
+        self.assertTrue(frozen.is_file())
+        master_hash=brain._tool_hash(frozen)
+        self.assertEqual(master_hash,plan["frozen_knowledge_sha256"])
         for va in self.targets:
             sub=suite._target_dir(self.out,va)
             self.assertTrue((sub/"plan.json").is_file())
+            self.assertEqual(brain._tool_hash(sub/"archive/knowledge.sqlite3"),master_hash)
             inner=json.loads((sub/"plan.json").read_text())
             self.assertTrue(inner["solved_cohort"])
             self.assertEqual(inner["holdouts"],sorted(self.targets))

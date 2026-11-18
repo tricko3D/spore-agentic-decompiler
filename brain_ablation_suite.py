@@ -128,6 +128,23 @@ def prepare(repo,out,repeats=3,seed=20261118):
     targets=tuple(plan["targets"])
     if len(plan["schedule"])!=len(targets)*4*repeats:
         raise RuntimeError("Invalid randomized suite schedule")
+    frozen=out/"frozen"/"knowledge.sqlite3"
+    previous_any=any((_target_dir(out,va)/"plan.json").exists()
+                     for va in targets)
+    if not frozen.is_file():
+        if previous_any:
+            raise RuntimeError("Frozen source knowledge DB missing after target preparation")
+        frozen.parent.mkdir(parents=True,exist_ok=True)
+        brain.snapshot_db(repo/brain.KNOW,frozen)
+    frozen_sha=brain._tool_hash(frozen)
+    if "frozen_knowledge_sha256" in plan:
+        if plan["frozen_knowledge_sha256"]!=frozen_sha:
+            raise RuntimeError("Frozen suite knowledge changed; refusing mixed treatments")
+    else:
+        if previous_any:
+            raise RuntimeError("Cannot add knowledge fingerprint after trial preparation")
+        plan["frozen_knowledge_sha256"]=frozen_sha
+        write(out/"suite-plan.json",plan)
     for i,va in enumerate(targets):
         sub=_target_dir(out,va)
         if not (sub/"plan.json").is_file():
@@ -135,11 +152,13 @@ def prepare(repo,out,repeats=3,seed=20261118):
                 raise RuntimeError(f"Partial target preparation in {sub}; preserve for inspection")
             print(f"Preparing heldout {va} ({i+1}/{len(targets)})...",flush=True)
             brain.prepare(repo,sub,va=va,repeats=repeats,minimum=3,
-                          seed=seed+i,solved=True,holdouts=targets)
+                          seed=seed+i,solved=True,holdouts=targets,
+                          frozen_knowledge=frozen)
         inner=json.loads((sub/"plan.json").read_text(encoding="utf-8"))
         if (not inner.get("solved_cohort") or
                 tuple(inner.get("holdouts") or ())!=tuple(sorted(targets)) or
-                inner.get("target")!=va or inner.get("repeats")!=repeats):
+                inner.get("target")!=va or inner.get("repeats")!=repeats or
+                inner.get("source_knowledge_sha256")!=frozen_sha):
             raise RuntimeError(f"Target {va} does not have a validated solved-cohort protocol")
         brain._seed_tooling(sub,inner)
     return plan

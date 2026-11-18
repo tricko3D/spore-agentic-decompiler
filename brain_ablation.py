@@ -559,7 +559,8 @@ def _clone(seed, destination):
 
 
 def prepare(repo, out, va=None, repeats=3, minimum=7, seed=20261118,
-            resume_partial=False, *, solved=False, holdouts=()):
+            resume_partial=False, *, solved=False, holdouts=(),
+            frozen_knowledge=None):
     repo=repo.resolve();out=out.resolve()
     if out==repo or out.is_relative_to(repo) or repo.is_relative_to(out):
         raise ValueError("Experiment directory must be outside the live repo and its ancestors")
@@ -568,6 +569,10 @@ def prepare(repo, out, va=None, repeats=3, minimum=7, seed=20261118,
     if not out.exists() and resume_partial:
         raise FileNotFoundError("No partial benchmark directory to resume")
     found=known_solutions(repo,minimum) if solved else candidates(repo,minimum)
+    if frozen_knowledge is not None:
+        frozen_knowledge=Path(frozen_knowledge).resolve(strict=True)
+        if not solved or not frozen_knowledge.is_file():
+            raise ValueError("A frozen knowledge snapshot is only valid for a solved cohort")
     if solved:
         if resume_partial:
             raise ValueError("Solved-suite preparation cannot resume a partial seed; use a fresh output")
@@ -623,7 +628,10 @@ def prepare(repo, out, va=None, repeats=3, minimum=7, seed=20261118,
         if not resume_partial:
             archive.mkdir()
             snapshot_db(repo/OPS,archive/"spore.sqlite3")
-            snapshot_db(repo/KNOW,archive/"knowledge.sqlite3")
+            if frozen_knowledge is None:
+                snapshot_db(repo/KNOW,archive/"knowledge.sqlite3")
+            else:
+                shutil.copy2(frozen_knowledge,archive/"knowledge.sqlite3")
             (archive/"original-target.cpp").write_text(original,encoding="utf-8")
             (archive/"original-target.sha256").write_text(
                 hashlib.sha256(original.encode()).hexdigest()+"\n")
@@ -687,6 +695,7 @@ def prepare(repo, out, va=None, repeats=3, minimum=7, seed=20261118,
             "solved_cohort":bool(solved),
             "holdouts":list(holdouts) if solved else [],
             "knowledge_pruning":prune_metrics,
+            "source_knowledge_sha256":_tool_hash(archive/"knowledge.sqlite3"),
             "original_cpp_sha256":hashlib.sha256(original.encode()).hexdigest(),
             "repeats":repeats,"random_seed":seed,
             "model":"deepseek/deepseek-v4.1-flash-1017","provider":"sail-research",
