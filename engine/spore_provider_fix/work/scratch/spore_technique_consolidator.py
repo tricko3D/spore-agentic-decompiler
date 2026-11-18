@@ -23,6 +23,7 @@ if __name__ == "__main__":
 import argparse
 from datetime import datetime, timezone
 import fcntl
+import hashlib
 import importlib.util
 import json
 import os
@@ -263,7 +264,8 @@ def _validate(output, evidence, known):
             ("observed_effect",650),("evidence_quote",320))}
         if not all(fields.values()):
             raise ValueError("Incomplete technique")
-        if len(fields["evidence_quote"]) < 15 or fields["evidence_quote"] not in evidence:
+        flattened_evidence = _tidy(evidence, 10000)
+        if len(fields["evidence_quote"]) < 15 or fields["evidence_quote"] not in flattened_evidence:
             raise ValueError("Unsubstantiated model evidence quote")
         if len(fields["title"]) < 8:
             raise ValueError("Technique title too short")
@@ -276,7 +278,9 @@ def _validate(output, evidence, known):
 def _signature(x):
     # Stable deterministic duplicate prevention for repeated short labels.
     title = re.sub(r"[^a-z0-9]+", "-", x["title"].casefold()).strip("-")
-    return x["category"] + ":" + title[:140]
+    conditions = re.sub(r"[^a-z0-9]+","-",x["conditions"].casefold()).strip("-")
+    qualifier = hashlib.sha256(conditions.encode("utf-8")).hexdigest()[:12]
+    return x["category"] + ":" + title[:100] + ":" + qualifier
 
 
 def apply(con, finding_id, source_hash, proposals):
@@ -438,7 +442,7 @@ def _settle(con, request_id, usage):
         con.execute("""UPDATE technique_spend SET
           cost_usd=?,input_tokens=?,output_tokens=?,state='complete'
           WHERE request_id=?""",
-          (RESERVE_USD if cost is None else max(RESERVE_USD, float(cost)),
+          (RESERVE_USD if cost is None else max(0.0, float(cost)),
            usage.get("prompt_tokens"),usage.get("completion_tokens"),request_id))
 
 
@@ -472,6 +476,8 @@ def _error(con, finding_id, info):
 
 def process(repo, *, max_items=4, daily_usd=0.15, caller=call_deepseek, key=None):
     """One low-priority processing cycle; never called from a worker."""
+    if not 0 < daily_usd <= 100:
+        raise ValueError("Daily consolidation budget must be between $0 and $100")
     # Fail before reserving money if the paid backend cannot be authenticated.
     if caller is call_deepseek and key is None:
         key = _get_key()
@@ -552,6 +558,7 @@ def search(repo, query, limit=5):
             linked = con.execute("""SELECT f.va,l.source_status,
                 l.evidence_quote FROM compiler_technique_links l
                 JOIN findings f ON f.id=l.finding_id WHERE l.technique_id=?
+                  AND l.source_hash=f.source_hash
                 ORDER BY CASE l.source_status WHEN 'MATCH' THEN 0 ELSE 1 END,
                          l.created_utc DESC LIMIT 3""", (x["id"],)).fetchall()
             answer.append({
