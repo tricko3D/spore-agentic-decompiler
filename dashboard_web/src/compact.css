@@ -125,6 +125,7 @@ th,td{font-size:11px;padding:7px 8px}
  align-content:start;
 }
 .agent{
+ contain:layout paint;
  display:flex;min-height:0;height:112px;
  padding:8px 9px;gap:4px;border-radius:11px;
  border-width:2px;overflow:hidden;
@@ -247,6 +248,17 @@ th,td{font-size:11px;padding:7px 8px}
 .drawer-head{padding-bottom:10px}
 .drawer-head h2{font-size:19px}
 .drawer-content{padding:12px 1px 25px}
+/* Original SAD desktop behavior: the mission-control shell stays inside the
+   viewport, instead of scrolling a huge backdrop behind every panel.
+   Only the view's content or its bounded table/list scroll when necessary. */
+@media(min-width:1600px) and (min-height:950px){
+ html,body,#root{height:100%;overflow:hidden}
+ .game-shell{height:100vh;height:100dvh;min-height:0;overflow:hidden}
+ .app-header,.metrics,.app-footer{flex:none}
+ .view-content{min-height:0;overflow:auto;overscroll-behavior:contain;scrollbar-gutter:stable}
+ .table-scroll{max-height:min(350px,28vh)}
+ .knowledge-results{max-height:min(410px,34vh)}
+}
 @media(min-width:1750px){
  .knowledge-layout{grid-template-columns:minmax(0,1fr) 410px}
 }
