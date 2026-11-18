@@ -1,0 +1,38 @@
+name: Collective Memory (dev)
+on:
+  push:
+    branches: [dev]
+    paths:
+      - "engine/spore_provider_fix/work/scratch/spore_collective_memory.py"
+      - "engine/spore_provider_fix/work/scratch/spore_first_pass_sqlite.py"
+      - "engine/spore_provider_fix/work/scratch/spore_investigation.py"
+      - "engine/spore_provider_fix/work/scratch/spore_progress_watch.py"
+      - "spore_agentic.py"
+      - "install_collective_memory.sh"
+      - "tests/test_collective_memory.py"
+      - "tests/test_investigation_evidence.py"
+      - ".github/workflows/collective-memory-ci.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Validate Python source
+        run: |
+          python -m compileall -q engine/spore_provider_fix/work/scratch tests spore_agentic.py
+          bash -n install_collective_memory.sh
+      - name: Install only local vector extension
+        run: python -m pip install --disable-pip-version-check 'sqlite-vec==0.1.9'
+      - name: Test independent SQLite knowledge and vector retrieval
+        run: python -m unittest discover -s tests -p 'test_collective_memory.py' -v
+      - name: Test durable investigation evidence
+        run: python -m unittest discover -s tests -p 'test_investigation_evidence.py' -v
