@@ -1,0 +1,69 @@
+name: Dashboard V2 (React/TS + Python)
+on:
+  push:
+    branches: [feature/dashboard-knowledge-v2, dev]
+    paths:
+      - "dashboard_web/src/**"
+      - "dashboard_web/package.json"
+      - "dashboard_web/package-lock.json"
+      - "dashboard_web/tsconfig.json"
+      - "dashboard_web/index.html"
+      - "dashboard_web/vite.config.ts"
+      - "dashboard/**"
+      - "spore_dashboard.py"
+      - "engine/spore_provider_fix/work/scratch/spore_technique_consolidator.py"
+      - "tests/test_dashboard_v2.py"
+      - ".github/workflows/dashboard-v2.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: dashboard-v2-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-test-bundle:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: true
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+      - name: Install frontend dependencies
+        working-directory: dashboard_web
+        run: npm install --no-audit --no-fund
+      - name: Typecheck and produce static dashboard assets
+        working-directory: dashboard_web
+        run: npm run build
+      - name: Backend and security checks
+        run: |
+          python -m compileall -q dashboard spore_dashboard.py
+          python -m unittest discover -s tests -p 'test_dashboard_v2.py' -v
+          python -m unittest discover -s tests -p 'test_technique_consolidator.py' -v
+      - name: Ensure bundled UI is fully offline
+        run: |
+          test -s dashboard_web/dist/index.html
+          test -n "$(find dashboard_web/dist/assets -type f -name '*.js' -print -quit)"
+          if grep -R -E "https://(esm\.sh|unpkg\.com|cdn\.jsdelivr\.net)" dashboard_web/dist; then
+            echo 'External runtime scripts detected' >&2
+            exit 1
+          fi
+      - name: Commit compiled static UI and dependency lockfile
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add dashboard_web/dist dashboard_web/package-lock.json
+          if ! git diff --cached --quiet; then
+            git commit -m "Build offline React dashboard UI assets"
+            git push origin "HEAD:$GITHUB_REF_NAME"
+          else
+            echo "Dashboard built assets are already current."
+          fi

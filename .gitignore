@@ -16,3 +16,8 @@ venv/
 *.bak
 *.zip
 work/
+
+# Frontend dependencies are installed at build time, compiled dist is checked in.
+dashboard_web/node_modules/
+dashboard_web/.vite/
+dashboard_web/*.tsbuildinfo

@@ -709,6 +709,30 @@ def format_techniques(rows, max_chars=2100):
     return "\n\n".join(chunks)
 
 
+def runtime_settings(repo, daily_usd, batch, interval):
+    """Read the dashboard-owned settings between batches; no worker coupling.
+
+    The file is optional for backwards compatibility with existing CLI users.
+    Bad settings pause the loop rather than silently increasing spending.
+    """
+    config = memory.paths(repo)[1] / "consolidator-settings.json"
+    if not config.is_file():
+        return {"daily_usd":daily_usd,"batch":batch,"interval":interval}
+    data=json.loads(config.read_text(encoding="utf-8"))
+    if not isinstance(data,dict):
+        raise ValueError("Invalid runtime consolidation settings")
+    usd=data.get("daily_usd")
+    count=data.get("batch")
+    seconds=data.get("interval")
+    if type(usd) not in (float,int) or not 0.01<=float(usd)<=10:
+        raise ValueError("Invalid dashboard consolidation daily budget")
+    if type(count) is not int or not 1<=count<=20:
+        raise ValueError("Invalid dashboard consolidation batch size")
+    if type(seconds) is not int or not 30<=seconds<=7200:
+        raise ValueError("Invalid dashboard consolidation interval")
+    return {"daily_usd":float(usd),"batch":count,"interval":seconds}
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--repo",default=".",help="Spore checkout root")
@@ -759,9 +783,17 @@ def main(argv=None):
         print("SAD consolidator running (paid requests enabled; Ctrl+C stops).",flush=True)
         try:
             while True:
-                print(json.dumps(process(args.repo,max_items=args.batch,
-                                          daily_usd=args.daily_usd)),flush=True)
-                time.sleep(max(30,args.interval))
+                try:
+                    settings = runtime_settings(args.repo,args.daily_usd,args.batch,args.interval)
+                    print(json.dumps(process(args.repo,max_items=settings["batch"],
+                                             daily_usd=settings["daily_usd"])),flush=True)
+                    time.sleep(settings["interval"])
+                except (ValueError,TypeError,json.JSONDecodeError,OSError) as exc:
+                    # Invalid configuration should never increase spending or
+                    # turn into a loop of paid requests.
+                    print("Consolidation paused, invalid runtime config: " +
+                          str(exc)[:160],flush=True)
+                    time.sleep(60)
         except KeyboardInterrupt:
             pass
 
