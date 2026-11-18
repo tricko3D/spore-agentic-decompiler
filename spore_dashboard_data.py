@@ -397,8 +397,18 @@ def snapshot(repo):
                       'cooldown_seconds':max(0,int(a['cooldown_until']-datetime.now(timezone.utc).timestamp())),
                       'provider_failures':a['provider_failures'],'productive_passes':a['productive_samples']}
         b=db.execute('SELECT * FROM budget WHERE singleton=1').fetchone()
+        # Preserve lifetime accounting, but display this RUN's separate
+        # spending limit. Historical runs predate the additive run_budgets
+        # migration; they have no recorded run baseline.
+        has_run_budget=db.execute("""SELECT 1 FROM sqlite_master
+                                    WHERE type='table' AND name='run_budgets'""").fetchone()
+        rb=(db.execute('SELECT * FROM run_budgets WHERE run_id=?',(rid,)).fetchone()
+            if rid and has_run_budget else None)
         budget={'spend':max(0,b['last_usage']-b['baseline_usage']) if b else None,
-                'inflight':scalar('SELECT COALESCE(SUM(amount),0) FROM reservations')}
+                'run_spend':max(0,rb['last_usage']-rb['baseline_usage']) if rb else None,
+                'run_limit':rb['budget_limit'] if rb else None,
+                'inflight':scalar('SELECT COALESCE(SUM(amount),0) FROM reservations WHERE run_id=?',(rid,))
+                            if rid else 0.0}
         events=[]
         for r in db.execute('''SELECT va,status,utc,worker_idx,id FROM attempts
               WHERE id NOT IN (SELECT attempt_id FROM attempt_reviews) ORDER BY id DESC LIMIT 32'''):
