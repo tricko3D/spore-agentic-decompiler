@@ -8,6 +8,22 @@ No API keys, model-provider calls or arbitrary file paths are accepted.
 """
 from __future__ import annotations
 
+# Running a script inside Spore's work/scratch normally inserts that directory
+# at sys.path[0]. The checkout contains a "dis.py" utility, which shadows
+# Python's own dis module. On Python 3.14 argparse -> inspect -> dis imports
+# that utility and fails before our CLI can initialize. This CLI is standalone:
+# it does not need sibling files on sys.path, so remove ONLY that script directory
+# before importing the standard library. Module imports by the SAD runner are
+# unaffected.
+import os as _bootstrap_os
+import sys as _bootstrap_sys
+if __name__ == "__main__":
+    _script_dir = _bootstrap_os.path.realpath(_bootstrap_os.path.dirname(__file__))
+    _bootstrap_sys.path[:] = [
+        item for item in _bootstrap_sys.path
+        if _bootstrap_os.path.realpath(item or _bootstrap_os.getcwd()) != _script_dir
+    ]
+
 import argparse
 import contextlib
 from datetime import datetime, timezone
