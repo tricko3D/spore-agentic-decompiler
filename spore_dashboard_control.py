@@ -117,7 +117,7 @@ class Controller:
         with self.lock:
             if not path.is_file():
                 return {'path':str(path),'source':source,'exists':False,
-                        'revision':'missing','content':'[\\n]\\n','addresses':[],
+                        'revision':'missing','content':'[\n]\n','addresses':[],
                         'count':0,'valid':False,
                         'validation_error':'No list exists. Enter at least one address to create it.'}
             raw=path.read_bytes()
@@ -162,7 +162,7 @@ class Controller:
             if actual!=revision:
                 raise ValueError('Allow list changed on disk. Reload it before saving.')
             # A canonical JSON file also makes future manual edits and diffs clear.
-            payload=(json.dumps(addresses,indent=2)+'\\n').encode('utf-8')
+            payload=(json.dumps(addresses,indent=2)+'\n').encode('utf-8')
             path.parent.mkdir(parents=True,exist_ok=True)
             fd,tmp=tempfile.mkstemp(prefix='.sad-allowlist-',suffix='.tmp',dir=str(path.parent))
             try:
