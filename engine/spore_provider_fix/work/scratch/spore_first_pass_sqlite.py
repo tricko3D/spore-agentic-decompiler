@@ -23,6 +23,7 @@ import signal
 import subprocess
 import sys
 import time
+import uuid
 
 ROOT = Path.cwd()
 WORK = ROOT / 'work' / 'scratch' / 'codex-pass1'
@@ -93,6 +94,15 @@ def guard_other_run():
 
 def run_info():
     return os.environ.get('SPORE_SQLITE_RUN_ID'), int(os.environ.get('SPORE_SQLITE_WORKER_IDX', '0'))
+
+
+# A parallel run shares one ID across all workers. Serial runs receive a
+# unique ID for their invocation, never inheriting a prior run's spending.
+_SERIAL_BUDGET_ID = 'serial-' + uuid.uuid4().hex
+
+
+def budget_session_id():
+    return os.environ.get('SPORE_SQLITE_RUN_ID') or _SERIAL_BUDGET_ID
 
 
 def assigned_worker(va):
@@ -581,11 +591,15 @@ def budget_progress(budget):
     current=openrouter_get_key()
     usage=float(current['usage'])
     remaining=current.get('limit_remaining')
-    ok,spent,reserved=store.update_budget(key_hash,usage,budget,remaining)
-    print(f'OpenRouter charged since first run: ${spent:.4f} / ${budget:.2f} '
-          f'local budget (in-flight reserve ${reserved:.2f})',flush=True)
+    ok,spent,reserved=store.update_budget(
+        key_hash,usage,budget,remaining,run_id=budget_session_id())
+    print(f'OpenRouter charged in THIS run: ${spent:.4f} / ${budget:.2f} '
+          f'session budget (in-flight reserve ${reserved:.2f})',flush=True)
     if isinstance(remaining,(float,int)) and not isinstance(remaining,bool):
-        print(f'Key spending limit remaining: ${float(remaining):.4f}',flush=True)
+        print(f'OpenRouter KEY limit remaining: ${float(remaining):.4f}',flush=True)
+        if float(remaining) < 0.10:
+            print('OpenRouter KEY has less than the $0.10 required inference reserve. '
+                  'The local session budget cannot override this provider limit.',flush=True)
     return ok
 
 
@@ -1017,7 +1031,7 @@ def process(minutes, unsafe, backend, quota_wait, max_functions,
               f'{reasoning} reasoning). OpenCode shell tools run WITHOUT a sandbox.', flush=True)
         try:
             if not budget_check_or_wait(budget, adaptive=adaptive):
-                print('Budget or API key limit reached. Stopped without starting a function.')
+                print('Run budget or OpenRouter key limit reached. Stopped without starting a function.')
                 return
         except (OSError, ValueError, RuntimeError) as e:
             print(f'Spending guard check failed, stopping: {e}', file=sys.stderr)
@@ -1099,7 +1113,7 @@ def process(minutes, unsafe, backend, quota_wait, max_functions,
                 if backend == 'openrouter':
                     try:
                         if not budget_check_or_wait(budget, adaptive=adaptive):
-                            print('OpenRouter budget reached; queue/results preserved.', flush=True)
+                            print('Run budget or OpenRouter key limit reached; queue/results preserved.', flush=True)
                             status()
                             return
                     except (OSError, ValueError, RuntimeError) as e:
@@ -1126,9 +1140,9 @@ def process(minutes, unsafe, backend, quota_wait, max_functions,
                                 if slot is None:
                                     time.sleep(2)
                         if backend == 'openrouter':
-                            reservation = store.reserve_budget(rid, va, 0.10, budget)
+                            reservation = store.reserve_budget(budget_session_id(), va, 0.10, budget)
                             if reservation is None:
-                                print('Budget reserved for other workers or exhausted; stopping.', flush=True)
+                                print('Run budget reserved for other workers or exhausted; stopping.', flush=True)
                                 return
                         kind, answer, log = run_one(va, minutes, unsafe, backend,
                                                     model, reasoning, pass_number, prompt, slot=slot)
@@ -1225,7 +1239,7 @@ def process(minutes, unsafe, backend, quota_wait, max_functions,
                                                       'effort': outcome[1], 'note': outcome[2]})
                 print(f'    {outcome[0]} {outcome[1]} {outcome[2]}', flush=True)
                 if under_budget is not True:
-                    print('OpenRouter budget guard reached or unavailable after recording pass; stopped.', flush=True)
+                    print('Run budget or OpenRouter key guard reached or unavailable after recording pass; stopped.', flush=True)
                     status()
                     return
                 if outcome[0] in ('MATCH', 'SKIP'):
@@ -1256,7 +1270,7 @@ def doctor(backend, model='mistral4', reasoning='high', live=False, budget=5.0):
         print('Model:', OPENROUTER_MODEL)
         print('Routing: Sail Research only, fallbacks disabled')
         print('Reasoning requested:', reasoning, '(provider may not honor specific effort)')
-        print('Local budget: $%.2f; OpenRouter key limit is the hard safety cap' % budget)
+        print('Per-run budget: $%.2f; OpenRouter key limit remains a separate hard cap' % budget)
         print('OpenCode shell tools are NOT sandboxed')
         if live:
             if not os.environ.get('OPENROUTER_API_KEY', '').strip():
