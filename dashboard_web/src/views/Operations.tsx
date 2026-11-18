@@ -44,7 +44,7 @@ export default function Operations({active,snapshot,snapshotError}:{active:boole
  const [detail,setDetail]=useState<Detail|null>(null);
  useEffect(()=>{const t=window.setTimeout(()=>{setSearch(typed);setOffset(0)},250);return ()=>clearTimeout(t)},[typed]);
  const url='/api/functions?'+query({status,search,offset,limit:75});
- const {value:table,error:tableError,refresh:refreshTable}=usePoll<Paginated<FunctionRow>>(url,15000,active);
+ const {value:table,error:tableError}=usePoll<Paginated<FunctionRow>>(url,15000,active);
  const run=d?.run||{},counts=d?.counters||{},budget=d?.budget||{},sizes=d?.bytes||{},effort=d?.effort||{};
  const key=(x:Status)=>x==='MATCH'?'matches':x==='FAIL'?'fails':x==='DEFER'?'deferred':x==='SKIP'?'skips':'pending';
  const statusTotal=STATUS.reduce((a,x)=>a+number(counts[key(x)]),0);
