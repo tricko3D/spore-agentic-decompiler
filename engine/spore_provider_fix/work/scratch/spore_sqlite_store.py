@@ -69,6 +69,13 @@ def init_schema():
           reservation_id TEXT PRIMARY KEY, run_id TEXT,
           va TEXT NOT NULL, amount REAL NOT NULL CHECK(amount>0),
           created_utc TEXT NOT NULL);
+        CREATE TABLE IF NOT EXISTS run_budgets(
+          run_id TEXT PRIMARY KEY,
+          key_fingerprint TEXT NOT NULL,
+          baseline_usage REAL NOT NULL,
+          last_usage REAL NOT NULL,
+          budget_limit REAL NOT NULL CHECK(budget_limit>0),
+          updated_utc TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS runs(
           run_id TEXT PRIMARY KEY, workers INTEGER NOT NULL, passes INTEGER NOT NULL,
           started_utc TEXT NOT NULL, finished_utc TEXT);
@@ -637,47 +644,99 @@ def budget_status():
         return (dict(b) if b else None,float(reservations))
 
 
-def update_budget(key_fingerprint,usage,budget,limit_remaining=None):
-    """Compare observed actual key usage against preserved baseline under a write lock."""
+def update_budget(key_fingerprint,usage,budget,limit_remaining=None,*,run_id):
+    """Refresh actual /key usage and enforce the NEW RUN'S spending allowance.
+
+    The existing budget table remains untouched as lifetime project accounting.
+    This run's first successful /key reading is its own baseline, shared by all
+    workers and never reset during the run, even after a worker restarts.
+    We count other spend on the same OpenRouter key conservatively.
+    """
+    if not run_id:
+        raise ValueError('Missing budget run/session ID')
+    if budget<=0 or usage<0:
+        raise ValueError('Invalid OpenRouter budget or usage')
     with connect() as db:
         db.execute('BEGIN IMMEDIATE')
         try:
-            b=db.execute('SELECT * FROM budget WHERE singleton=1').fetchone()
-            if b:
-                if b['key_fingerprint']!=key_fingerprint:
+            previous=db.execute('SELECT * FROM budget WHERE singleton=1').fetchone()
+            if previous:
+                if previous['key_fingerprint']!=key_fingerprint:
                     raise RuntimeError('Different OpenRouter API key from migrated budget state.')
-                baseline=float(b['baseline_usage'])
-                last=max(float(b['last_usage']),float(usage))
-                db.execute('UPDATE budget SET last_usage=?,updated_utc=? WHERE singleton=1',(last,utc()))
+                last=max(float(previous['last_usage']),float(usage))
+                db.execute('UPDATE budget SET last_usage=?,updated_utc=? WHERE singleton=1',
+                           (last,utc()))
             else:
-                baseline=float(usage);last=baseline
-                db.execute('INSERT INTO budget VALUES(1,?,?,?,?)',(key_fingerprint,baseline,last,utc()))
-            reserved=float(db.execute('SELECT COALESCE(SUM(amount),0) FROM reservations').fetchone()[0])
-            spent=last-baseline
-            allowed=(spent+reserved<budget and (limit_remaining is None or float(limit_remaining)>reserved))
+                db.execute('INSERT INTO budget VALUES(1,?,?,?,?)',
+                           (key_fingerprint,float(usage),float(usage),utc()))
+
+            session=db.execute('SELECT * FROM run_budgets WHERE run_id=?',(run_id,)).fetchone()
+            if session:
+                if session['key_fingerprint']!=key_fingerprint:
+                    raise RuntimeError('API key changed within a running decompiler session.')
+                if abs(float(session['budget_limit'])-float(budget))>0.000001:
+                    raise RuntimeError('Budget changed inside an active session. Start a new run.')
+                baseline=float(session['baseline_usage'])
+                session_last=max(float(session['last_usage']),float(usage))
+                db.execute('UPDATE run_budgets SET last_usage=?,updated_utc=? WHERE run_id=?',
+                           (session_last,utc(),run_id))
+            else:
+                # BEGIN IMMEDIATE guarantees that concurrent workers share a
+                # single baseline. Never reuse the original key baseline.
+                baseline=float(usage)
+                session_last=baseline
+                db.execute('''INSERT INTO run_budgets
+                    (run_id,key_fingerprint,baseline_usage,last_usage,budget_limit,updated_utc)
+                    VALUES(?,?,?,?,?,?)''',
+                    (run_id,key_fingerprint,baseline,session_last,float(budget),utc()))
+
+            reserved=float(db.execute(
+                'SELECT COALESCE(SUM(amount),0) FROM reservations WHERE run_id=?',
+                (run_id,)).fetchone()[0])
+            all_reserved=float(db.execute(
+                'SELECT COALESCE(SUM(amount),0) FROM reservations').fetchone()[0])
+            spent=max(0.0,session_last-baseline)
+            # Each upcoming inference requires a $0.10 conservative reserve.
+            # Still respect the REAL OpenRouter key allowance independently.
+            minimum_reserve=0.10
+            key_ok=(limit_remaining is None or
+                    float(limit_remaining) + 0.0000001 >= all_reserved+minimum_reserve)
+            allowed=(spent+reserved+minimum_reserve<=float(budget)+0.0000001 and key_ok)
             db.execute('COMMIT')
             return allowed,spent,reserved
         except Exception:
-            db.execute('ROLLBACK');raise
+            db.execute('ROLLBACK')
+            raise
 
 
 def reserve_budget(run_id,va,amount,budget):
-    """Conservative per-inference reservation, prevents workers oversubscribing local budget."""
+    """Reserve provider spend against this run, never the original key baseline."""
+    if not run_id:
+        raise ValueError('Budget reservation requires a run/session ID')
     token=uuid.uuid4().hex
     with connect() as db:
         db.execute('BEGIN IMMEDIATE')
         try:
-            b=db.execute('SELECT baseline_usage,last_usage FROM budget WHERE singleton=1').fetchone()
-            if not b:
-                raise RuntimeError('Budget state not initialized')
-            reserved=float(db.execute('SELECT COALESCE(SUM(amount),0) FROM reservations').fetchone()[0])
-            if float(b['last_usage'])-float(b['baseline_usage'])+reserved+amount>budget:
-                db.execute('COMMIT');return None
+            session=db.execute('SELECT * FROM run_budgets WHERE run_id=?',
+                               (run_id,)).fetchone()
+            if not session:
+                raise RuntimeError('Run budget not initialized; verify OpenRouter /key first.')
+            if abs(float(session['budget_limit'])-float(budget))>0.000001:
+                raise RuntimeError('Run budget mismatch between workers.')
+            reserved=float(db.execute(
+                'SELECT COALESCE(SUM(amount),0) FROM reservations WHERE run_id=?',
+                (run_id,)).fetchone()[0])
+            spent=max(0.0,float(session['last_usage'])-float(session['baseline_usage']))
+            if spent+reserved+float(amount)>float(session['budget_limit'])+0.0000001:
+                db.execute('COMMIT')
+                return None
             db.execute('INSERT INTO reservations(reservation_id,run_id,va,amount,created_utc) VALUES(?,?,?,?,?)',
                        (token,run_id,va,amount,utc()))
-            db.execute('COMMIT');return token
+            db.execute('COMMIT')
+            return token
         except Exception:
-            db.execute('ROLLBACK');raise
+            db.execute('ROLLBACK')
+            raise
 
 
 def release_reservation(token):
