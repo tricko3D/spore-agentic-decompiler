@@ -367,6 +367,72 @@ html,body,.grid,.table-scroll,.drawer,.timeline,.control-status{scrollbar-color:
  .spore-mark img{width:44px;height:44px}
  .dock-brand strong{font-size:24px}
 }
+
+/* The original Spore menu occupies a small floating cluster, not a full-width footer. */
+.game-shell { padding-bottom:118px; }
+.bottom-hud {
+ position:relative;
+ align-self:flex-start;
+ width:min(1130px,calc(100vw - 260px));
+ max-width:100%;
+ min-height:80px;
+ display:flex;
+ align-items:center;
+ gap:12px;
+ flex:none;
+ padding:7px 16px 8px 8px;
+ border-radius:48px;
+ margin:0;
+ box-shadow:inset 0 2px #d4f3ff8c,inset 0 -4px 8px #051626,0 4px 13px #000a;
+}
+.bottom-hud .dock-identity { flex:0 0 auto; }
+.bottom-hud .spore-mark {width:62px;height:62px;flex:0 0 62px}
+.bottom-hud .spore-mark img {width:55px;height:55px}
+.bottom-hud .dock-brand {width:118px;max-width:118px}
+.bottom-hud .dock-brand strong {font-size:27px}
+.bottom-hud .dock-console {flex:1 1 auto;min-width:0;gap:3px}
+.bottom-hud .dock-console .control-form {display:flex;align-items:end;flex-wrap:nowrap;gap:7px;min-width:0;overflow-x:auto;padding-bottom:2px}
+.bottom-hud .dock-console .control-form label {flex:0 0 auto;font-size:11px}
+.bottom-hud .dock-console .control-form select {max-width:174px}
+.bottom-hud .dock-console .control-form input[type=number] {width:65px}
+.bottom-hud .dock-console .control-form button {flex:0 0 auto}
+.bottom-hud .dock-caption {font-size:12px}
+.bottom-hud .dock-console .control-status {max-height:22px}
+.status-pod {
+ position:absolute;z-index:4;right:13px;bottom:16px;
+ display:flex;flex-direction:column;align-items:flex-end;gap:4px;
+ padding:9px 12px;
+ border:2px solid #9abed0;border-radius:24px;
+ background:linear-gradient(#527d9b,#244968 30%,#102a47 90%);
+ box-shadow:inset 0 2px #d4f3ff8c,inset 0 -3px 7px #051626,0 4px 12px #0009;
+}
+.status-pod .up {display:flex;align-items:center;gap:8px;font-size:11px}
+.status-pod .dock-subline {font-size:10px}
+.agent-column .grid {justify-content:center;align-content:center;gap:9px}
+@media(min-width:1900px) {
+ .game-shell {position:relative;padding-bottom:9px}
+ .bottom-hud {min-height:76px;max-height:84px}
+ .agent-column .grid {justify-content:center;align-content:center;gap:9px}
+}
+@media(max-width:1450px) {
+ .bottom-hud {width:min(100%,1040px);border-radius:28px;flex-wrap:wrap}
+ .bottom-hud .dock-console .control-form {flex-wrap:wrap;overflow:visible}
+ .status-pod {position:relative;align-self:flex-end;right:auto;bottom:auto;margin-top:-5px}
+}
+@media(max-width:800px) {
+ .bottom-hud {width:100%;border-radius:25px;padding:10px;align-items:start}
+ .bottom-hud .dock-identity {flex:0 0 auto}
+ .bottom-hud .dock-brand {display:none}
+ .bottom-hud .dock-console .control-form {flex-wrap:wrap}
+ .bottom-hud .spore-mark {width:52px;height:52px;flex-basis:52px}
+ .bottom-hud .spore-mark img {width:46px;height:46px}
+ .status-pod {align-self:flex-end}
+}
+@media(max-width:500px) {
+ .bottom-hud {display:block}
+ .bottom-hud .dock-identity {float:left;margin:0 8px 5px 0}
+ .bottom-hud .dock-console .control-form {clear:both}
+}
 </style></head>
 <body>
 <div class="game-shell">
@@ -441,11 +507,11 @@ html,body,.grid,.table-scroll,.drawer,.timeline,.control-status{scrollbar-color:
      </form>
   <div class="control-status" id="controlMessage" role="status" aria-live="polite"></div>
  </div>
- <div class="dock-connection">
-  <div class="up"><span class="dot" id="dot"></span><span id="connection">Connecting…</span><span class="small" id="clock"></span></div>
-  <div class="dock-subline">Local dashboard <span id="error"></span></div>
- </div>
 </footer>
+</div>
+<div class="status-pod" aria-label="Connection status">
+ <div class="up"><span class="dot" id="dot"></span><span id="connection">Connecting…</span><span class="small" id="clock"></span></div>
+ <div class="dock-subline">Local dashboard <span id="error"></span></div>
 </div>
 <div class="drawer-back" id="backdrop"></div>
 <aside class="drawer" id="drawer" aria-label="Function or agent details"><div class="drawer-head"><div><h2 id="detailTitle">Details</h2><p id="detailSub"></p></div><button id="close">Close</button></div><div id="detailBody"></div></aside>
