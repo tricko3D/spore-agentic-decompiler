@@ -807,7 +807,7 @@ const fmt=x=>typeof x==='number'?'$'+x.toFixed(x<0.01?5:3):'—';
 const bytes=x=>typeof x==='number'?new Intl.NumberFormat('en-US').format(x)+' B':'—';
 const agreement=(x,total,status)=>!x?(status==='FAIL'||status==='DEFER'?`unknown / ${total} bytes`:'—'):x.matched!=null?`${x.matched}/${x.total} bytes`:x.kind==='size_mismatch'?`size ${x.compiled_size}/${x.retail_size} B`:'—';
 let selected=null,off=0,query='',filter='ALL',total=0,mutating=false,detailBusy=false;
-let commandPhase='idle',lastSnapshot=null,pendingLaunchSettings=null;
+let commandPhase='idle',lastSnapshot=null,pendingLaunchSettings=null,launchRequestError='';
 let lastModuleValue='SPGonzago';
 let previewKey='',previewState=null,previewSerial=0,previewTimer=null;
 function set(id,v){$(id).textContent=v}
@@ -1070,13 +1070,18 @@ function paintRunAction(mode,feedback){
  indicator.textContent=feedback;
 }
 function renderRunExit(d){
+ const detail=$('runExitDetail');
+ if(launchRequestError){
+  detail.hidden=false;
+  detail.textContent='Launch could not start: '+launchRequestError;
+  return;
+ }
  const state=d.controller||{},run=d.run||{};
  const rc=state.returncode;
  const stopped=rc!==null&&rc!==undefined&&!runCoordinatorActive(d);
  const noProgress=stopped&&run.targets>0&&(run.valid_attempts||0)===0
   &&run.completed!==run.targets;
  const failed=stopped&&(rc!==0||noProgress);
- const detail=$('runExitDetail');
  if(!failed){detail.hidden=true;detail.textContent='';return}
  const reason=state.exit_reason||state.error||'';
  detail.hidden=false;
@@ -1146,7 +1151,11 @@ async function control(action,payload={}){
  mutating=true;
  const starting=action==='start';
  commandPhase=starting?'starting':'stopping';
- if(starting)pendingLaunchSettings={...payload};
+ if(starting){
+  pendingLaunchSettings={...payload};
+  launchRequestError='';
+  $('runExitDetail').hidden=true;
+ }
  paintRunAction(commandPhase,starting?'Starting':'Stopping');
  set('controlMessage',starting?
   'Starting: validating settings and preparing module scope. This may take a moment.':
@@ -1172,7 +1181,9 @@ async function control(action,payload={}){
   }
  }catch(e){
   commandPhase='error';
+  launchRequestError=starting?(e.message||'Control request failed'):'';
   set('controlMessage',e.message||'Control request failed');
+  if(lastSnapshot)renderRunExit(lastSnapshot);
  }finally{
   mutating=false;
   // Keep the newly requested state visible until a FRESH snapshot arrives.
