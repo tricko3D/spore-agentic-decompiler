@@ -293,26 +293,69 @@ def snapshot(repo):
                 'inference':scalar('SELECT COUNT(*) FROM inference_slots')}
         run={}
         if last:
-            target=scalar('SELECT COUNT(*) FROM assignments WHERE run_id=?',rid)
-            completed=scalar('''SELECT COUNT(*) FROM assignments x WHERE x.run_id=? AND (
-              (SELECT t.status FROM attempts t LEFT JOIN attempt_reviews v ON v.attempt_id=t.id
-                WHERE t.va=x.va AND v.attempt_id IS NULL ORDER BY t.id DESC LIMIT 1) IN ('MATCH','SKIP')
-              OR (SELECT COUNT(*) FROM attempts t LEFT JOIN attempt_reviews v ON v.attempt_id=t.id
-                WHERE t.va=x.va AND t.status IN ('FAIL','DEFER') AND v.attempt_id IS NULL)>=?
-              OR EXISTS(SELECT 1 FROM run_exclusions e WHERE e.run_id=x.run_id AND e.va=x.va))''',rid,last['passes'])
-            completed_bytes=scalar('''SELECT COALESCE(SUM(q.size),0) FROM assignments x JOIN queue q ON q.va=x.va
-                  WHERE x.run_id=? AND (
-                    (SELECT t.status FROM attempts t LEFT JOIN attempt_reviews v ON v.attempt_id=t.id
-                      WHERE t.va=x.va AND v.attempt_id IS NULL ORDER BY t.id DESC LIMIT 1) IN ('MATCH','SKIP')
-                    OR (SELECT COUNT(*) FROM attempts t LEFT JOIN attempt_reviews v ON v.attempt_id=t.id
-                        WHERE t.va=x.va AND t.status IN ('FAIL','DEFER') AND v.attempt_id IS NULL)>=?
-                    OR EXISTS(SELECT 1 FROM run_exclusions e WHERE e.run_id=x.run_id AND e.va=x.va))''',rid,last['passes'])
-            target_bytes=scalar('''SELECT COALESCE(SUM(q.size),0) FROM assignments x
-                                  JOIN queue q ON q.va=x.va WHERE x.run_id=?''',rid)
-            run={'id':rid,'targets':target,'completed':completed,
+            # Outcome and progress data MUST refer to this run's assignments
+            # and valid attempts. Previously failed attempts belong to the
+            # historical totals, not to the new passes granted for this run.
+            targets=db.execute('''SELECT x.va,q.size FROM assignments x
+                JOIN queue q ON q.va=x.va WHERE x.run_id=?''',(rid,)).fetchall()
+            run_latest={}
+            valid_attempts=0
+            for attempt in db.execute('''SELECT t.va,t.status FROM attempts t
+                    LEFT JOIN attempt_reviews v ON v.attempt_id=t.id
+                    WHERE t.run_id=? AND v.attempt_id IS NULL ORDER BY t.id''',(rid,)):
+                run_latest[attempt['va']]=attempt['status']
+                valid_attempts+=1
+
+            # An older database may not have this table. New runs snapshot a
+            # per-function lifetime ceiling at launch, so last['passes']
+            # must NOT be used alone for their completion calculation.
+            has_caps=db.execute("""SELECT 1 FROM sqlite_master
+                                   WHERE type='table' AND name='run_attempt_limits'""").fetchone()
+            caps={row['va']:int(row['max_attempts']) for row in db.execute(
+                'SELECT va,max_attempts FROM run_attempt_limits WHERE run_id=?',(rid,)
+            )} if has_caps else {}
+            attempts_used={row['va']:int(row['n']) for row in db.execute('''
+                SELECT t.va,COUNT(*) AS n FROM attempts t
+                LEFT JOIN attempt_reviews v ON v.attempt_id=t.id
+                JOIN assignments x ON x.va=t.va AND x.run_id=?
+                WHERE t.status IN ('FAIL','DEFER') AND v.attempt_id IS NULL
+                GROUP BY t.va''',(rid,))}
+            excluded={row['va'] for row in db.execute(
+                'SELECT va FROM run_exclusions WHERE run_id=?',(rid,))}
+            statuses=('MATCH','FAIL','DEFER','SKIP','PENDING')
+            outcomes={key:0 for key in statuses}
+            outcome_bytes={key:0 for key in statuses}
+            completed=completed_bytes=target_bytes=0
+            for target_row in targets:
+                va=target_row['va']
+                size=int(target_row['size'])
+                target_bytes+=size
+                status=run_latest.get(va,'PENDING')
+                if status not in outcomes:
+                    status='PENDING'
+                outcomes[status]+=1
+                outcome_bytes[status]+=size
+                ceiling=caps.get(va,int(last['passes']))
+                terminal=(status in ('MATCH','SKIP')
+                    or va in excluded
+                    or (status in ('FAIL','DEFER')
+                        and attempts_used.get(va,0)>=ceiling))
+                if terminal:
+                    completed+=1
+                    completed_bytes+=size
+            archived_provider=db.execute('''SELECT COUNT(*) FROM attempts t
+                JOIN attempt_reviews v ON v.attempt_id=t.id
+                WHERE t.run_id=?''',(rid,)).fetchone()[0]
+            run_incidents=db.execute(
+                'SELECT COUNT(*) FROM provider_incidents WHERE run_id=?',(rid,)
+            ).fetchone()[0]
+            run={'id':rid,'targets':len(targets),'completed':completed,
                  'bytes_target':target_bytes,'bytes_completed':completed_bytes,
-                 'workers':last['workers'],
-                 'finished':bool(last['finished_utc']),'started':last['started_utc']}
+                 'workers':last['workers'],'finished':bool(last['finished_utc']),
+                 'started':last['started_utc'],'finished_at':last['finished_utc'],
+                 'outcomes':outcomes,'outcome_bytes':outcome_bytes,
+                 'valid_attempts':valid_attempts,'archived_provider':archived_provider,
+                 'provider_incidents':run_incidents,'excluded':len(excluded)}
         a=db.execute('SELECT * FROM adaptive_control WHERE singleton=1').fetchone()
         adaptive={}
         if a and a['run_id']==rid:
@@ -337,6 +380,16 @@ def snapshot(repo):
         module_names=known_modules(repo)
     workers=worker_info(repo,rid,claims,last_by_worker,byte_sizes,active_slots=active_slots)
     run['live_workers']=sum(w['alive'] for w in workers)
+    if not run:
+        run['state']='none'
+    elif run['finished']:
+        # Finished may also mean budget, watchdog or manual shutdown.
+        # Do not claim success for a run that ended with unfinished targets.
+        run['state']='completed' if run['completed']==run['targets'] else 'ended'
+    elif run['live_workers']:
+        run['state']='running'
+    else:
+        run['state']='inactive'
     return {'generated_utc':datetime.now(timezone.utc).isoformat(timespec='seconds'),
             'run':run,'workers':workers,'events':events,'counters':counts,'budget':budget,
             'adaptive':adaptive,'effort':{f'+{i}':effort.get(f'+{i}',0) for i in range(1,6)},
