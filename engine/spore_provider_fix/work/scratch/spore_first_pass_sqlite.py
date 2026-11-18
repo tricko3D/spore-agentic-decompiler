@@ -982,7 +982,10 @@ def process(minutes, unsafe, backend, quota_wait, max_functions,
     adaptive = backend == 'openrouter' and os.environ.get('SPORE_ADAPTIVE_INFLIGHT') == '1'
     store.ensure_imported()
     guard_other_run()
-    save_pass_limit(passes)
+    # For parallel runs, each VA has its own cumulative ceiling in SQLite.
+    # The dashboard's passes value is additional work, never a history reset.
+    if not os.environ.get('SPORE_SQLITE_RUN_ID'):
+        save_pass_limit(passes)
     queue = read_csv(QUEUE)
     history = history_by_va()
     modules = ModuleIndex()
@@ -1068,12 +1071,13 @@ def process(minutes, unsafe, backend, quota_wait, max_functions,
         # Original single-pass results count toward the limit. A timeout
         # consumes one attempt; quota/infra failures were never recorded.
         attempted = sum(r['status'] in ('FAIL', 'DEFER') for r in previous)
-        if attempted >= passes:
+        pass_ceiling = store.run_attempt_limit(rid, va) if dynamic else passes
+        if attempted >= pass_ceiling:
             if dynamic:
                 store.ignore_run_target(rid,va,'passes exhausted')
                 store.release_claim(va,rid,worker_idx)
             if only_va:
-                print(f'{va} already used {attempted}/{passes} attempts.', flush=True)
+                print(f'{va} already used {attempted}/{pass_ceiling} attempts.', flush=True)
             continue
         if max_functions and processed_functions >= max_functions:
             print(f'Stopped after {processed_functions} function(s); queue/results preserved.')
@@ -1081,14 +1085,14 @@ def process(minutes, unsafe, backend, quota_wait, max_functions,
             return
         processed_functions += 1
         print(f'[{idx}/{len(queue)}] {va} ({row["size"]} bytes), '
-              f'previous attempts {attempted}/{passes}', flush=True)
+              f'previous attempts {attempted}/{pass_ceiling}', flush=True)
 
         rid,worker_idx=run_info()
         if not dynamic and not store.claim(va,rid,worker_idx,passes):
             print(f'  {va} is already claimed or completed; skipped.',flush=True)
             continue
         try:
-            for pass_number in range(attempted + 1, passes + 1):
+            for pass_number in range(attempted + 1, pass_ceiling + 1):
                 if va in manifests.refresh() or not modules.eligible(va):
                     print(f'  {va} became manifested or out-of-scope; skipped.', flush=True)
                     break
@@ -1107,9 +1111,9 @@ def process(minutes, unsafe, backend, quota_wait, max_functions,
                 old_log = prior_row.get('log_path') if prior_row else None
                 prior_log = (Path(old_log) if old_log else
                              previous_log(va, backend, model, pass_number - 1))
-                prompt = (continuation_prompt(va, pass_number, prior_row, prior_log, passes)
+                prompt = (continuation_prompt(va, pass_number, prior_row, prior_log, pass_ceiling)
                           if pass_number > 1 else None)
-                print(f'  Pass {pass_number}/{passes}...', flush=True)
+                print(f'  Pass {pass_number}/{pass_ceiling}...', flush=True)
                 provider_failures = 0
                 while True:
                     reservation = None
@@ -1227,7 +1231,7 @@ def process(minutes, unsafe, backend, quota_wait, max_functions,
                 if outcome[0] in ('MATCH', 'SKIP'):
                     break
             else:
-                print(f'  {va}: exhausted {passes} passes, moving to next function.', flush=True)
+                print(f'  {va}: exhausted {pass_ceiling} cumulative attempts for this run.', flush=True)
         finally:
             store.release_claim(va,rid,worker_idx)
     print('\nFinished eligible module scope at the configured pass limit.')
@@ -1280,7 +1284,7 @@ def main():
     run.add_argument('--max-functions', type=int, default=0, help='Stop after N completed attempts; 0 = entire pending queue')
     run.add_argument('--model', choices=NVIDIA_MODELS, default='mistral4', help='NVIDIA model only; ignored by OpenRouter (which always uses DeepSeek V4.1 Flash 1017)')
     run.add_argument('--reasoning', choices=['low', 'medium', 'high'], default='high', help='Requested reasoning effort (default high; API provider may not honor it)')
-    run.add_argument('--passes', type=int, default=3, help='Total attempts per function, including recorded previous passes (1-24; default 3)')
+    run.add_argument('--passes', type=int, default=3, help='Additional valid attempts per function for a parallel run (1-24; default 3); serial mode keeps cumulative limit')
     run.add_argument('--retry-timeouts', action='store_true', help='Retry previously timed-out functions, including legacy FAIL +4 timeouts; other results remain intact')
     run.add_argument('--budget', type=float, default=5.0, help='OpenRouter local soft budget in USD since first run (default $5; dashboard API-key cap is hard limit)')
     run.add_argument('--only-va', help='Run only this queued function, useful for testing (e.g. 0x00c69a70)')
