@@ -240,11 +240,11 @@ class Controller:
         return {'users':registry['users'],'source':registry['source'],
                 'updated':registry['updated']}
 
-    def _claim_scope(self,user):
+    def _claim_scope(self,user,force=False):
         """Create an immutable private claims snapshot, separate from retry-all.json."""
         if not isinstance(user,str) or not re.fullmatch(r'[A-Za-z0-9-]{1,39}',user):
             raise ValueError('Select a GitHub claimant before launching')
-        registry=self._claims_registry(force=True)
+        registry=self._claims_registry(force=force)
         member=registry['claims'].get(user.casefold())
         if not member:
             raise ValueError('GitHub user '+user+' has no current open claims; refresh the claimant list')
@@ -343,58 +343,59 @@ print(json.dumps({
             raise ValueError('workers must be between 1 and 32')
         selected=(self._claim_scope(claim_user) if module=='__claimed__'
                   else self._retry_allowlist(module))
-        env=os.environ.copy()
-        if selected:
-            env['SPORE_RETRY_ALLOWLIST']=selected['path']
-            env['SPORE_ALLOWLIST_BREAKDOWN']='1'
-            # Mirror the CLI module scope for the local diagnostic fallback.
-            from spore_agentic import config as scope_config
-            saved=scope_config()
-            env['SPORE_TARGET_MODULES']='*' if module in ('*','__allowlist__','__claimed__') else module
-            env['SPORE_MIN_MODULE_CONFIDENCE']=str(saved.get('min_confidence',0.70))
-        cmd=[sys.executable,str(CLI),'plan','--repo',str(self.repo),
-             '--workers',str(workers)]
-        cmd+=['--all-modules'] if module in ('*','__allowlist__','__claimed__') else ['--module',module]
         try:
+            env=os.environ.copy()
+            if selected:
+                env['SPORE_RETRY_ALLOWLIST']=selected['path']
+                env['SPORE_ALLOWLIST_BREAKDOWN']='1'
+                # Mirror the CLI module scope for the local diagnostic fallback.
+                from spore_agentic import config as scope_config
+                saved=scope_config()
+                env['SPORE_TARGET_MODULES']='*' if module in ('*','__allowlist__','__claimed__') else module
+                env['SPORE_MIN_MODULE_CONFIDENCE']=str(saved.get('min_confidence',0.70))
+            cmd=[sys.executable,str(CLI),'plan','--repo',str(self.repo),
+                 '--workers',str(workers)]
+            cmd+=['--all-modules'] if module in ('*','__allowlist__','__claimed__') else ['--module',module]
             try:
-                result=subprocess.run(cmd,cwd=CLI.parent,stdin=subprocess.DEVNULL,
-                                      capture_output=True,text=True,timeout=60,env=env)
-            except subprocess.TimeoutExpired:
-                raise ValueError('Preview timed out. No agents started.')
+                try:
+                    result=subprocess.run(cmd,cwd=CLI.parent,stdin=subprocess.DEVNULL,
+                                          capture_output=True,text=True,timeout=60,env=env)
+                except subprocess.TimeoutExpired:
+                    raise ValueError('Preview timed out. No agents started.')
+            if result.returncode:
+                raise ValueError('Preview unavailable: '+
+                                 (result.stdout+' '+result.stderr)[-300:])
+            found=re.search(r'runnable functions \(passes are additional per run\): (\d+)',
+                            result.stdout)
+            if not found:
+                raise ValueError('Preview output could not be interpreted. No agents started.')
+            eligible=int(found.group(1))
+            breakdown=None
+            if selected:
+                match=re.search(r'^SPORE_ALLOWLIST_BREAKDOWN=(\{[^\n]*\})$',
+                                result.stdout,re.MULTILINE)
+                if match:
+                    try:breakdown=json.loads(match.group(1))
+                    except ValueError:pass
+                if not breakdown:
+                    breakdown=self._allowlist_breakdown_fallback(env)
+                # If the reconciliation disagrees with the authoritative plan,
+                # do not show potentially stale or misleading category counts.
+                if breakdown and (
+                        breakdown.get('eligible')!=eligible
+                        or breakdown.get('listed')!=selected['count']):
+                    breakdown=None
+            return {'eligible':eligible,'module':module,
+                    'workers':workers,'provisional':True,
+                    'allowlist_active':bool(selected),
+                    'allowlist_count':selected['count'] if selected else 0,
+                    'allowlist_source':selected['source'] if selected else None,
+                    'claim_user':selected.get('claim_user') if selected else None,
+                    'claim_count':selected['count'] if module=='__claimed__' else None,
+                    'allowlist_breakdown':breakdown}
         finally:
             if module=='__claimed__':
                 Path(selected['path']).unlink(missing_ok=True)
-        if result.returncode:
-            raise ValueError('Preview unavailable: '+
-                             (result.stdout+' '+result.stderr)[-300:])
-        found=re.search(r'runnable functions \(passes are additional per run\): (\d+)',
-                        result.stdout)
-        if not found:
-            raise ValueError('Preview output could not be interpreted. No agents started.')
-        eligible=int(found.group(1))
-        breakdown=None
-        if selected:
-            match=re.search(r'^SPORE_ALLOWLIST_BREAKDOWN=(\{[^\n]*\})$',
-                            result.stdout,re.MULTILINE)
-            if match:
-                try:breakdown=json.loads(match.group(1))
-                except ValueError:pass
-            if not breakdown:
-                breakdown=self._allowlist_breakdown_fallback(env)
-            # If the reconciliation disagrees with the authoritative plan,
-            # do not show potentially stale or misleading category counts.
-            if breakdown and (
-                    breakdown.get('eligible')!=eligible
-                    or breakdown.get('listed')!=selected['count']):
-                breakdown=None
-        return {'eligible':eligible,'module':module,
-                'workers':workers,'provisional':True,
-                'allowlist_active':bool(selected),
-                'allowlist_count':selected['count'] if selected else 0,
-                'allowlist_source':selected['source'] if selected else None,
-                'claim_user':selected.get('claim_user') if selected else None,
-                'claim_count':selected['count'] if module=='__claimed__' else None,
-                'allowlist_breakdown':breakdown}
 
     def _launch_environment(self):
         """Read the current key at launch, not the dashboard's old environment.
@@ -497,7 +498,7 @@ print(json.dumps({
         with self.lock:
             self._confirm_idle()
             self.process=None  # Do not replay a previous launch failure after a new attempt.
-            selected=(self._claim_scope(data.get('claim_user')) if module=='__claimed__'
+            selected=(self._claim_scope(data.get('claim_user'),force=True) if module=='__claimed__'
                       else self._retry_allowlist(module))
             launch_env=self._launch_environment()
             # Fail before expanding queue or spawning workers if the provider
