@@ -82,6 +82,41 @@ class Controller:
         except FileNotFoundError:
             raise ValueError('SQLite not initialized. Run setup first.')
 
+    def _retry_allowlist(self,module):
+        """Resolve one explicit allowlist. All-modules dashboard runs fail closed.
+
+        The existing environment override takes priority. When no environment
+        override is present, selecting all modules automatically uses the
+        user's saved retry-all.json. Never silently expand to the whole queue.
+        """
+        configured=os.environ.get('SPORE_RETRY_ALLOWLIST','').strip()
+        fallback=self.repo/'work/scratch/codex-pass1/retry-all.json'
+        if configured:
+            path=Path(configured).expanduser().resolve()
+            source='SPORE_RETRY_ALLOWLIST'
+        elif module=='*':
+            path=fallback
+            source='retry-all.json'
+        else:
+            return None
+        if not path.is_file():
+            raise ValueError(
+                'Retry allowlist not found: '+str(path)+'. '
+                'All-modules dashboard runs require retry-all.json; '
+                'no unrestricted paid run will be started.')
+        try:
+            data=json.loads(path.read_text(encoding='utf-8'))
+        except (OSError,ValueError) as exc:
+            raise ValueError('Cannot read retry allowlist: '+str(exc)) from exc
+        if not isinstance(data,list) or not data:
+            raise ValueError('Retry allowlist must be a nonempty JSON array of addresses')
+        addresses=set()
+        for entry in data:
+            if not isinstance(entry,str) or not re.fullmatch(r'0x[0-9a-fA-F]{1,8}',entry):
+                raise ValueError('Retry allowlist contains an invalid function address')
+            addresses.add(int(entry,16))
+        return {'path':str(path),'source':source,'count':len(addresses)}
+
     def preview(self,module,workers):
         """Read-only current-queue plan. No scope --apply and no model calls.
 
@@ -93,12 +128,16 @@ class Controller:
             raise ValueError('Select a classified module from the list')
         if type(workers) is not int or not 1<=workers<=32:
             raise ValueError('workers must be between 1 and 32')
+        selected=self._retry_allowlist(module)
+        env=os.environ.copy()
+        if selected:
+            env['SPORE_RETRY_ALLOWLIST']=selected['path']
         cmd=[sys.executable,str(CLI),'plan','--repo',str(self.repo),
              '--workers',str(workers)]
         cmd+=['--all-modules'] if module=='*' else ['--module',module]
         try:
             result=subprocess.run(cmd,cwd=CLI.parent,stdin=subprocess.DEVNULL,
-                                  capture_output=True,text=True,timeout=60)
+                                  capture_output=True,text=True,timeout=60,env=env)
         except subprocess.TimeoutExpired:
             raise ValueError('Preview timed out. No agents started.')
         if result.returncode:
@@ -110,7 +149,9 @@ class Controller:
             raise ValueError('Preview output could not be interpreted. No agents started.')
         return {'eligible':int(found.group(1)),'module':module,
                 'workers':workers,'provisional':True,
-                'allowlist_active':bool(os.environ.get('SPORE_RETRY_ALLOWLIST'))}
+                'allowlist_active':bool(selected),
+                'allowlist_count':selected['count'] if selected else 0,
+                'allowlist_source':selected['source'] if selected else None}
 
     def _launch_environment(self):
         """Read the current key at launch, not the dashboard's old environment.
@@ -164,7 +205,10 @@ class Controller:
         with self.lock:
             self._confirm_idle()
             self.process=None  # Do not replay a previous launch failure after a new attempt.
+            selected=self._retry_allowlist(module)
             launch_env=self._launch_environment()
+            if selected:
+                launch_env['SPORE_RETRY_ALLOWLIST']=selected['path']
             # Scope selection can add functions but never deletes historical work.
             scope=[sys.executable,str(CLI),'scope','--repo',str(self.repo)]
             scope+=['--all-modules'] if module=='*' else ['--module',module]
@@ -194,7 +238,9 @@ class Controller:
                 'passes':values['passes'],
                 'idle_minutes':values['minutes'],
                 'budget_usd':values['budget'],
-                'allowlist_active':bool(launch_env.get('SPORE_RETRY_ALLOWLIST'))
+                'allowlist_active':bool(selected),
+                'allowlist_count':selected['count'] if selected else 0,
+                'allowlist_source':selected['source'] if selected else None
             }
             return {'started':True,'controller_pid':self.process.pid,'module':module}
 
@@ -210,7 +256,8 @@ class Controller:
             return {'running':bool(active),
                     'pid':active[0] if active else None,
                     'external':bool(active),'returncode':None,
-                    'next_launch_allowlist':bool(os.environ.get('SPORE_RETRY_ALLOWLIST'))}
+                    'next_launch_allowlist':bool(os.environ.get('SPORE_RETRY_ALLOWLIST')),
+                    'allowlist_available':(self.repo/'work/scratch/codex-pass1/retry-all.json').is_file()}
         rc=self.process.poll()
         # A dashboard-owned CLI can have already exited while its spawned
         # coordinator is still active. Keep Stop available until all finish.
@@ -220,6 +267,7 @@ class Controller:
               'external':bool(active) and rc is not None,
               'returncode':None if running else rc,
               'next_launch_allowlist':bool(os.environ.get('SPORE_RETRY_ALLOWLIST')),
+              'allowlist_available':(self.repo/'work/scratch/codex-pass1/retry-all.json').is_file(),
               'settings':self.launch_settings}
         if not running and rc is not None and rc != 0:
             from spore_dashboard_data import sanitize
