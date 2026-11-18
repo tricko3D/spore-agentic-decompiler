@@ -36,7 +36,7 @@ def serve(repo:Path,port:int=8765,control:bool=False):
             self.send_header('Referrer-Policy','no-referrer')
             self.send_header('X-Frame-Options','DENY')
             self.send_header('Content-Security-Policy',
-                 "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'")
+                 "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src 'self' https://media.contentapi.ea.com; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'")
             self.end_headers()
             try:self.wfile.write(body)
             except (BrokenPipeError,ConnectionResetError):pass
@@ -51,6 +51,30 @@ def serve(repo:Path,port:int=8765,control:bool=False):
             params=parse_qs(route.query)
             try:
                 if route.path=='/':return self.respond(html,html_page=True)
+                if route.path=='/wallpaper':
+                    # Local user-supplied background. Do not serve arbitrary paths
+                    # or expose other checkout files through the dashboard.
+                    options = (
+                        ('sad_background.webp','image/webp'),
+                        ('sad_background.png','image/png'),
+                        ('sad_background.jpg','image/jpeg'),
+                    )
+                    for filename,media_type in options:
+                        target = Path(__file__).resolve().with_name(filename)
+                        if target.is_file():
+                            if target.stat().st_size > 20_000_000:
+                                return self.respond({'error':'Wallpaper exceeds 20 MB'},413)
+                            content=target.read_bytes()
+                            self.send_response(200)
+                            self.send_header('Content-Type',media_type)
+                            self.send_header('Content-Length',str(len(content)))
+                            self.send_header('Cache-Control','no-store, max-age=0')
+                            self.send_header('X-Content-Type-Options','nosniff')
+                            self.end_headers()
+                            try:self.wfile.write(content)
+                            except (BrokenPipeError,ConnectionResetError):pass
+                            return
+                    return self.respond({'error':'No SAD wallpaper configured'},404)
                 if route.path=='/api/snapshot':
                     data=snapshot(repo)
                     if control:data['controller']=controller.state()
