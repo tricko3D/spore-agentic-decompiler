@@ -409,6 +409,23 @@ def prepare(repo, out, va=None, repeats=3, minimum=7, seed=20261118,
         raise
 
 
+def _vector_start_failure(logfile, explanation):
+    """Expose the actual offline service traceback, without miscounting a trial.
+
+    Startup runs before paid inference. Limit diagnostics to 30 lines/4000
+    characters and redact common credential header forms.
+    """
+    tail="(No memory-service output was recorded.)"
+    if logfile.is_file():
+        lines=logfile.read_text(encoding="utf-8",errors="replace").splitlines()
+        tail="\n".join(lines[-30:])[-4000:] or tail
+        tail=re.sub(r"(?i)(bearer\s+)[^\s,]+",r"\1[REDACTED]",tail)
+        tail=re.sub(r"(?i)(OPENROUTER_API_KEY\s*[=:]\s*)[^\s]+",
+                    r"\1[REDACTED]",tail)
+    return RuntimeError(
+        explanation+"\nMemory service log: "+str(logfile)+"\nLast output:\n"+tail)
+
+
 def _start_vectors(trial, python):
     vector_python=trial/WORK/"memory/.venv/bin/python"
     if not vector_python.is_file():
@@ -428,7 +445,8 @@ def _start_vectors(trial, python):
     sock=trial/WORK/"memory/memory.sock"
     for _ in range(60):
         if process.poll() is not None:
-            raise RuntimeError("Vector service failed; inspect "+str(logfile))
+            raise _vector_start_failure(
+                logfile, f"Vector service exited during startup (exit {process.returncode})")
         if sock.is_socket():
             try:
                 check=subprocess.run([str(python),str(trial/ENTRY),"memory",
@@ -441,7 +459,13 @@ def _start_vectors(trial, python):
                 pass
         time.sleep(1)
     process.terminate()
-    raise RuntimeError("Vector service did not become ready; no paid agent was started")
+    try:
+        process.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        process.kill()
+        process.wait()
+    raise _vector_start_failure(
+        logfile, "Vector service did not become ready; no paid agent was started")
 
 
 def _python(trial):

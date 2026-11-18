@@ -96,6 +96,21 @@ def run_one():
             db.execute("INSERT INTO compiler_technique_links VALUES(?,?,?,?)",
                        (10,1,f"Observed at {VA}","stack-frame mismatch"))
 
+    def test_memory_startup_diagnostics_show_bounded_traceback_and_redact_keys(self):
+        logfile=self.base/"memory-service.log"
+        logfile.write_text(
+            "Loading copied embeddings\n"
+            "OPENROUTER_API_KEY=verysecret\n"
+            "Authorization: Bearer secondsecret\n"
+            "RuntimeError: model cache not found\n",encoding="utf-8")
+        message=str(bench._vector_start_failure(
+            logfile,"Vector service exited during startup (exit 1)"))
+        self.assertIn("model cache not found",message)
+        self.assertIn(str(logfile),message)
+        self.assertIn("exit 1",message)
+        self.assertNotIn("verysecret",message)
+        self.assertNotIn("secondsecret",message)
+
     def test_safe_entrypoint_does_not_shadow_python_dis_module(self):
         workspace=self.base/"collision"
         scratch=workspace/"work/scratch"

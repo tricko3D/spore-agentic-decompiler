@@ -77,6 +77,8 @@ The benchmark now launches the runner, Brain queries and memory service through 
 
 ### Infrastructure failures and retry
 
+The Brain service is a strict, offline dependency for raw, consolidated and placebo arms. If its subprocess exits before socket readiness, the harness does not invoke any paid agent and now prints a bounded, credential-redacted tail of `work/scratch/codex-pass1/benchmark-memory-service.log` directly in the terminal. The full log remains in that trial's directory, and the startup traceback is required to identify the actual failure, whether model-cache loading, sqlite-vec, import errors, or another issue.
+
 A nonzero runner exit or a zero exit without a recorded attempt is an **invalid trial**, not a FAIL or a zero MATCH in the experimental denominator. The runner prints a bounded diagnostic tail. The complete `benchmark-run.log` is retained in the original sandbox:
 
 ```bash
