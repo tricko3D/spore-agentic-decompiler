@@ -176,6 +176,20 @@ class MemoryTests(unittest.TestCase):
         self.assertEqual(svc.index_once(), 0)
         self.assertEqual(svc.search("EAX ABI stack cleanup", 1)[0]["va"], VA)
 
+    def test_pinned_fastembed_api_and_model_registry(self):
+        try:
+            from fastembed import TextEmbedding
+        except ImportError:
+            self.skipTest("FastEmbed is optional in stdlib-only tests")
+        import inspect
+        parameters = inspect.signature(TextEmbedding).parameters
+        self.assertIn("threads", parameters)
+        self.assertIn("cuda", parameters)
+        supported = TextEmbedding.list_supported_models()
+        found = [row for row in supported if row.get("model") == mem.MODEL]
+        self.assertEqual(len(found), 1)
+        self.assertEqual(found[0].get("dim"), mem.DIM)
+
     def test_runner_integration_and_independent_install_location(self):
         engine = (ROOT / "engine/spore_provider_fix/work/scratch/spore_first_pass_sqlite.py").read_text()
         setup = (ROOT / "spore_agentic.py").read_text()
