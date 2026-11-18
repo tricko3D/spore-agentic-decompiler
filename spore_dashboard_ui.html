@@ -487,6 +487,63 @@ html,body,.grid,.table-scroll,.drawer,.timeline,.control-status{
   overflow:hidden;
  }
 }
+
+/* Latest-run summary distinguishes activity from cumulative queue progress. */
+.controls-pane .run-heading{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.controls-pane .run-heading h2{flex:0 1 auto}
+.run-state{
+ margin-left:auto;
+ border:1px solid #789eb9;
+ border-radius:12px;
+ padding:3px 9px;
+ background:#173751;
+ color:#d2e5f3;
+ font-size:11px;
+ font-weight:800;
+ white-space:nowrap;
+}
+.run-state-running{color:#c8efaa;background:#27523e;border-color:#83c58a}
+.run-state-completed{color:#bde5f6;background:#23516b;border-color:#83bdd9}
+.run-state-ended{color:#f6dca4;background:#625033;border-color:#d7b576}
+.run-state-inactive{color:#c4d3df;background:#243b4b;border-color:#8199ab}
+.run-state-none{color:#a9becd;background:#193249;border-color:#5d819a}
+.controls-pane .run-block{margin-top:8px;padding-top:8px}
+.controls-pane .run-subtitle{color:#b1cce0;font-size:11px;margin:5px 0 10px}
+.controls-pane .run-heading-row{display:flex;align-items:center;justify-content:space-between;gap:8px;margin:12px 0 6px;flex-wrap:wrap}
+.controls-pane .run-heading-row h3{font-size:12px;color:#e3f3fc}
+.controls-pane .run-heading-row .small{font-size:10px}
+.run-outcomes{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:5px}
+.run-outcome{
+ display:flex;flex-direction:column;gap:2px;
+ min-width:0;
+ padding:9px 6px 8px;
+ background:linear-gradient(#23425d,#102940);
+ border:1px solid #557995;
+ border-radius:9px;
+ box-shadow:inset 0 1px #b7d9e733;
+ font-variant-numeric:tabular-nums;
+}
+.run-outcome span{color:#b6d0e0;font-size:10px}
+.run-outcome strong{font-size:23px;line-height:1.18}
+.run-outcome small{font-size:9px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:#9cbad0}
+.run-outcome.run-match strong{color:#a3e99e}
+.run-outcome.run-fail strong{color:#ffb8b4}
+.run-outcome.run-defer strong{color:#f1d38c}
+.run-outcome.run-skip strong{color:#d5c7ff}
+.run-outcome.run-pending strong{color:#a5c5d8}
+.run-outcome-track{
+ display:flex;height:9px;margin-top:9px;
+ border:1px solid #7296ae;border-radius:10px;overflow:hidden;background:#10253c;
+}
+.run-outcome-track span{height:100%;transition:width .15s linear}
+.run-completion-track{height:8px!important;margin:4px 0 9px!important;border:1px solid #6a92a6}
+.run-completion-track span{background:linear-gradient(#a5daf8,#4789c1)!important}
+.run-note{color:#a8c4d4;font-size:11px;line-height:1.3}
+@media(max-width:580px){
+ .run-outcomes{grid-template-columns:repeat(3,minmax(0,1fr))}
+ .run-outcome{padding:7px}
+}
+@media(prefers-reduced-motion:reduce){.run-outcome-track span{transition:none}}
 </style></head>
 <body>
 <div class="game-shell">
@@ -512,14 +569,21 @@ html,body,.grid,.table-scroll,.drawer,.timeline,.control-status{
      <div class="subhead"><h3>Failed attempts</h3><span class="small">Latest function outcome</span></div>
      <div class="efforts" id="efforts"></div>
     </div>
-    <div class="controls-pane"><div class="pane-title"><span class="bubble-glyph" aria-hidden="true">◌</span><h2>Current expedition</h2></div>
-     <div class="run-block">
-      <h3>Run progress</h3>
-      <div id="runStats" class="mono small">No run recorded</div>
-      <div class="mini-bar"><span id="runProgress" style="width:0%"></span></div>
-      <div class="small" id="runPercent">—</div>
-     </div>
-<p class="note">Attempt history is preserved across runs.</p>
+    <div class="controls-pane"><div class="pane-title run-heading">
+     <span class="bubble-glyph" aria-hidden="true">◌</span>
+     <h2 id="expeditionTitle">Last expedition</h2>
+     <span class="run-state" id="runState">No run</span>
+    </div>
+    <div class="run-block">
+     <div id="runStats" class="mono small">No run recorded</div>
+     <div id="runActivity" class="run-subtitle">No agents running</div>
+     <div class="run-heading-row"><h3>Results from this run</h3><span class="small">Latest valid result per assigned function</span></div>
+     <div id="runOutcomes" class="run-outcomes" aria-label="Run results"></div>
+     <div id="runOutcomeTrack" class="run-outcome-track" aria-label="Run result distribution"></div>
+     <div class="run-heading-row"><h3>Targets resolved or exhausted</h3><span class="small" id="runPercent">No run</span></div>
+     <div class="mini-bar run-completion-track"><span id="runProgress" style="width:0%"></span></div>
+     <div id="runNote" class="run-note">Attempt history is preserved across runs.</div>
+    </div>
     </div>
    </div>
   </section></div>
@@ -623,7 +687,29 @@ function render(d){
  $('statusTrack').innerHTML=portions.map(([n,v,col])=>`<span title="${n}: ${v}" style="width:${100*v/denom}%;background:${col}"></span>`).join('');$('legend').innerHTML=portions.map(([n,v,col])=>`<span><b style="color:${col}">●</b> ${n} <b>${v}</b> · ${bytes(sz[n]||0)}</span>`).join('');
  $('costGrid').innerHTML=['MATCH','FAIL','DEFER'].map(n=>{let z=d.costs?.[n]||{};return `<div class="outcome"><div class="small">${n} · ${z.functions||0} functions · ${bytes(sz[n]||0)}</div><div class="value">${z.covered?fmt(z.per_function):'Unavailable'}</div><div class="small">Captured: ${fmt(z.cost)} · ${z.covered||0}/${z.attempts||0} pass logs with costs</div></div>`}).join('');
  const max=Math.max(1,...Object.values(d.effort||{}));$('efforts').innerHTML=Object.entries(d.effort||{}).map(([n,v])=>`<div><span class="small">${n}</span><b>${v}</b><span class="small">${bytes((d.effort_bytes||{})[n]||0)}</span><div class="mini-bar"><span style="width:${100*v/max}%"></span></div></div>`).join('');
- let done=r.completed||0,targets=r.targets||0;set('runStats',`${r.id||'No run'} · ${r.live_workers||0}/${r.workers||0} agents live · ${c.claims||0} claimed · ${c.incidents||0} provider incidents`);$('runProgress').style.width=(targets?Math.min(100,100*done/targets):0)+'%';set('runPercent',`${done}/${targets} targets complete or exhausted · ${bytes(r.bytes_completed||0)} / ${bytes(r.bytes_target||0)} · ${c.void_provider||0} archived provider passes`);
+ const targets=r.targets||0, done=r.completed||0, runState=r.state||'none';
+ const runLabels={running:'Running',completed:'Completed',ended:'Ended early',inactive:'Not running',none:'No run'};
+ $('runState').textContent=runLabels[runState]||'Not running';
+ $('runState').className='run-state run-state-'+runState;
+ set('expeditionTitle',runState==='running'?'Current expedition':'Last expedition');
+ set('runStats',r.id||'No run recorded');
+ const currentWorkers=r.live_workers||0;
+ const finishedText=r.finished_at?new Date(r.finished_at).toLocaleString(undefined,{dateStyle:'medium',timeStyle:'short',timeZone:'UTC'})+' UTC':null;
+ set('runActivity',runState==='running'
+   ?`${currentWorkers} of ${r.workers||0} workers online`
+   :runState==='completed'?`Finished ${finishedText||'on record'}, all targets resolved`
+   :runState==='ended'?`Finished ${finishedText||'on record'}, some targets unprocessed`
+   :runState==='inactive'?'No active workers, run has no completion record'
+   :'No previous run');
+ const runOutcomes=r.outcomes||{},runBytes=r.outcome_bytes||{};
+ const choices=[['MATCH','Match'],['FAIL','Fail'],['DEFER','Defer'],['SKIP','Skip'],['PENDING','Untouched']];
+ const colors={MATCH:'#8fe489',FAIL:'#ee9aa5',DEFER:'#f1d38c',SKIP:'#baafe9',PENDING:'#607b93'};
+ $('runOutcomes').innerHTML=choices.map(([key,label])=>`<div class="run-outcome run-${key.toLowerCase()}"><span>${label}</span><strong>${runOutcomes[key]||0}</strong><small>${bytes(runBytes[key]||0)}</small></div>`).join('');
+ $('runOutcomeTrack').innerHTML=choices.map(([key])=>`<span title="${key}: ${runOutcomes[key]||0} targets, ${bytes(runBytes[key]||0)}" style="width:${targets?100*(runOutcomes[key]||0)/targets:0}%;background:${colors[key]}"></span>`).join('');
+ $('runProgress').style.width=(targets?Math.min(100,100*done/targets):0)+'%';
+ set('runPercent',targets?`${done} / ${targets} · ${bytes(r.bytes_completed||0)} of ${bytes(r.bytes_target||0)}`:'No targets');
+ set('runNote',r.id?`${r.valid_attempts||0} valid attempts · ${r.archived_provider||0} archived provider passes · ${r.provider_incidents||0} provider incidents`:'Previous attempts and results appear here after a run.');
+
  set('liveCount',`${r.live_workers||0} / ${r.workers||0} online`);
  let work=d.workers||[];
  $('agents').innerHTML=work.length?work.map(w=>{let list=(w.stream||[]).slice(-3);let state=!w.alive?'offline':w.phase==='VERIFIED'?'verified':w.phase==='NO SLOT'?'no-slot':w.phase==='PROBING'?'probing':'idle';return `<button class="agent ${state}" data-worker="${w.worker}"><header><strong>Agent ${String(w.worker).padStart(2,'0')}</strong><span class="tag ${state}">${esc(!w.alive?'OFFLINE':w.phase||'UNKNOWN')}</span></header><div class="small mono worker-address">${esc(w.current||w.last_function||'Idle / waiting')}<span class="worker-meta">${w.bytes==null?'—':bytes(w.bytes)} · PID ${esc(w.pid)}</span></div><div class="mini-stream">${list.length?list.map(e=>`<div class="t"><span class="blue">${esc(e.kind)}</span> ${esc(e.message.slice(0,140))}</div>`).join(''):'<span class="muted">'+esc(w.phase==='NO SLOT'?'No active inference (waiting or checking)':w.phase==='IDLE'?'No active function':'Waiting for first output tokens')+'</span>'}</div></button>`}).join(''):'<div class="empty">No agents in the latest run</div>';
