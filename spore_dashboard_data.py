@@ -407,7 +407,7 @@ def snapshot(repo):
         budget={'spend':max(0,b['last_usage']-b['baseline_usage']) if b else None,
                 'run_spend':max(0,rb['last_usage']-rb['baseline_usage']) if rb else None,
                 'run_limit':rb['budget_limit'] if rb else None,
-                'inflight':scalar('SELECT COALESCE(SUM(amount),0) FROM reservations WHERE run_id=?',(rid,))
+                'inflight':scalar('SELECT COALESCE(SUM(amount),0) FROM reservations WHERE run_id=?',rid)
                             if rid else 0.0}
         events=[]
         for r in db.execute('''SELECT va,status,utc,worker_idx,id FROM attempts
