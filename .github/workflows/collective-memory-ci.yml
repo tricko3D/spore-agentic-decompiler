@@ -12,6 +12,7 @@ on:
       - "engine/spore_provider_fix/work/scratch/spore_progress_watch.py"
       - "spore_agentic.py"
       - "install_collective_memory.sh"
+      - "enable_automatic_consolidation.sh"
       - "tests/test_collective_memory.py"
       - "tests/test_investigation_evidence.py"
       - ".github/workflows/collective-memory-ci.yml"
@@ -33,6 +34,7 @@ jobs:
         run: |
           python -m compileall -q engine/spore_provider_fix/work/scratch tests spore_agentic.py
           bash -n install_collective_memory.sh
+          bash -n enable_automatic_consolidation.sh
       - name: Install pinned local embedding packages without downloading weights
         run: python -m pip install --disable-pip-version-check 'sqlite-vec==0.1.9' 'fastembed==0.9.1'
       - name: Test independent SQLite knowledge and vector retrieval
