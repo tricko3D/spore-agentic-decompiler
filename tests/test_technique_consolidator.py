@@ -129,6 +129,10 @@ class ConsolidationTests(unittest.TestCase):
         self.assertEqual(newer["problem"],original_problem)
         self.assertEqual({x["va"] for x in newer["sources"]}, {VA,OTHER})
         self.assertEqual(tech.status(self.root)["techniques"],1)
+        memory_hits = tech.memory.technique_query(self.root,"EAX EDX ABI",1)
+        self.assertEqual(len(memory_hits),1)
+        self.assertTrue(any("Compiled size 532 versus 499" in
+                            link.get("observation","") for link in memory_hits[0]["sources"]))
 
     def test_unsupported_existing_id_and_category_are_rejected(self):
         with tech.memory.connection(self.root) as con:
