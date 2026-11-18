@@ -222,9 +222,30 @@ def _finding(con, finding_id):
     return dict(finding), evidence[:3600]
 
 
-def make_prompt(con, finding_id):
+def make_prompt(con, finding_id, repo=None):
     finding, evidence = _finding(con, finding_id)
-    similar = candidates(con, finding["summary"] + " " + finding["details"][:300], top=5)
+    lookup = finding["summary"] + " " + finding["details"][:300]
+    similar = candidates(con, lookup, top=5)
+    # When local FastEmbed is online, broaden the shortlist to semantically
+    # related techniques. The OpenRouter consolidator does not do embedding
+    # inference and never contacts an external embedding service.
+    if repo is not None:
+        seen = {x["id"] for x in similar}
+        try:
+            for hit in memory.technique_query(repo, lookup[:1100], limit=5):
+                ident = hit.get("id")
+                if type(ident) is not int or ident in seen:
+                    continue
+                row = con.execute(
+                    "SELECT * FROM compiler_techniques WHERE id=?", (ident,)).fetchone()
+                if row:
+                    similar.append(dict(row))
+                    seen.add(ident)
+                if len(similar) >= 5:
+                    break
+        except (OSError, ValueError, sqlite3.Error):
+            pass
+    similar = similar[:5]
     known = [{"id":x["id"], "title":x["title"], "category":x["category"],
               "problem":x["problem"][:220], "conditions":x["conditions"][:170]}
              for x in similar]
@@ -506,7 +527,7 @@ def process(repo, *, max_items=4, daily_usd=0.15, caller=call_deepseek, key=None
                             lease_utc=NULL WHERE finding_id=?""", (finding_id,))
                     break
                 try:
-                    finding,evidence,known,prompt = make_prompt(con,finding_id)
+                    finding,evidence,known,prompt = make_prompt(con,finding_id,repo)
                     if key is None:
                         key = _get_key()
                     response, usage = caller(key,prompt)
@@ -631,7 +652,7 @@ def main(argv=None):
                 WHERE state='pending' ORDER BY finding_id LIMIT ?""",
                 (max(1,min(10,args.top)),)).fetchall()
             for x in rows:
-                finding,evidence,known,prompt=make_prompt(con,x["finding_id"])
+                finding,evidence,known,prompt=make_prompt(con,x["finding_id"],args.repo)
                 print(f"Finding {x['finding_id']} {finding['va']}: "
                       f"{len(prompt)} input characters; "
                       f"{len(known)} possible existing techniques")
