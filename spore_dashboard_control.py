@@ -117,7 +117,7 @@ class Controller:
         with self.lock:
             if not path.is_file():
                 return {'path':str(path),'source':source,'exists':False,
-                        'revision':'missing','content':'[\n]\n','addresses':[],
+                        'revision':'missing','content':'[\n]\n',
                         'count':0,'valid':False,
                         'validation_error':'No list exists. Enter at least one address to create it.'}
             raw=path.read_bytes()
@@ -135,7 +135,7 @@ class Controller:
                 error=str(exc)
             return {'path':str(path),'source':source,'exists':True,
                     'revision':hashlib.sha256(raw).hexdigest(),
-                    'content':content,'addresses':addresses,
+                    'content':content,
                     'count':len(addresses),'valid':error is None,
                     'validation_error':error}
 
