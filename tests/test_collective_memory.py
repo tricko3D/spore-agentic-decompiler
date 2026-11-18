@@ -210,6 +210,15 @@ class MemoryTests(unittest.TestCase):
             {"type": "tool_use", "part": {"state": {"status": "completed",
                 "input": {"command": f".venv/bin/python tools/contrib/check.py {va} --flags '/O2 /MD /Gy'"},
                 "output": "NO MATCH 0x00e61d90 [O2]\nsize=144/144 diffs=3 offsets=0x04,0x07"}}},
+            {"type": "tool_use", "part": {"state": {"status": "completed",
+                "input": {"command": f".venv/bin/python tools/contrib/check.py {va}"},
+                "output": "(no output)"}}},
+            {"type": "tool_use", "part": {"state": {"status": "completed",
+                "input": {"command": f".venv/bin/python tools/contrib/check.py {va}"},
+                "output": "+mov ecx, dword ptr [esp + 4]\\n-mov edx, eax"}}},
+            {"type": "tool_use", "part": {"state": {"status": "completed",
+                "input": {"command": f".venv/bin/python tools/contrib/check.py {va}"},
+                "output": "NO MATCH 0x00672db0 symbol [/O2]\\nsize=144/144 diffs=0"}}},
             {"type": "tool_use", "part": {"state": {"status": "running",
                 "input": {"command": f".venv/bin/python tools/contrib/check.py {va}"},
                 "output": "size=144/144 diffs=0"}}},
@@ -269,6 +278,55 @@ class MemoryTests(unittest.TestCase):
         self.assertEqual(db_path.read_bytes(), before)
         with mem.connection(self.root) as con:
             self.assertEqual(con.execute("SELECT count(*) FROM finding_experiments").fetchone()[0], 2)
+
+    def test_false_shell_check_outputs_are_never_indexed(self):
+        """Empty shell output and raw disassembly are not checker verdicts."""
+        log = self._write_tool_log()
+        checks = mem.evidence.parse_experiments(log, VA, self.root)
+        self.assertEqual(len(checks), 2)
+        self.assertEqual([e["diff_bytes"] for e in checks], [12, 3])
+        self.assertNotIn("(no output)", mem.evidence.experiment_brief(checks))
+        self.assertNotIn("+mov ecx", mem.evidence.experiment_brief(checks))
+
+    def test_reimport_purges_old_false_checker_records(self):
+        log = self._write_tool_log()
+        self.add(note="EAX register allocation")
+        with mem.connection(self.root) as con:
+            finding_id = con.execute("SELECT id FROM findings").fetchone()[0]
+            con.execute("""INSERT INTO finding_experiments(
+                finding_id,ordinal,command,flags,size_compiled,size_retail,
+                diff_bytes,offsets,result) VALUES(?,1,?, '',NULL,NULL,NULL,'',?)""",
+                (finding_id, ".venv/bin/python tools/contrib/check.py "+VA, "(no output)"))
+        # Reingesting a log with only invalid result text must purge obsolete rows
+        # without altering the underlying operational SQLite history.
+        log.write_text(json.dumps({"type":"tool_use","part":{"state":{
+            "status":"completed","input":{"command":".venv/bin/python tools/contrib/check.py "+VA},
+            "output":"(no output)"}}})+"\n")
+        mem.ingest(self.root, VA, 1, "FAIL", note="EAX register allocation",
+                   checker="NO MATCH size=138/144", log_path=str(log),
+                   evidence_path=str(self.evidence.relative_to(self.root)))
+        with mem.connection(self.root) as con:
+            count = con.execute("SELECT COUNT(*) FROM finding_experiments").fetchone()[0]
+        self.assertEqual(count, 0)
+
+    def test_compact_output_preserves_all_four_evidence_paths(self):
+        rows = [
+            {"va": "0x%08x" % (0xe61b90 + index),
+             "pass": 2, "verified_match": False,
+             "summary": "Register allocation and internal calling convention. " * 20,
+             "experiments": [
+                "#3: flags /O2 /MD /Gy, size 532/499",
+                "#4: flags /O2 /MD, size 512/499",
+                "#5: flags /O2 /MD /arch:SSE, size 500/499"],
+             "evidence_path": "work/scratch/codex-pass1/investigations/test" + str(index)}
+            for index in range(4)
+        ]
+        output = mem.print_findings(rows, max_chars=2000)
+        self.assertLessEqual(len(output), 2000)
+        self.assertEqual(output.count("[UNMATCHED EXPERIMENT]"), 4)
+        for index in range(4):
+            self.assertIn("investigations/test" + str(index), output)
+        self.assertFalse(output.rstrip().endswith("register"))
 
     def test_verified_only_does_not_invent_relevant_success(self):
         self.add(note="EAX caller register allocation")
