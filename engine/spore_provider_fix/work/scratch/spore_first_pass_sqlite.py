@@ -1363,7 +1363,8 @@ def process(minutes, unsafe, backend, quota_wait, max_functions,
                     collective_memory.ingest(
                         ROOT, va, pass_number, outcome[0],
                         note=outcome[2], checker=check_note,
-                        evidence_path=str(evidence) if evidence else '')
+                        evidence_path=str(evidence) if evidence else '',
+                        log_path=str(log) if log else None)
                 except Exception as exc:
                     print(f'  Shared memory note skipped: {type(exc).__name__}: {str(exc)[:120]}',
                           flush=True)
