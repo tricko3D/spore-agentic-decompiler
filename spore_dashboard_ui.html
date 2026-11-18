@@ -677,6 +677,23 @@ html,body,.grid,.table-scroll,.drawer,.timeline,.control-status{
  overflow-y:auto;
 }
 .run-exit-detail[hidden]{display:none!important}
+
+/* Claimant scope is selected inside the existing mission brief. */
+.mission-claimant-row{
+ display:flex;align-items:center;flex-wrap:wrap;gap:8px;
+ padding:7px 9px;margin:6px 0 9px;
+ border:1px solid #6b9db5;border-radius:10px;
+ background:#112b44bb;
+}
+.mission-claimant-row[hidden]{display:none!important}
+.mission-claimant-row label{flex:0 0 auto;color:#c7e6f4;font-size:11px;font-weight:700}
+.mission-claimant-row select{
+ flex:1 1 155px;min-width:125px;max-width:270px;
+ height:30px;border-radius:9px;padding:4px 7px;
+ background:#122d45;color:#e6f4ff;
+ border:1px solid #87b6cf;font-size:12px;
+}
+.mission-claimant-hint{font-size:10px;color:#acd0e0;line-height:1.35;flex:1 1 160px}
 </style></head>
 <body>
 <div class="game-shell">
@@ -715,6 +732,13 @@ html,body,.grid,.table-scroll,.drawer,.timeline,.control-status{
      </div>
     </div>
      <p class="mission-goal" id="missionGoal">Prepare byte-exact matching for the selected module.</p>
+     <div class="mission-claimant-row" id="claimantRow" hidden>
+      <label for="claimantSelect">Claimed by</label>
+      <select id="claimantSelect" aria-label="GitHub user who claimed the functions">
+       <option value="">Select GitHub user</option>
+      </select>
+      <span id="claimantHint" class="mission-claimant-hint">Choose a claimant to preview their functions.</span>
+     </div>
      <div class="mission-facts">
       <div><span>Target selection</span><strong id="missionTargets">Count determined at launch</strong></div>
       <div><span>Function history</span><strong id="missionOrigin">Unmatched and deferred</strong></div>
@@ -808,6 +832,7 @@ const bytes=x=>typeof x==='number'?new Intl.NumberFormat('en-US').format(x)+' B'
 const agreement=(x,total,status)=>!x?(status==='FAIL'||status==='DEFER'?`unknown / ${total} bytes`:'—'):x.matched!=null?`${x.matched}/${x.total} bytes`:x.kind==='size_mismatch'?`size ${x.compiled_size}/${x.retail_size} B`:'—';
 let selected=null,off=0,query='',filter='ALL',total=0,mutating=false,detailBusy=false;
 let commandPhase='idle',lastSnapshot=null,pendingLaunchSettings=null,launchRequestError='';
+let claimUsers=[],claimUser='',claimUsersError='',claimUsersBusy=false,claimUsersReady=false;
 let lastModuleValue='SPGonzago';
 let previewKey='',previewState=null,previewSerial=0,previewTimer=null;
 function set(id,v){$(id).textContent=v}
@@ -958,10 +983,45 @@ document.addEventListener('keydown',e=>{
   if(allowCanWrite())$('allowListSave').click();
  }
 });
+function renderClaimants(){
+ const picker=$('claimantSelect');
+ picker.innerHTML='<option value="">Select GitHub user</option>'+
+  claimUsers.map(item=>'<option value="'+esc(item.name)+'">'+
+   esc(item.name)+' ('+item.count+')</option>').join('');
+ picker.value=claimUsers.some(item=>item.name===claimUser)?claimUser:'';
+ picker.disabled=claimUsersBusy||!claimUsersReady;
+ const selected=claimUsers.find(item=>item.name===claimUser);
+ set('claimantHint',claimUsersBusy?'Loading upstream claims…':
+  claimUsersError?'Claims unavailable: '+claimUsersError:
+  selected?selected.count+' active claimed addresses across open PRs':
+  'Select a GitHub user to preview their open claims');
+}
+async function loadClaimants(){
+ if(claimUsersBusy)return;
+ claimUsersBusy=true;
+ claimUsersError='';
+ renderClaimants();
+ try{
+  const data=await json('/api/claimants');
+  if(!Array.isArray(data.users))throw Error('Unexpected claimant response');
+  claimUsers=data.users.filter(x=>x&&typeof x.name==='string'&&Number.isInteger(x.count));
+  claimUsersReady=true;
+  if(!claimUsers.some(x=>x.name===claimUser))claimUser='';
+ }catch(e){
+  claimUsersError=e.message||'Could not load upstream claims';
+  claimUsersReady=false;
+ }finally{
+  claimUsersBusy=false;
+  renderClaimants();
+  if(lastSnapshot)renderMission(lastSnapshot);
+  scheduleMissionPreview();
+ }
+}
 function missionSelection(){
  return {
   // Allow list is an actual run scope, not a temporary dropdown action.
   module:$('module').value||lastModuleValue,
+  claim_user:claimUser,
   workers:+$('workersInput').value,
   max_inflight:+$('inflightInput').value,
   passes:+$('passesInput').value,
@@ -971,7 +1031,12 @@ function missionSelection(){
 }
 function scheduleMissionPreview(){
  if(!CONTROL||mutating||commandPhase==='starting'||commandPhase==='running'||commandPhase==='stopping'||runCoordinatorActive(lastSnapshot))return;
- const selected=missionSelection(),key=selected.module+'|'+selected.workers;
+ const selected=missionSelection(),key=selected.module+'|'+(selected.module==='__claimed__'?selected.claim_user:'')+'|'+selected.workers;
+ if(selected.module==='__claimed__'&&!selected.claim_user){
+  previewKey='';previewState=null;
+  if(previewTimer)clearTimeout(previewTimer);
+  return;
+ }
  if(!selected.workers||selected.workers<1||selected.workers>32||previewKey===key)return;
  previewKey=key;previewState={key,loading:true};
  const ticket=++previewSerial;
@@ -979,7 +1044,8 @@ function scheduleMissionPreview(){
  if(lastSnapshot)renderMission(lastSnapshot);
  previewTimer=setTimeout(async()=>{
   try{
-   const plan=await json('/api/plan?module='+encodeURIComponent(selected.module)+'&workers='+selected.workers);
+   const plan=await json('/api/plan?module='+encodeURIComponent(selected.module)+
+    '&workers='+selected.workers+'&claim_user='+encodeURIComponent(selected.claim_user||''));
    if(ticket!==previewSerial)return;
    previewState={key,...plan};
   }catch(e){
@@ -996,10 +1062,16 @@ function renderMission(d){
  const preparing=commandPhase==='starting'||(active&&!assigned);
  const config=assigned?(controller.external?{}:(controller.settings||{})):
    (preparing?(pendingLaunchSettings||missionSelection()):missionSelection());
- const scope=config.module==='__allowlist__'?
+ const scope=config.module==='__claimed__'?
+   'currently claimed functions for '+(config.claim_user||'a selected GitHub user')+
+   ', across all classified modules':
+   config.module==='__allowlist__'?
    'addresses in the active allow list, across all classified modules':
    config.module==='*'?'all confidently classified modules':
    (config.module||'the selected module scope');
+ const choosingClaimant=missionSelection().module==='__claimed__';
+ $('claimantRow').hidden=!choosingClaimant;
+ if(choosingClaimant)renderClaimants();
  const editVisible=missionSelection().module==='__allowlist__';
  const editButton=$('missionEditAllowList');
  editButton.setAttribute('aria-hidden',editVisible?'false':'true');
@@ -1007,9 +1079,11 @@ function renderMission(d){
  set('missionStage',assigned?'Assigned targets':preparing?'Preparing run':'Next launch');
  set('missionGoal','Generate C++ candidates and independently verify byte-exact matches across '+scope+'.');
  const count=assigned?r.targets:null,already=r.initial_outcomes||{};
- const key=missionSelection().module+'|'+missionSelection().workers;
+ const choice=missionSelection();
+ const key=choice.module+'|'+(choice.module==='__claimed__'?choice.claim_user:'')+'|'+choice.workers;
  const shownPreview=!assigned&&!preparing&&previewState?.key===key?previewState:null;
  set('missionTargets',count!==null?count+' functions · '+bytes(r.bytes_target||0):
+  choosingClaimant&&!claimUser?'Select a claimant first':
   preparing?'Classifying targets, no inference until workers start':
   shownPreview?.loading?'Calculating eligible targets (free preview)…':
   shownPreview?.error?'Preview unavailable':
@@ -1021,6 +1095,8 @@ function renderMission(d){
  ].filter(item=>(already[item[0]]||0)>0).map(item=>already[item[0]]+' '+item[1]):[];
  set('missionOrigin',types.length?types.join(' · '):
   assigned?'Eligible functions selected':
+  missionSelection().module==='__claimed__'?
+   'Eligible, unmatched addresses claimed in open upstream PRs':
   missionSelection().module==='__allowlist__'?'Eligible, unmatched addresses from the allow list':
   'Only currently eligible, unmatched functions');
  const passes=assigned?(r.passes||config.passes):config.passes;
@@ -1041,7 +1117,13 @@ function renderMission(d){
    (controller.next_launch_allowlist || (['*','__allowlist__'].includes(config.module) && controller.allowlist_available)));
  const allowCount=assigned?controller.settings?.allowlist_count:shownPreview?.allowlist_count;
  const allowSource=assigned?controller.settings?.allowlist_source:shownPreview?.allowlist_source;
- const allowText=allow===true?
+ const allowText=config.module==='__claimed__'?
+  (config.claim_user?
+    'Only functions currently claimed by '+config.claim_user+
+    (Number.isInteger(allowCount)?' ('+allowCount+' addresses)':'')+
+    ' will be assigned. These claims are fetched from upstream and snapshotted per run':
+    'Choose a claimant first. Launch is blocked until a GitHub user is selected'):
+  allow===true?
   'Retry allowlist ON'+(Number.isInteger(allowCount)?' ('+allowCount+' addresses)':'')+
   (allowSource?' via '+allowSource:'')+'. Only listed addresses can run':
   ['*','__allowlist__'].includes(config.module)?
@@ -1052,6 +1134,12 @@ function renderMission(d){
   shownPreview&&typeof shownPreview.eligible==='number'?
    ' Preview uses the current queue; applying scope at launch can add targets.':'';
  set('missionPolicy',allowText+'. MATCH, SKIP and already manifested functions are excluded. Matching stops immediately on success.'+caveat);
+ const launch=$('runToggle');
+ if(launch.dataset.mode==='launch'){
+  const missing=choosingClaimant&&!claimUser;
+  launch.disabled=missing;
+  launch.title=missing?'Select a GitHub claimant before launching':'';
+ }
 }
 function runCoordinatorActive(d){
  const state=d?.controller||{};
@@ -1201,8 +1289,12 @@ $('controls').addEventListener('submit',e=>{
   return;
  }
  if(mode!=='launch')return;
+ if(missionSelection().module==='__claimed__'&&!claimUser){
+  set('controlMessage','Select a GitHub claimant before launching.');
+  return;
+ }
  control('start',{
-  module:missionSelection().module,workers:+$('workersInput').value,
+  module:missionSelection().module,claim_user:claimUser,workers:+$('workersInput').value,
   max_inflight:+$('inflightInput').value,passes:+$('passesInput').value,
   minutes:+$('minutesInput').value,budget:+$('budgetInput').value
  });
@@ -1288,6 +1380,7 @@ function render(d){
  const previous=selector.value||lastModuleValue;
  selector.innerHTML='<option value="*">All confidently classified</option>'+
   '<option value="__allowlist__">Allow list</option>'+
+  '<option value="__claimed__">Claimed functions</option>'+
   ['SPGonzago',...(d.modules||[])].filter((v,i,a)=>a.indexOf(v)===i)
    .map(v=>`<option value="${esc(v)}">${esc(v)}</option>`).join('');
  selector.value=[...selector.options].some(o=>o.value===previous)?previous:'SPGonzago';
@@ -1316,6 +1409,13 @@ $('module').addEventListener('change',()=>{
  if(lastSnapshot)renderMission(lastSnapshot);
  scheduleMissionPreview();
  if(selection==='__allowlist__')void openAllowList();
+ if(selection==='__claimed__')void loadClaimants();
+});
+$('claimantSelect').addEventListener('change',()=>{
+ claimUser=$('claimantSelect').value;
+ previewKey='';previewState=null;
+ if(lastSnapshot)renderMission(lastSnapshot);
+ scheduleMissionPreview();
 });
 $('missionEditAllowList').addEventListener('click',()=>{
  if(missionSelection().module==='__allowlist__')void openAllowList();
