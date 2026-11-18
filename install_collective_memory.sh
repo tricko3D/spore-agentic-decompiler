@@ -71,9 +71,43 @@ if ((NO_START)); then
   exit 0
 fi
 
-if "$PYTHON_BIN" "$SCRIPT" --repo "$REPO" status | grep -q '"service_online": true'; then
-  echo "Memory service already running."
-  exit 0
+# A long-running daemon retains imported Python code after a git pull.
+# Restart ONLY our verified memory daemon on a protocol upgrade. Never kill
+# workers or any PID whose command line does not match our exact script.
+STATUS_JSON="$("$PYTHON_BIN" "$SCRIPT" --repo "$REPO" status)"
+if grep -q '"service_online": true' <<<"$STATUS_JSON"; then
+  if grep -q '"restart_required": false' <<<"$STATUS_JSON"; then
+    echo "Compatible Collective Memory daemon already online."
+    exit 0
+  fi
+  if [[ ! -f "$HOME_DIR/service.pid" ]]; then
+    echo "Old memory daemon is online but has no PID file. Stop it manually before upgrading." >&2
+    exit 1
+  fi
+  OLD_PID="$(cat "$HOME_DIR/service.pid")"
+  if [[ ! "$OLD_PID" =~ ^[0-9]+$ || ! -r "/proc/$OLD_PID/cmdline" ]]; then
+    echo "Cannot validate existing memory PID; refusing to stop an unknown process." >&2
+    exit 1
+  fi
+  OLD_CMD="$(tr '\0' ' ' <"/proc/$OLD_PID/cmdline")"
+  if [[ "$OLD_CMD" != *"$SCRIPT"* || "$OLD_CMD" != *" serve"* ]]; then
+    echo "PID $OLD_PID is not our Collective Memory service; refusing to stop it." >&2
+    exit 1
+  fi
+  echo "Restarting outdated Collective Memory daemon (PID $OLD_PID), without affecting workers..."
+  kill -TERM "$OLD_PID"
+  OFFLINE=0
+  for _ in {1..40}; do
+    if ! "$PYTHON_BIN" "$SCRIPT" --repo "$REPO" status | grep -q '"service_online": true'; then
+      OFFLINE=1
+      break
+    fi
+    sleep 0.25
+  done
+  if ((OFFLINE == 0)); then
+    echo "Memory daemon did not stop; cannot safely launch a second instance." >&2
+    exit 1
+  fi
 fi
 
 echo "Starting one local Unix-socket embedding service..."
