@@ -3,6 +3,7 @@ import {controlsEnabled,money,post,pretty,query} from '../api';
 import {usePoll} from '../hooks';
 import {Drawer,ErrorText,Metric,Panel,Tag} from '../components/Panel';
 import BrainGraph from '../components/BrainGraph';
+import BrainSearch from '../components/BrainSearch';
 import type {BrainGraph as Graph,ConsolidatorState,Finding,FindingDetail,
   KnowledgeOverview,Paginated,Technique,TechniqueDetail} from '../types';
 
@@ -157,6 +158,8 @@ export default function Knowledge({active}:{active:boolean}){
    <Metric label="Embedding backlog" value={pretty(overview?.pending_embeddings)} detail="Local ONNX model"/>
    <Metric label="Today’s spend" value={money(overview?.daily_spend)} detail="Separate from worker spend"/>
   </div><ErrorText error={summaryError}/>
+  <BrainSearch onTechnique={id=>setSelection({kind:'technique',id})}
+   onFinding={id=>setSelection({kind:'finding',id})}/>
   <div className="knowledge-layout">
    <div className="knowledge-main">
     <Panel title="Evidence graph" subtitle="Click a technique or function; every edge represents a stored evidence link"
