@@ -101,7 +101,7 @@ def _copy_ignore(base):
                      "logs","investigations","parallel","runtime","sqlite-backups"}
         if rel==WORK/"memory":
             drop |= {"knowledge.sqlite3","knowledge.sqlite3-wal",
-                     "knowledge.sqlite3-shm","memory.sock"}
+                     "knowledge.sqlite3-shm","memory.sock",".venv"}
         for name in names:
             p=path/name
             if name=="__pycache__" or name==".DS_Store":
@@ -115,7 +115,8 @@ def _copy_ignore(base):
 def _check_symlinks(tree, original):
     # Shared virtualenv is an explicit exception, and is never modified.
     for path in tree.rglob("*"):
-        if path.is_symlink() and path.relative_to(tree)!=Path(".venv"):
+        if path.is_symlink() and path.relative_to(tree) not in {
+                Path(".venv"),WORK/"memory/.venv"}:
             resolved=path.resolve()
             if resolved.is_relative_to(original):
                 raise RuntimeError(f"Source symlink escapes the experiment into the live checkout: {path}")
@@ -233,6 +234,9 @@ def _clone(seed, destination):
     # The virtualenv is a shared dependency only, never a source workspace.
     if (seed/".venv").is_symlink():
         (destination/".venv").symlink_to(os.readlink(seed/".venv"),target_is_directory=True)
+    if (seed/WORK/"memory/.venv").is_symlink():
+        (destination/WORK/"memory/.venv").symlink_to(
+            os.readlink(seed/WORK/"memory/.venv"),target_is_directory=True)
 
 
 def prepare(repo, out, va=None, repeats=3, minimum=7, seed=20261118):
@@ -282,6 +286,9 @@ def prepare(repo, out, va=None, repeats=3, minimum=7, seed=20261118):
         _check_symlinks(seed_tree,repo)
         if (repo/".venv").is_dir():
             (seed_tree/".venv").symlink_to(repo/".venv",target_is_directory=True)
+        if (repo/WORK/"memory/.venv").is_dir():
+            (seed_tree/WORK/"memory/.venv").symlink_to(
+                repo/WORK/"memory/.venv",target_is_directory=True)
         shutil.copy2(archive/"spore.sqlite3",seed_tree/OPS)
         shutil.copy2(archive/"knowledge.sqlite3",seed_tree/KNOW)
         # Source reset only in the seed, never in the live checkout.
@@ -321,6 +328,10 @@ def prepare(repo, out, va=None, repeats=3, minimum=7, seed=20261118):
 
 
 def _start_vectors(trial, python):
+    vector_python=trial/WORK/"memory/.venv/bin/python"
+    if not vector_python.is_file():
+        raise RuntimeError("Dedicated FastEmbed/sqlite-vec venv missing in experiment copy")
+    python=vector_python
     script=trial/MEMORY
     if not (trial/KNOW).is_file():
         raise RuntimeError("Memory database is required for this treatment")
