@@ -1,7 +1,7 @@
 import {memo,useCallback,useEffect,useState} from 'react';
 import {controlsEnabled,money,post,pretty,query} from '../api';
 import {usePoll} from '../hooks';
-import {Drawer,ErrorText,Metric,Panel,Tag} from '../components/Panel';
+import {Drawer,ErrorText,Tag} from '../components/Panel';
 import GraphViewer from '../components/GraphViewer';
 import BrainSearch from '../components/BrainSearch';
 import KnowledgeDock from '../components/KnowledgeDock';
@@ -80,112 +80,175 @@ function EvidenceInspector({selection,onClose,onChoose,refresh}:{selection:Selec
  </Drawer>;
 }
 
-function Knowledge({active,overview,summaryError,refreshOverview}:{active:boolean;overview:KnowledgeOverview|null;summaryError:string;refreshOverview:()=>void}){
- const {value:graph}=usePoll<Graph>('/api/knowledge/graph?limit=35',45000,active);
+/** Brain is a bounded research workspace: summary, search, a single
+ * scrollable evidence list, and short operational status widgets.
+ * Nothing below inserts extra document height or grows after interaction.
+ */
+function Knowledge({active,overview,summaryError,refreshOverview}:{
+ active:boolean;overview:KnowledgeOverview|null;summaryError:string;refreshOverview:()=>void
+}){
  const [mode,setMode]=useState<'techniques'|'findings'>('techniques');
- const [draft,setDraft]=useState(''),[search,setSearch]=useState(''),[category,setCategory]=useState<Category>('all');
- const [status,setStatus]=useState(''),[offset,setOffset]=useState(0),[selection,setSelection]=useState<Selection|null>(null);
+ const [draft,setDraft]=useState(''),[search,setSearch]=useState('');
+ const [category,setCategory]=useState<Category>('all'),[status,setStatus]=useState('');
+ const [offset,setOffset]=useState(0);
+ const [selection,setSelection]=useState<Selection|null>(null);
  const [selectedError,setSelectedError]=useState<QueueError|null>(null);
  const [showGraph,setShowGraph]=useState(false);
+ // The graph is fetched only when actually opened, not in the main list.
+ const {value:graph}=usePoll<Graph>('/api/knowledge/graph?limit=35',45000,active&&showGraph);
  const openTechnique=useCallback((id:number)=>setSelection({kind:'technique',id}),[]);
  const openFinding=useCallback((id:number)=>setSelection({kind:'finding',id}),[]);
- useEffect(()=>{const t=window.setTimeout(()=>{setSearch(draft);setOffset(0)},300);return ()=>clearTimeout(t)},[draft]);
+ useEffect(()=>{
+  const timer=window.setTimeout(()=>{setSearch(draft);setOffset(0)},300);
+  return ()=>window.clearTimeout(timer);
+ },[draft]);
  const endpoint=mode==='techniques'?'/api/knowledge/techniques?'+query({
-   search,category:category==='all'?'':category,offset,limit:30
+  search,category:category==='all'?'':category,offset,limit:30
  }):'/api/knowledge/findings?'+query({search,status,offset,limit:30});
- const {value:list,error:listError}=usePoll<Paginated<Technique|Finding>>(endpoint,20000,active);
- const queue=overview?.queue||{},waiting=(queue.pending||0)+(queue.claimed||0);
- return <section className="knowledge-view view-body">
-  <div className="metrics knowledge-metrics">
-   <Metric label="Historical findings" value={pretty(overview?.findings)} detail={pretty(overview?.verified_matches)+' matched functions'}/>
-   <Metric label="Reusable techniques" value={pretty(overview?.techniques)} tone="tone-match" detail={pretty(overview?.links)+' evidence links'}/>
-   <Metric label="Awaiting extraction" value={pretty(waiting)} detail={pretty(queue.done)+' processed'}/>
-   <Metric label="Failed extraction" value={pretty(queue.failed||0)} tone={queue.failed?'tone-fail':''} detail="Inspectable below"/>
-   <Metric label="Embedding backlog" value={pretty(overview?.pending_embeddings)} detail="Local ONNX model"/>
-   <Metric label="Today’s spend" value={money(overview?.daily_spend)} detail="Separate from worker spend"/>
-  </div><div className="knowledge-error-banner"><ErrorText error={summaryError}/></div>
-  <BrainSearch onTechnique={openTechnique} onFinding={openFinding}/>
-  <div className="knowledge-layout">
-   <div className="knowledge-main">
-    <Panel title="Evidence graph" subtitle="Explore real source links in a separate interactive map" className="graph-launcher-panel">
-     <button type="button" className="graph-launcher" onClick={()=>setShowGraph(true)}>
-      <span><strong>Open evidence map</strong><small>{graph?.techniques?.length||0} techniques · {graph?.findings?.length||0} findings · {graph?.links?.length||0} links</small></span>
-      <span className="graph-launcher-open">Pan + zoom</span>
-     </button>
-    </Panel>
-    <Panel title="Explore the brain" subtitle="Search consolidated compiler techniques and individual investigations" className="explorer">
-     <div className="tabs"><button className={mode==='techniques'?'selected':''}
-      onClick={()=>{setMode('techniques');setOffset(0)}}>Compiler techniques</button>
-      <button className={mode==='findings'?'selected':''}
-      onClick={()=>{setMode('findings');setOffset(0)}}>Raw investigations</button></div>
-     <div className="toolbar">
-      <input className="knowledge-search" type="search" value={draft}
-       placeholder="ABI, EBX, stack frame, optimization, function address…"
-       onChange={e=>setDraft(e.target.value)}/>
-      {mode==='techniques'?<select value={category} aria-label="Technique category" onChange={e=>{setCategory(e.target.value as Category);setOffset(0)}}>
-       <option value="all">All categories</option>
-       {overview?.categories?.map(x=><option key={x.category} value={x.category}>{x.category.replaceAll('_',' ')} ({x.count})</option>)}
-       </select>:<select value={status} aria-label="Finding status" onChange={e=>{setStatus(e.target.value);setOffset(0)}}>
-         <option value="">All statuses</option><option value="MATCH">MATCH</option>
-         <option value="FAIL">FAIL</option><option value="DEFER">DEFER</option><option value="SKIP">SKIP</option>
-       </select>}
-      <span className="subtle">{pretty(list?.total)} results</span>
-     </div><ErrorText error={listError}/>
-     <div className="knowledge-results">
-      {mode==='techniques'&&list?.items?.map(row=>{
-       const x=row as Technique;
-       return <button className="knowledge-card" key={x.id} onClick={()=>setSelection({kind:'technique',id:x.id})}>
-        <div className="row-between"><span className="mono accent">TECHNIQUE #{x.id}</span><Tag value={x.evidence_level}/></div>
-        <h3>{x.title}</h3><p>{x.problem}</p>
-        <div className="row-between"><small>{x.category.replaceAll('_',' ')}</small><small>{x.source_count||0} evidence links</small></div>
-       </button>;
-      })}
-      {mode==='findings'&&list?.items?.map(row=>{
-       const x=row as Finding;
-       return <button className="knowledge-card" key={x.id} onClick={()=>setSelection({kind:'finding',id:x.id})}>
-        <div className="row-between"><span className="mono accent">{x.va} · pass {x.pass_number}</span><Tag value={x.status}/></div>
-        <h3>{x.title||'Investigation '+x.id}</h3><p>{x.summary}</p>
-        <div className="row-between"><small>{x.verified_match?'Independently verified MATCH':'Experiment / hypothesis'}</small>
-         <small>{x.technique_count||0} extracted techniques</small></div>
-       </button>;
-      })}
-      {!list?.items?.length&&<p className="empty">No results. Raw findings remain available while techniques are still being consolidated.</p>}
-     </div>
-     <div className="pager"><button disabled={offset===0} onClick={()=>setOffset(Math.max(0,offset-30))}>Previous</button>
-      <span>{pretty(offset+1)}–{pretty(Math.min(offset+30,list?.total||0))} of {pretty(list?.total)}</span>
-      <button disabled={offset+30>=(list?.total||0)} onClick={()=>setOffset(offset+30)}>Next</button></div>
-    </Panel>
+ const {value:list,error:listError,loading:listLoading}=usePoll<Paginated<Technique|Finding>>(endpoint,20000,active);
+ const queue=overview?.queue||{};
+ const waiting=(queue.pending||0)+(queue.claimed||0);
+ const queueTotal=(queue.done||0)+(queue.pending||0)+(queue.claimed||0)+(queue.failed||0);
+ const currentTotal=list?.total||0;
+ const from=currentTotal?offset+1:0;
+ const to=Math.min(offset+30,currentTotal);
+ const isTechniques=mode==='techniques';
+ return <section className="knowledge-view brain-workspace" aria-label="Collective Memory">
+  <div className="brain-kpis" aria-label="Knowledge statistics">
+   <div className="brain-kpi" title={pretty(overview?.verified_matches)+' matched source functions'}>
+    <span>Investigations</span><strong>{pretty(overview?.findings)}</strong><small>{pretty(overview?.verified_matches)} matched</small>
    </div>
-   <div className="knowledge-side">
-    <KnowledgeDock state={overview?.consolidator||null} onRefresh={refreshOverview}/>
-    <Panel title="Extraction pipeline" subtitle="Status of the independent, evidence-backed queue">
-     <div className="queue-bars">
-      {['done','claimed','pending','failed'].map(x=><div key={x} className="queue-row">
-       <span>{x}</span><strong>{pretty(queue[x]||0)}</strong>
-       <div className="mini-bar"><span className={x} style={{width:(overview?.findings?100*(queue[x]||0)/overview.findings:0)+'%'}}/></div>
-      </div>)}
-     </div>
-     <p className="subtle">An extracted technique is observed or hypothetical, not automatically proven by byte-exact matches.</p>
-    </Panel>
-    <Panel title="Recent consolidation errors" subtitle="Select one to inspect and copy its full error">
-     <div className="stack-list">{overview?.errors?.map(x=><button key={x.finding_id} className="error-record"
-      onClick={()=>setSelectedError(x)} aria-label={'Inspect error for '+x.va}>
-      <span className="row-between"><strong className="mono">{x.va}</strong><Tag value={x.state}/></span>
-      <span className="error-record-summary">{x.error||'Unknown consolidation error'}</span>
-      <small>{x.failures} failed attempts · View full error</small></button>)}
-      {!overview?.errors?.length&&<p className="subtle">No recorded consolidation errors.</p>}</div>
-    </Panel>
-
+   <div className="brain-kpi" title={pretty(overview?.links)+' source evidence links'}>
+    <span>Techniques</span><strong>{pretty(overview?.techniques)}</strong><small>{pretty(overview?.links)} links</small>
+   </div>
+   <div className="brain-kpi" title="Pending and claimed findings awaiting extraction">
+    <span>In queue</span><strong>{pretty(waiting)}</strong><small>{pretty(queue.done)} processed</small>
+   </div>
+   <div className="brain-kpi" title="Separate from agent inference spending">
+    <span>Today's spend</span><strong>{money(overview?.daily_spend)}</strong><small>Consolidation only</small>
    </div>
   </div>
+  <div className="brain-action-row">
+   <BrainSearch onTechnique={openTechnique} onFinding={openFinding}/>
+   <button type="button" className="brain-map-button" onClick={()=>setShowGraph(true)}
+    title="Open the source-linked techniques and findings map with pan and zoom">
+    Evidence map <span aria-hidden="true">↗</span>
+   </button>
+  </div>
+  <div className="brain-stage">
+   <section className="brain-list-pane" aria-label="Investigations and techniques">
+    <div className="brain-list-toolbar">
+     <div className="brain-list-tabs" role="group" aria-label="Evidence type">
+      <button type="button" className={isTechniques?'selected':''} aria-pressed={isTechniques}
+       onClick={()=>{setMode('techniques');setOffset(0)}}>Techniques</button>
+      <button type="button" className={!isTechniques?'selected':''} aria-pressed={!isTechniques}
+       onClick={()=>{setMode('findings');setOffset(0)}}>Investigations</button>
+     </div>
+     <input type="search" className="brain-list-filter" aria-label="Filter evidence list"
+      placeholder={isTechniques?'Filter techniques…':'Filter addresses and findings…'}
+      value={draft} onChange={event=>setDraft(event.target.value)}/>
+     {isTechniques
+      ?<select className="brain-list-select" value={category} aria-label="Compiler category"
+       onChange={event=>{setCategory(event.target.value as Category);setOffset(0)}}>
+       <option value="all">All categories</option>
+       {overview?.categories?.map(x=><option value={x.category} key={x.category}>
+        {x.category.replaceAll('_',' ')} ({x.count})
+       </option>)}
+      </select>
+      :<select className="brain-list-select" value={status} aria-label="Investigation outcome"
+       onChange={event=>{setStatus(event.target.value);setOffset(0)}}>
+       <option value="">All outcomes</option>
+       <option value="MATCH">MATCH</option><option value="FAIL">FAIL</option>
+       <option value="DEFER">DEFER</option><option value="SKIP">SKIP</option>
+      </select>}
+    </div>
+    <div className="brain-list-columns" aria-hidden="true">
+     <span>{isTechniques?'Technique / compiler finding':'Investigation / evidence'}</span>
+     <span>{isTechniques?'Category':'Pass'}</span>
+     <span>{isTechniques?'Evidence':'Result'}</span>
+     <span>{isTechniques?'Sources':'Links'}</span>
+    </div>
+    <div className="brain-list-scroll" aria-live="polite">
+     {isTechniques&&list?.items?.map(row=>{
+      const x=row as Technique;
+      return <button type="button" className="brain-data-row" key={'technique-'+x.id}
+       onClick={()=>setSelection({kind:'technique',id:x.id})}
+       aria-label={'Inspect technique '+x.id+': '+x.title}>
+       <span className="brain-row-main">
+        <strong title={x.title}><span className="brain-row-id mono">#{x.id}</span>{x.title}</strong>
+        <small title={x.problem}>{x.problem||'No description recorded'}</small>
+       </span>
+       <span className="brain-row-category" title={x.category}>{(x.category||'other').replaceAll('_',' ')}</span>
+       <span><Tag value={x.evidence_level}/></span>
+       <span className="brain-row-count mono">{x.source_count??0}</span>
+      </button>;
+     })}
+     {!isTechniques&&list?.items?.map(row=>{
+      const x=row as Finding;
+      return <button type="button" className="brain-data-row" key={'finding-'+x.id}
+       onClick={()=>setSelection({kind:'finding',id:x.id})}
+       aria-label={'Inspect investigation '+x.va}>
+       <span className="brain-row-main">
+        <strong><span className="brain-row-id mono">{x.va}</span>{x.title||'Investigation #'+x.id}</strong>
+        <small title={x.summary}>{x.summary||'No summary recorded'}</small>
+       </span>
+       <span className="brain-row-category mono">{x.pass_number}</span>
+       <span><Tag value={x.status}/></span>
+       <span className="brain-row-count mono">{x.technique_count??0}</span>
+      </button>;
+     })}
+     {listLoading&&<p className="brain-list-placeholder">Loading evidence…</p>}
+     {!listLoading&&!list?.items?.length&&
+      <p className="brain-list-placeholder">{listError?'Could not load evidence':'No matching evidence found'}</p>}
+    </div>
+    <div className="brain-list-footer">
+     <span className="brain-list-message">{listError||summaryError||''}</span>
+     <span className="brain-result-count mono">{pretty(from)}–{pretty(to)} of {pretty(currentTotal)}</span>
+     <button type="button" disabled={offset===0} onClick={()=>setOffset(Math.max(0,offset-30))}>Previous</button>
+     <button type="button" disabled={offset+30>=currentTotal} onClick={()=>setOffset(offset+30)}>Next</button>
+    </div>
+   </section>
+   <aside className="brain-sidebar" aria-label="Consolidation status">
+    <KnowledgeDock state={overview?.consolidator||null} onRefresh={refreshOverview}/>
+    <section className="brain-widget brain-queue-widget" aria-label="Extraction queue">
+     <div className="brain-widget-heading"><strong>Extraction queue</strong>
+      <small title="The consolidator extracts techniques independently of the agents">Source-backed</small>
+     </div>
+     <div className="brain-queue-grid">
+      {(['done','claimed','pending','failed'] as const).map(name=>
+       <div className="brain-queue-item" key={name}><span>{name}</span><strong className="mono">{pretty(queue[name]||0)}</strong></div>
+      )}
+     </div>
+     <div className="brain-queue-track" role="img"
+      aria-label={pretty(queue.done)+' processed of '+pretty(queueTotal)+' queued findings'}>
+      <span style={{width:(queueTotal?100*(queue.done||0)/queueTotal:0)+'%'}}/>
+     </div>
+     <div className="brain-queue-note">
+      <span>Embedding backlog</span><strong className="mono">{pretty(overview?.pending_embeddings)}</strong>
+     </div>
+    </section>
+    <section className="brain-widget brain-errors-widget" aria-label="Recent consolidation errors">
+     <div className="brain-widget-heading"><strong>Recent errors</strong>
+      <small>{pretty(overview?.errors?.length||0)} recorded</small>
+     </div>
+     <div className="brain-errors-list">
+      {overview?.errors?.map(e=>
+       <button type="button" className="brain-error-row" key={e.finding_id}
+        title={e.error} onClick={()=>setSelectedError(e)}>
+        <span className="brain-error-top"><strong className="mono">{e.va}</strong><Tag value={e.state}/></span>
+        <span className="brain-error-summary">{e.error||'No detail recorded'}</span>
+       </button>
+      )}
+      {!overview?.errors?.length&&<p className="brain-errors-empty">No consolidation errors</p>}
+     </div>
+    </section>
+   </aside>
+  </div>
   {selection&&<EvidenceInspector selection={selection} onChoose={setSelection}
-    onClose={()=>setSelection(null)} refresh={refreshOverview}/>}
+   onClose={()=>setSelection(null)} refresh={refreshOverview}/>}
   {selectedError&&<ErrorModal error={selectedError} onClose={()=>setSelectedError(null)}/>}
-  {showGraph&&<GraphViewer graph={graph} onTechnique={openTechnique} onFinding={openFinding} onClose={()=>setShowGraph(false)}/>}
-
+  {showGraph&&<GraphViewer graph={graph} onTechnique={openTechnique}
+   onFinding={openFinding} onClose={()=>setShowGraph(false)}/>}
  </section>;
 }
-
-// Snapshot updates happen every three seconds in the always-visible HUD.
-// Keep those agent updates from reconciling the entire Brain tree.
 export default memo(Knowledge);

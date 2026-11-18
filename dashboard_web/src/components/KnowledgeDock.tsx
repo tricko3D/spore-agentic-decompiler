@@ -1,6 +1,6 @@
 import {useEffect,useState} from 'react';
 import {controlsEnabled,money,post} from '../api';
-import {Drawer,ErrorText,Panel} from './Panel';
+import {Drawer,ErrorText} from './Panel';
 import type {ConsolidatorState} from '../types';
 
 /** Persistent consolidation controls, independent of the decompiler fleet. */
@@ -36,24 +36,28 @@ export default function KnowledgeDock({state,onRefresh}:{state:ConsolidatorState
   finally{setBusy(false)}
  }
  return <>
-  <Panel title="Knowledge consolidation" subtitle="Independent DeepSeek service" className="knowledge-service-panel">
-   <div className="knowledge-service-body">
-    <div className="knowledge-dock-state">
-    <span className={'status-dot '+(state?.active?'online':'offline')}/>
-    <div><strong>Knowledge</strong><small>{state?.active?'ONLINE':state?.installed?'OFFLINE':'NOT CONFIGURED'}</small></div>
+  <section className="brain-widget brain-service-widget" aria-label="Knowledge consolidation">
+   <div className="brain-widget-heading">
+    <strong>Consolidator</strong>
+    <span className="brain-service-state"><span className={'status-dot '+(state?.active?'online':'offline')}/>
+     {state?.active?'Online':state?.installed?'Offline':'Not configured'}
+    </span>
    </div>
-   <span className="knowledge-dock-limit" title="Daily consolidation budget">{state?money(state.settings.daily_usd)+'/day':'No service'}</span>
-   <div className="knowledge-dock-actions">
-    <button type="button" disabled={!available||busy||Boolean(state?.active)}
-     onClick={()=>void control('start')}>Start</button>
-    <button type="button" disabled={!available||busy||!state?.active}
-     onClick={()=>void control('stop')}>Pause</button>
-    <button type="button" disabled={!available||busy}
-     onClick={()=>setEditing(true)}>Configure</button>
+   <div className="brain-service-line">
+    <span className="brain-service-budget" title="Independent DeepSeek daily spend limit">
+     DeepSeek · {state?money(state.settings.daily_usd)+'/day':'Unavailable'}
+    </span>
+    <div className="brain-service-actions">
+     <button type="button" disabled={!available||busy||Boolean(state?.active)}
+      onClick={()=>void control('start')}>Start</button>
+     <button type="button" disabled={!available||busy||!state?.active}
+      onClick={()=>void control('stop')}>Pause</button>
+     <button type="button" disabled={!available||busy}
+      onClick={()=>setEditing(true)}>Settings</button>
+    </div>
    </div>
-   </div>
-   {message&&<p className="subtle" role="status">{message}</p>}
-  </Panel>
+   <div className="brain-service-message" role="status" title={message}>{message}</div>
+  </section>
   {editing&&<Drawer title="Knowledge consolidation" subtitle={state?.mode||'Independent DeepSeek service'} onClose={()=>setEditing(false)}>
    <p>Settings apply to the next consolidation cycle. Knowledge remains independent of agent launches.</p>
    <div className="settings-grid">

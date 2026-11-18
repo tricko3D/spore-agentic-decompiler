@@ -1,6 +1,6 @@
 import {memo,useState,type FormEvent} from 'react';
 import {get,query} from '../api';
-import {Drawer,Panel,Tag} from './Panel';
+import {Drawer,Tag} from './Panel';
 
 interface SearchResults {
  mode:'hybrid'|'lexical';
@@ -20,16 +20,13 @@ function BrainSearch({onTechnique,onFinding}:{
   catch(e){setError((e as Error).message)}
   finally{setQuerying(false)}
  }
- return <><Panel title="Search Collective Memory" subtitle="Ask about compiler behavior, registers, calling conventions or specific mismatches; retrieval is local and free"
-  action={<span className="subtle">FTS5 + 384D similarity</span>} className="brain-search-panel">
-  <form className="brain-search" onSubmit={e=>void search(e)}>
-   <input type="search" placeholder="Why is MSVC putting this in EBX instead of ESI?"
+ return <><form className="brain-global-search" role="search" onSubmit={e=>void search(e)}>
+   <input type="search" placeholder="Search Collective Memory, techniques, findings and compiler behavior…"
     value={text} onChange={e=>setText(e.target.value)} maxLength={180}
-    aria-label="Search Collective Memory"/>
-   <button className="primary" disabled={querying||text.trim().length<2}>{querying?'Searching…':'Search brain'}</button>
+    aria-label="Semantic search of Collective Memory"/>
+   <button className="primary" disabled={querying||text.trim().length<2}>{querying?'Searching…':'Search memory'}</button>
+   {error&&<span className="brain-global-error" role="status" title={error}>{error}</span>}
   </form>
-  {error&&<p className="brain-search-error" role="status">{error}</p>}
- </Panel>
  {result&&<Drawer title="Collective Memory results" subtitle="Traceable compiler techniques and original investigations" onClose={()=>setResult(null)}>
   <div className="brain-search-results">
    <div className="row-between"><span className="subtle">Matched original investigations and reusable techniques</span>

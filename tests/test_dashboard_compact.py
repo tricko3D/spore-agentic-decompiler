@@ -15,6 +15,7 @@ class CompactUIRegression(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.css=(WEB/"compact.css").read_text()
+        cls.brain_css=(WEB/"brain.css").read_text()
         cls.base=(WEB/"styles.css").read_text()
         cls.graph=(WEB/"components/BrainGraph.tsx").read_text()
         cls.graph_viewer=(WEB/"components/GraphViewer.tsx").read_text()
@@ -103,14 +104,18 @@ class CompactUIRegression(unittest.TestCase):
     def test_knowledge_view_fixed_and_cannot_expand_panels(self):
         self.assertNotIn('className="knowledge-intro"',self.knowledge)
         self.assertNotIn('How knowledge is formed',self.knowledge)
-        self.assertIn('grid-template-rows:102px minmax(0,1fr)',self.css)
-        self.assertIn('grid-auto-rows:111px',self.css)
-        self.assertIn('max-height:111px',self.css)
-        self.assertIn('overflow-y:auto;overflow-x:hidden',self.css)
-        self.assertIn('content-visibility:visible',self.css)
+        self.assertIn('className="brain-stage"',self.knowledge)
+        self.assertIn('className="brain-list-scroll"',self.knowledge)
+        self.assertNotIn('className="knowledge-main"',self.knowledge)
+        self.assertNotIn('className="knowledge-results"',self.knowledge)
+        self.assertIn('flex:1 1 0;min-height:0;min-width:0',self.brain_css)
+        self.assertIn('height:67px;min-height:67px;max-height:67px',self.brain_css)
+        self.assertIn('overflow-x:hidden;overflow-y:auto',self.brain_css)
 
     def test_search_results_and_evidence_do_not_resize_panels(self):
-        self.assertIn('className="brain-search-panel"',self.brain_search)
+        self.assertIn('className="brain-global-search"',self.brain_search)
+        self.assertIn('className="brain-action-row"',self.knowledge)
+        self.assertIn('className="brain-map-button"',self.knowledge)
         self.assertIn('<Drawer title="Collective Memory results"',self.brain_search)
         self.assertIn("createPortal",self.panels)
         self.assertIn("document.body",self.panels)
@@ -119,7 +124,7 @@ class CompactUIRegression(unittest.TestCase):
 
     def test_consolidation_errors_open_centered_copyable_modal(self):
         self.assertIn('<ErrorModal error={selectedError}',self.knowledge)
-        self.assertIn('setSelectedError(x)',self.knowledge)
+        self.assertIn('setSelectedError(e)',self.knowledge)
         self.assertIn("createPortal",self.error_modal)
         self.assertIn('className="error-modal-code"',self.error_modal)
         self.assertIn("navigator.clipboard.writeText",self.error_modal)
@@ -167,10 +172,16 @@ class CompactUIRegression(unittest.TestCase):
         self.assertIn("export default memo(Knowledge)",self.knowledge)
         self.assertIn("export default memo(BrainSearch)",self.brain_search)
 
-    def test_knowledge_skips_offscreen_rendering(self):
-        self.assertIn("content-visibility:auto",self.css)
-        self.assertIn("contain-intrinsic-size:auto 115px",self.css)
-        self.assertIn("animation:none!important",self.css)
+    def test_knowledge_list_and_sidebar_keep_independent_sizes(self):
+        self.assertIn('className="brain-list-pane"',self.knowledge)
+        self.assertIn('className="brain-sidebar"',self.knowledge)
+        self.assertIn('className="brain-service-widget"',self.knowledge_dock)
+        self.assertIn('className="brain-queue-widget"',self.knowledge)
+        self.assertIn('className="brain-errors-widget"',self.knowledge)
+        self.assertIn('grid-template-columns:minmax(0,1fr) clamp(288px,20vw,350px)',self.brain_css)
+        self.assertIn('height:100px;min-height:100px;max-height:100px',self.brain_css)
+        self.assertIn('height:164px;min-height:164px;max-height:164px',self.brain_css)
+        self.assertIn('height:228px;min-height:0;max-height:228px',self.brain_css)
 
     def test_knowledge_graph_memo_receives_stable_callbacks(self):
         self.assertIn("const openTechnique=useCallback",self.knowledge)
@@ -190,7 +201,9 @@ class CompactUIRegression(unittest.TestCase):
 
     def test_graph_small_launcher_and_pan_zoom_modal(self):
         self.assertIn("setShowGraph(true)",self.knowledge)
-        self.assertIn("graph-launcher-panel",self.knowledge)
+        self.assertIn("brain-map-button",self.knowledge)
+        self.assertNotIn("graph-launcher-panel",self.knowledge)
+        self.assertIn("active&&showGraph",self.knowledge)
         self.assertNotIn("<BrainGraph graph={graph}",self.knowledge)
         self.assertIn("createPortal",self.graph_viewer)
         self.assertIn("setPointerCapture",self.graph_viewer)
@@ -200,6 +213,31 @@ class CompactUIRegression(unittest.TestCase):
         self.assertIn("Fit</button>",self.graph_viewer)
         self.assertIn(".graph-viewer-world",self.css)
 
+    def test_rebuilt_brain_metrics_and_search_are_compact_and_not_cropped(self):
+        main=(WEB/"main.tsx").read_text()
+        self.assertLess(main.index("import './compact.css'"),main.index("import './brain.css'"))
+        self.assertIn('className="brain-kpis"',self.knowledge)
+        self.assertIn('className="brain-kpi"',self.knowledge)
+        self.assertIn('className="brain-global-search"',self.brain_search)
+        self.assertNotIn('className="knowledge-metrics"',self.knowledge)
+        self.assertNotIn('className="metrics knowledge-metrics"',self.knowledge)
+        self.assertIn('grid-template-columns:repeat(4,minmax(0,1fr))',self.brain_css)
+        self.assertIn('height:54px',self.brain_css)
+        self.assertIn('height:42px',self.brain_css)
+
+    def test_evidence_is_dense_list_instead_of_cards(self):
+        self.assertIn('className="brain-data-row"',self.knowledge)
+        self.assertIn('className="brain-list-columns"',self.knowledge)
+        self.assertIn('className="brain-list-filter"',self.knowledge)
+        self.assertIn('className="brain-list-footer"',self.knowledge)
+        self.assertNotIn('<Panel title="Explore the brain"',self.knowledge)
+        self.assertNotIn('className="knowledge-card"',self.knowledge)
+        self.assertIn("mode==='techniques'",self.knowledge)
+        self.assertIn("mode==='findings'",self.knowledge)
+        self.assertIn("setSelection({kind:'technique',id:x.id})",self.knowledge)
+        self.assertIn("setSelection({kind:'finding',id:x.id})",self.knowledge)
+        self.assertIn(".brain-workspace .brain-data-row",self.brain_css)
+
     def test_desktop_shell_restores_fixed_viewport_when_height_allows(self):
         self.assertIn("@media(min-width:1600px) and (min-height:950px)",self.css)
         self.assertIn("height:100dvh",self.css)
@@ -208,7 +246,7 @@ class CompactUIRegression(unittest.TestCase):
 
     def test_scroll_containers_are_bounded_without_zoom_hacks(self):
         self.assertRegex(self.css,r"\.table-scroll\s*\{[^}]*max-height:\s*350px")
-        self.assertIn("grid-auto-rows:111px",self.css)
+        self.assertIn("height:67px;min-height:67px;max-height:67px",self.brain_css)
         self.assertNotIn("scale(",self.css)
         self.assertNotIn("zoom:",self.css)
 
