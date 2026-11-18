@@ -4,6 +4,11 @@ from contextlib import contextmanager
 import importlib.util
 import json
 import os
+import re
+import socket
+import time
+import urllib.error
+import urllib.request
 from pathlib import Path
 import sqlite3
 import subprocess
@@ -167,6 +172,80 @@ class DashboardV2Tests(unittest.TestCase):
                 self.assertTrue(any(call.args[0]=="start" for call in invoke.call_args_list))
         with self.assertRaises(ValueError):
             consolidation.action(self.repo,"restart; rm -rf /")
+
+    def test_hybrid_search_maps_results_to_original_evidence(self):
+        techniques=[{"id":1,"title":"EAX register ABI","category":"calling_convention",
+                     "problem":"Retail uses register arguments"}]
+        findings=[{"va":"0x00e61b90","pass":2,"status":"FAIL",
+                   "summary":"EAX register differs","verified_match":False}]
+        with mock.patch.object(knowledge,"_memory_socket",
+                               side_effect=[techniques,findings]) as request:
+            result=knowledge.hybrid_search(self.repo,"EAX register allocation")
+        self.assertEqual(result["mode"],"hybrid")
+        self.assertEqual(result["techniques"][0]["id"],1)
+        self.assertEqual(result["findings"][0]["id"],1)
+        self.assertEqual(request.call_count,2)
+        with self.assertRaises(ValueError):
+            knowledge.hybrid_search(self.repo,"a")
+
+    def test_hybrid_search_falls_back_to_fts5_when_embedding_daemon_offline(self):
+        with mock.patch.object(knowledge,"_memory_socket",return_value=None):
+            result=knowledge.hybrid_search(self.repo,"EAX")
+        self.assertEqual(result["mode"],"lexical")
+        self.assertEqual(result["techniques"][0]["id"],1)
+        self.assertEqual(result["findings"][0]["id"],1)
+
+    def test_http_security_and_react_legacy_paths(self):
+        with socket.socket() as sock:
+            sock.bind(("127.0.0.1",0))
+            port=sock.getsockname()[1]
+        script=("import sys; from pathlib import Path; "
+                "from dashboard.server import serve; "
+                "serve(Path(sys.argv[1]),int(sys.argv[2]),control=True)")
+        process=subprocess.Popen([sys.executable,"-c",script,str(self.repo),str(port)],
+            cwd=ROOT,stdout=subprocess.DEVNULL,stderr=subprocess.PIPE,text=True)
+        base="http://127.0.0.1:"+str(port)
+        try:
+            html=None
+            for _ in range(60):
+                try:
+                    with urllib.request.urlopen(base+"/",timeout=1) as reply:
+                        html=reply.read().decode()
+                    break
+                except (OSError,urllib.error.URLError):
+                    if process.poll() is not None:
+                        raise AssertionError("Dashboard process exited: "+str(process.poll()))
+                    time.sleep(.05)
+            self.assertIsNotNone(html)
+            self.assertIn("SAD",html)
+            with urllib.request.urlopen(base+"/legacy",timeout=3) as reply:
+                self.assertIn("Mission Control",reply.read().decode())
+            with urllib.request.urlopen(base+"/api/knowledge/graph",timeout=3) as reply:
+                graph=json.load(reply)
+            self.assertEqual(len(graph["links"]),1)
+            with urllib.request.urlopen(base+"/api/knowledge/search?text=EAX",timeout=3) as reply:
+                result=json.load(reply)
+            self.assertEqual(result["mode"],"lexical")
+            def send(token,origin):
+                data=json.dumps({"id":1,"note":"HTTP security works","pinned":True}).encode()
+                request=urllib.request.Request(base+"/api/knowledge/annotation",data=data,
+                    headers={"Content-Type":"application/json",
+                             "X-Spore-Token":token,"Origin":origin},method="POST")
+                try:
+                    with urllib.request.urlopen(request,timeout=3) as reply:
+                        return reply.status
+                except urllib.error.HTTPError as exc:
+                    return exc.code
+            self.assertEqual(send("invalid","http://127.0.0.1:"+str(port)),403)
+            token=re.search(r'window\.__SAD_TOKEN__="([^"]+)"',html)
+            self.assertIsNotNone(token,"Compiled React UI must embed session token")
+            self.assertEqual(send(token.group(1),"http://attacker.example"),403)
+            self.assertEqual(send(token.group(1),"http://127.0.0.1:"+str(port)),200)
+            self.assertEqual(knowledge.technique(self.repo,1)["annotation"]["note"],"HTTP security works")
+        finally:
+            process.terminate()
+            try:process.wait(timeout=5)
+            except subprocess.TimeoutExpired:process.kill();process.wait()
 
     def test_server_imports_new_api_and_old_ui_remains_available(self):
         src=(ROOT/"dashboard/server.py").read_text(encoding="utf-8")
