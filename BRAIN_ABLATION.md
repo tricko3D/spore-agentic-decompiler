@@ -39,7 +39,7 @@ Prepare uses SQLite's online backup API to archive the WAL-consistent original `
 
 A full checkout is copied (excluding ephemeral logs, runtime files, prior investigation snapshots, caches, VCS metadata and live SQLite/WAL files). The installed decompiler Python virtualenv and the separate FastEmbed/sqlite-vec virtualenv under memory/.venv are shared dependency symlinks, not experiment source trees. The model weights and vector database are copied independently. Each trial receives its **own independent copy** of the seed and its own databases, agent sessions, source and logs. No Git worktrees or hardlinks point agent edits into live source. Expect substantial disk usage and copy time, especially for many trials.
 
-The plan randomizes the four arm orders per repeat using a recorded seed. It defaults to three repeats (12 independent trials). All experiment output is in `~/sad-brain-benchmark`, never the source repository.
+The plan randomizes the four arm orders per repeat using a recorded seed, and assigns opaque trial directory names to avoid advertising the treatment in the agent's working directory or process environment. It defaults to three repeats (12 independent trials). All experiment output is in `~/sad-brain-benchmark`, never the source repository.
 
 ## Paid execution, explicitly opt-in
 

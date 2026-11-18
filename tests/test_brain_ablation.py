@@ -131,7 +131,7 @@ def run_one():
         self.assertIn("123",(self.destination/"archive/original-target.cpp").read_text())
         self.assertIn("blank-slate",(self.destination/"seed"/bench.slice_path(VA)).read_text())
         copied=(self.destination/"seed"/bench.RUNNER).read_text()
-        self.assertIn("if not os.environ.get('SAD_BENCH_ARM')",copied)
+        self.assertIn("if not os.environ.get('SAD_BENCH_ACTIVE')",copied)
         self.assertIn("brain_trial_query.py",copied)
         with sqlite3.connect(self.source/bench.OPS) as original:
             self.assertEqual(original.execute(
@@ -170,7 +170,7 @@ def run_one():
             self.assertIn("--only-va",cmd)
             self.assertEqual(cmd[cmd.index("--only-va")+1],VA)
             self.assertEqual(kwargs["env"]["OPENROUTER_API_KEY"],"mock-not-a-real-key")
-            self.assertIn(kwargs["env"]["SAD_BENCH_ARM"],bench.ARMS)
+            self.assertEqual(kwargs["env"]["SAD_BENCH_ACTIVE"],"1")
             with sqlite3.connect(kwargs["cwd"]/bench.OPS) as db:
                 db.execute("INSERT INTO attempts(va,status,note,utc) VALUES(?,?,?,?)",
                            (VA,"FAIL","checker: size=120/120 diffs=3",bench.now()))

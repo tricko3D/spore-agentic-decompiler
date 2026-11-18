@@ -128,11 +128,11 @@ def _patch_runner(path):
     if source.count(needle)!=1:
         raise RuntimeError("Cannot locate memory injection boundary; runner version changed")
     source=source.replace(needle,
-             "if not os.environ.get('SAD_BENCH_ARM') and collective_memory.paths(ROOT)[2].is_file():")
+             "if not os.environ.get('SAD_BENCH_ACTIVE') and collective_memory.paths(ROOT)[2].is_file():")
     anchor="    if os.environ.get('SPORE_SQLITE_RUN_ID'):\n        prompt += f\"\"\""
     if source.count(anchor)!=1:
         raise RuntimeError("Cannot locate agent prompt boundary; runner version changed")
-    insert='''    if os.environ.get('SAD_BENCH_ARM'):
+    insert='''    if os.environ.get('SAD_BENCH_ACTIVE'):
         prompt += """
 CONTROLLED RESEARCH EXPERIMENT: Start this function from its blank source slice.
 Before proposing your first compiler hypothesis, query the Brain with a specific
@@ -307,7 +307,7 @@ def prepare(repo, out, va=None, repeats=3, minimum=7, seed=20261118):
         order=[{"arm":arm,"repeat":i+1} for i in range(repeats) for arm in ARMS]
         rng.shuffle(order)
         for item in order:
-            item["name"]=f"{item['repeat']:02d}-{item['arm']}"
+            item["name"]=f"trial-{len([x for x in order if 'name' in x]):02d}-{rng.getrandbits(32):08x}"
             item["state"]="prepared"
             item["seed"]=rng.randrange(1,2**31)
         write_json(out/"plan.json",{
@@ -429,7 +429,7 @@ def run_next(out, execute=False, budget=DEFAULT_BUDGET, minutes=20):
              "--max-inflight","1","--minutes",str(minutes),"--budget",str(budget)]
         env={**os.environ,
              "OPENROUTER_API_KEY":env_key,
-             "SAD_BENCH_ARM":item["arm"],
+             "SAD_BENCH_ACTIVE":"1",
              "SPORE_ADAPTIVE_INFLIGHT":"0",
              "PYTHONDONTWRITEBYTECODE":"1",
              "PWD":str(trial)}
