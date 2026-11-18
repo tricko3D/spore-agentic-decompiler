@@ -138,6 +138,44 @@ def make_assignments(queue, workers, mod, passes=None):
         selected = {f'0x{int(va, 16):08x}' for va in selected}
         allowed = [va for va in allowed if va in selected]
         print(f'Retry allowlist active: {len(allowed)} eligible targets', flush=True)
+        if os.environ.get('SPORE_ALLOWLIST_BREAKDOWN') == '1':
+            # Diagnose exclusions using the exact same classifier, manifest
+            # index, queue and latest valid attempts that determine assignments.
+            # Each address is assigned one primary reason in filter order.
+            queued = {row['va'] for row in queue}
+            classified_set = set(classified)
+            allowed_set = set(allowed)
+            excluded = {
+                'not_in_queue': [],
+                'outside_classified_scope': [],
+                'already_manifested': [],
+                'latest_match': [],
+                'latest_skip': [],
+                'other': [],
+            }
+            for va in sorted(selected - allowed_set):
+                if va not in queued:
+                    excluded['not_in_queue'].append(va)
+                elif va not in classified_set:
+                    excluded['outside_classified_scope'].append(va)
+                elif va in manifested:
+                    excluded['already_manifested'].append(va)
+                elif latest.get(va) == 'MATCH':
+                    excluded['latest_match'].append(va)
+                elif latest.get(va) == 'SKIP':
+                    excluded['latest_skip'].append(va)
+                else:
+                    excluded['other'].append(va)
+            assert len(allowed_set) + sum(map(len, excluded.values())) == len(selected)
+            summary = {
+                'listed': len(selected),
+                'eligible': len(allowed_set),
+                'excluded': len(selected) - len(allowed_set),
+                'reasons': {key: len(values) for key, values in excluded.items()},
+                'addresses': excluded,
+            }
+            print('SPORE_ALLOWLIST_BREAKDOWN=' + json.dumps(summary, separators=(',', ':')),
+                  flush=True)
     if not allowed:
         return [], {}, [0] * workers, {}
     groups = source_groups(allowed)
