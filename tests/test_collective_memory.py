@@ -303,7 +303,7 @@ class MemoryTests(unittest.TestCase):
         try:
             text = con.execute("SELECT details FROM findings").fetchone()[0]
             self.assertIn("__fastcall", text)
-            self.assertIn("Locally verified source excerpt", text)
+            self.assertIn("Local source excerpt", text)
         finally:
             con.close()
         self.assertTrue(mem.query(self.root, "fastcall", 2, verified_only=True))
