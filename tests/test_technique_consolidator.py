@@ -254,9 +254,62 @@ class ConsolidationTests(unittest.TestCase):
         self.assertEqual(sent["provider"]["only"],["sail-research"])
         self.assertFalse(sent["provider"]["allow_fallbacks"])
         self.assertEqual(sent["response_format"]["type"],"json_object")
+        self.assertEqual(sent["reasoning"]["effort"],"low")
+        self.assertGreaterEqual(sent["max_tokens"], 2000)
         self.assertEqual(out,{"techniques":[]})
         self.assertEqual(usage["cost"],0.001)
         self.assertNotIn("TOP-SECRET-TEST-KEY",str(sent))
+
+    def test_empty_reasoning_only_response_has_safe_diagnostics_and_real_cost(self):
+        response = {
+            "choices":[{"finish_reason":"length", "message":{
+                "content":None,"reasoning":"INTERNAL-PRIVATE-REASONING-NOT-FOR-LOGS"}}],
+            "usage":{"cost":0.00123,"prompt_tokens":500,"completion_tokens":2800,
+                     "completion_tokens_details":{"reasoning_tokens":2800}},
+        }
+        with mock.patch.object(tech.urllib.request,"urlopen",
+                               return_value=io.BytesIO(json.dumps(response).encode())):
+            with self.assertRaises(tech.CompletionResponseError) as err:
+                tech.call_deepseek("TEST-SECRET-KEY","some prompt")
+        diagnostic = str(err.exception)
+        self.assertIn("finish_reason=length",diagnostic)
+        self.assertIn("reasoning_tokens=2800",diagnostic)
+        self.assertNotIn("INTERNAL-PRIVATE-REASONING",diagnostic)
+        self.assertNotIn("TEST-SECRET-KEY",diagnostic)
+        self.assertAlmostEqual(err.exception.usage["cost"],0.00123)
+
+    def test_blank_final_response_is_also_rejected(self):
+        response = {"choices":[{"finish_reason":"stop","message":{"content":"  "}}],
+                    "usage":{"cost":0.0003,"completion_tokens":100}}
+        with mock.patch.object(tech.urllib.request,"urlopen",
+                               return_value=io.BytesIO(json.dumps(response).encode())):
+            with self.assertRaisesRegex(tech.CompletionResponseError,
+                                        "No final JSON content"):
+                tech.call_deepseek("test key","prompt")
+
+    def test_billed_empty_content_continues_with_other_findings(self):
+        tech.memory.ingest(self.root,OTHER,1,"FAIL",
+                           note="Other observed assembly and stack layout discrepancy",
+                           checker="NO MATCH")
+        history=[]
+        def provider(key, prompt):
+            history.append(prompt)
+            if len(history)==1:
+                raise tech.CompletionResponseError(
+                    "No final JSON content (finish_reason=length, reasoning_tokens=2800)",
+                    {"cost":0.00123,"prompt_tokens":500,"completion_tokens":2800})
+            return {"techniques":[]},{"cost":0.0004,
+                                      "prompt_tokens":400,"completion_tokens":50}
+        res = tech.process(self.root,max_items=2,caller=provider,key="test")
+        self.assertEqual(res["failed"],1)
+        self.assertEqual(res["processed"],1)
+        self.assertEqual(len(history),2)
+        self.assertIn("finish_reason=length",res["errors"][0]["reason"])
+        with tech.memory.connection(self.root) as con:
+            costs=[v[0] for v in con.execute(
+                "SELECT cost_usd FROM technique_spend ORDER BY created_utc, rowid")]
+        self.assertEqual(len(costs),2)
+        self.assertAlmostEqual(sum(costs),0.00163)
 
     def test_spend_ledger_records_actual_cost_not_full_reservation(self):
         fake,_ = self.fake_api()
