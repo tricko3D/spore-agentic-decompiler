@@ -170,6 +170,43 @@ class ConsolidationTests(unittest.TestCase):
         self.assertEqual(usage["cost"],0.001)
         self.assertNotIn("TOP-SECRET-TEST-KEY",str(sent))
 
+    def test_spend_ledger_records_actual_cost_not_full_reservation(self):
+        fake,_ = self.fake_api()
+        tech.process(self.root,caller=fake,key="test")
+        with tech.memory.connection(self.root) as con:
+            record = con.execute("SELECT reserved_usd,cost_usd,state FROM technique_spend").fetchone()
+        self.assertEqual(record["reserved_usd"],tech.RESERVE_USD)
+        self.assertAlmostEqual(record["cost_usd"],0.0009)
+        self.assertEqual(record["state"],"complete")
+
+    def test_technique_local_embedding_index(self):
+        try:
+            import sqlite_vec
+        except ImportError:
+            self.skipTest("sqlite-vec optional for stdlib-only tests")
+        fake,_ = self.fake_api()
+        tech.process(self.root,caller=fake,key="test")
+        tech.memory.initialize(self.root,vectors=True)
+        class FakeEmbedder:
+            def encode(self,texts):
+                return [[1.0]+[0.0]*(tech.memory.DIM-1) for _ in texts]
+        service = tech.memory.Service.__new__(tech.memory.Service)
+        service.repo = self.root
+        service.folder = tech.memory.paths(self.root)[1]
+        service.embedder = FakeEmbedder()
+        self.assertEqual(service.index_techniques_once(),1)
+        self.assertEqual(service.index_techniques_once(),0)
+        found = service.search_techniques("EAX EDX custom calling convention",2)
+        self.assertEqual(len(found),1)
+        self.assertEqual(found[0]["sources"][0]["va"],VA)
+
+    def test_repeated_verified_matches_do_not_verify_technique_causation(self):
+        fake,_ = self.fake_api()
+        tech.process(self.root,caller=fake,key="test")
+        found = tech.search(self.root,"EAX register ABI",1)[0]
+        self.assertNotEqual(found["evidence_level"],"verified")
+        self.assertNotEqual(found["evidence_level"],"reproduced")
+
     def test_bad_missing_key_never_reserves_spend(self):
         with mock.patch.object(tech,"_get_key",side_effect=RuntimeError("no key")):
             with self.assertRaisesRegex(RuntimeError,"no key"):
