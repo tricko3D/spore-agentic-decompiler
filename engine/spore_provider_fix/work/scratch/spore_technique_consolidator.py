@@ -246,9 +246,17 @@ def make_prompt(con, finding_id, repo=None):
         except (OSError, ValueError, sqlite3.Error):
             pass
     similar = similar[:5]
-    known = [{"id":x["id"], "title":x["title"], "category":x["category"],
-              "problem":x["problem"][:220], "conditions":x["conditions"][:170]}
-             for x in similar]
+    known = []
+    for x in similar:
+        recent = con.execute("""SELECT l.observation FROM compiler_technique_links l
+            JOIN findings f ON f.id=l.finding_id
+            WHERE l.technique_id=? AND l.source_hash=f.source_hash
+            ORDER BY l.created_utc DESC LIMIT 1""", (x["id"],)).fetchone()
+        known.append({"id":x["id"], "title":x["title"],
+                      "category":x["category"],
+                      "problem":x["problem"][:220],
+                      "conditions":x["conditions"][:170],
+                      "recent_observation":recent["observation"][:180] if recent else ""})
     user = "EVIDENCE:\n" + evidence + "\n\nEXISTING TECHNIQUES:\n" + json.dumps(known)
     return finding, evidence, known, user
 
