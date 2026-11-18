@@ -83,6 +83,18 @@ class InvestigationEvidenceTests(unittest.TestCase):
         self.assertEqual(text.count('NO MATCH'), 1)
         self.assertIn('diffs=6', text)
         self.assertNotIn('checker source', text)
+        snapshots = list((folder / 'candidates').glob('*.cpp'))
+        self.assertEqual(len(snapshots), 1)
+        self.assertEqual(snapshots[0].read_text(), self.initial)
+        self.source.write_text(self.initial.replace('return 1', 'return 2'))
+        changed = {'type': 'tool_use', 'part': {'state': {'status': 'completed',
+            'input': {'command': '.venv/bin/python tools/contrib/check.py 0x00e61d90'},
+            'output': 'NO MATCH size=138/144 diffs=3'}}}
+        self.assertTrue(investigation.record_checker_event(self.root, self.VA, changed, seen))
+        self.assertEqual(len(list((folder / 'candidates').glob('*.cpp'))), 2)
+        patch = list((folder / 'candidate-diffs').glob('*.patch'))
+        self.assertEqual(len(patch), 1)
+        self.assertIn('+int function() { return 2; }', patch[0].read_text())
 
     def test_provider_retry_same_pass_can_resume_new_pass_cannot(self):
         self.assertIsNone(investigation.session_for_pass(
