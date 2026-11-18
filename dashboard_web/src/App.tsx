@@ -1,8 +1,9 @@
-import {useEffect,useState} from 'react';
+import {lazy,Suspense,useEffect,useState} from 'react';
 import {controlsEnabled} from './api';
 import type {View} from './types';
-import Operations from './views/Operations';
-import Knowledge from './views/Knowledge';
+// Load each view only when opened; the inactive view no longer mounts, polls or paints.
+const Operations=lazy(()=>import('./views/Operations'));
+const Knowledge=lazy(()=>import('./views/Knowledge'));
 
 function initialView():View {
  return window.location.hash==='#knowledge'?'knowledge':'operations';
@@ -28,10 +29,11 @@ export default function App(){
    </nav>
    <div className="mode-note"><span className={'status-dot '+(controlsEnabled?'online':'idle')}></span>{controlsEnabled?'Controls enabled':'Read-only'}</div>
   </header>
-  <div className="view-content">
-   <div hidden={view!=='operations'}><Operations active={view==='operations'}/></div>
-   <div hidden={view!=='knowledge'}><Knowledge active={view==='knowledge'}/></div>
-  </div>
+  <main className="view-content">
+   <Suspense fallback={<div className="panel">Loading dashboard…</div>}>
+    {view==='operations'?<Operations active/>:<Knowledge active/>}
+   </Suspense>
+  </main>
   <footer className="app-footer"><span>SAD · Localhost only</span><span>Operations and knowledge run independently · <a href="/legacy">Legacy interface</a></span></footer>
  </div>;
 }
