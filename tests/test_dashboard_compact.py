@@ -83,6 +83,12 @@ class CompactUIRegression(unittest.TestCase):
         self.assertIn("<BrainGraph graph={graph} onTechnique={openTechnique}",self.knowledge)
         self.assertIn("export default memo(BrainGraph)",self.graph)
 
+    def test_desktop_shell_restores_fixed_viewport_when_height_allows(self):
+        self.assertIn("@media(min-width:1600px) and (min-height:950px)",self.css)
+        self.assertIn("height:100dvh",self.css)
+        self.assertIn("scrollbar-gutter:stable",self.css)
+        self.assertIn("overscroll-behavior:contain",self.css)
+
     def test_scroll_containers_are_bounded_without_zoom_hacks(self):
         self.assertRegex(self.css,r"\.table-scroll\s*\{[^}]*max-height:\s*350px")
         self.assertRegex(self.css,r"\.knowledge-results\s*\{[^}]*max-height:\s*410px")
