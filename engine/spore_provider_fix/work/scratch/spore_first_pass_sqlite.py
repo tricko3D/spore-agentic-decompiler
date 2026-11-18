@@ -423,18 +423,18 @@ def status():
           f'Already in manifest: {manifested_in_scope:,} | Eligible pending: {eligible_pending:,}')
     print(f'Other modules or uncertain classifications excluded: {len(queue)-len(allowed):,} '
           f'(confidence threshold {modules.minimum:.2f})')
-    pass_limit = current_pass_limit()
+    # Parallel launches grant fresh passes; historical FAIL/DEFER counts
+    # should not hide otherwise eligible targets in the status summary.
     histories = {}
     for r in attempt_rows:
         histories.setdefault(r['va'], []).append(r)
-    remaining_passes = sum(
+    eligible_retry = sum(
         row['va'] not in manifested and
         (row['va'] not in histories or
-         (histories[row['va']][-1]['status'] in ('FAIL', 'DEFER') and
-          sum(r['status'] in ('FAIL', 'DEFER') for r in histories[row['va']]) < pass_limit))
+         histories[row['va']][-1]['status'] in ('FAIL', 'DEFER'))
         for row in allowed
     )
-    print(f'Eligible functions with passes remaining (limit {pass_limit}): {remaining_passes:,}')
+    print(f'Eligible nonterminal functions for another parallel run: {eligible_retry:,}')
     print('Database:', DB_PATH.relative_to(ROOT), '(SQLite WAL)')
     budget, reserved = store.budget_status()
     if budget:
