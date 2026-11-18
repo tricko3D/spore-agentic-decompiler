@@ -188,7 +188,7 @@ class Controller:
         """All-modules runs use a validated list and never fall back to the queue."""
         path,source=self._allowlist_location()
         configured=bool(os.environ.get('SPORE_RETRY_ALLOWLIST','').strip())
-        if module!='*' and not configured:
+        if module not in ('*','__allowlist__') and not configured:
             return None
         if not path.is_file():
             raise ValueError('Retry allow list not found: '+str(path)+
@@ -209,8 +209,8 @@ class Controller:
         undiscovered queue targets. Report the preview as provisional.
         """
         if not isinstance(module,str) or (
-                module!='*' and module not in modules(self.repo)):
-            raise ValueError('Select a classified module from the list')
+                module not in ('*','__allowlist__') and module not in modules(self.repo)):
+            raise ValueError('Select a classified module or the allow list')
         if type(workers) is not int or not 1<=workers<=32:
             raise ValueError('workers must be between 1 and 32')
         selected=self._retry_allowlist(module)
@@ -219,7 +219,7 @@ class Controller:
             env['SPORE_RETRY_ALLOWLIST']=selected['path']
         cmd=[sys.executable,str(CLI),'plan','--repo',str(self.repo),
              '--workers',str(workers)]
-        cmd+=['--all-modules'] if module=='*' else ['--module',module]
+        cmd+=['--all-modules'] if module in ('*','__allowlist__') else ['--module',module]
         try:
             result=subprocess.run(cmd,cwd=CLI.parent,stdin=subprocess.DEVNULL,
                                   capture_output=True,text=True,timeout=60,env=env)
@@ -275,8 +275,9 @@ class Controller:
         if not self.enabled:raise PermissionError('Controls disabled')
         if not isinstance(data,dict):raise ValueError('Invalid settings')
         module=data.get('module','SPGonzago')
-        if module!='*' and (not isinstance(module,str) or module not in modules(self.repo)):
-            raise ValueError('Select a classified module from the list')
+        if not isinstance(module,str) or (
+                module not in ('*','__allowlist__') and module not in modules(self.repo)):
+            raise ValueError('Select a classified module or the allow list')
         values={}
         for field,minimum,maximum in (('workers',1,32),('max_inflight',1,32),('passes',1,24),('minutes',1,120)):
             value=data.get(field)
@@ -296,7 +297,7 @@ class Controller:
                 launch_env['SPORE_RETRY_ALLOWLIST']=selected['path']
             # Scope selection can add functions but never deletes historical work.
             scope=[sys.executable,str(CLI),'scope','--repo',str(self.repo)]
-            scope+=['--all-modules'] if module=='*' else ['--module',module]
+            scope+=['--all-modules'] if module in ('*','__allowlist__') else ['--module',module]
             scope+=['--apply']
             try:
                 result=subprocess.run(scope,cwd=CLI.parent,stdin=subprocess.DEVNULL,
@@ -307,7 +308,7 @@ class Controller:
                 raise ValueError('Module selection failed: '+(result.stdout+' '+result.stderr)[-700:])
             # CLI owns API-key validation. If it fails, dashboard records failure.
             cmd=[sys.executable,str(CLI),'run','--repo',str(self.repo)]
-            cmd+=['--all-modules'] if module=='*' else ['--module',module]
+            cmd+=['--all-modules'] if module in ('*','__allowlist__') else ['--module',module]
             for name,value in values.items():cmd+=['--'+name.replace('_','-'),str(value)]
             work=self.repo/'work/scratch/codex-pass1'
             work.mkdir(parents=True,exist_ok=True)
