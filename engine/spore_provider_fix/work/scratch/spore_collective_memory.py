@@ -436,6 +436,9 @@ def _technique_combine(con, query, *, vectors=None, limit=3):
             FROM compiler_techniques_fts
             JOIN compiler_techniques t ON t.id=compiler_techniques_fts.rowid
             WHERE compiler_techniques_fts MATCH ?
+              AND EXISTS (SELECT 1 FROM compiler_technique_links l
+                JOIN findings f ON f.id=l.finding_id
+                WHERE l.technique_id=t.id AND l.source_hash=f.source_hash)
             ORDER BY bm25(compiler_techniques_fts) LIMIT 30""", (expr,)).fetchall()
         for rank, item in enumerate(found):
             scores[item["id"]] = 1.0 / (20 + rank)
@@ -453,14 +456,18 @@ def _technique_combine(con, query, *, vectors=None, limit=3):
     if not scores:
         return []
     ids = sorted(scores)
-    rows = con.execute("SELECT * FROM compiler_techniques WHERE id IN (" +
-                       ",".join("?" for _ in ids) + ")", ids).fetchall()
+    rows = con.execute("SELECT t.* FROM compiler_techniques t WHERE t.id IN (" +
+                       ",".join("?" for _ in ids) + """)
+                       AND EXISTS (SELECT 1 FROM compiler_technique_links l
+                       JOIN findings f ON f.id=l.finding_id
+                       WHERE l.technique_id=t.id AND l.source_hash=f.source_hash)""", ids).fetchall()
     ordered = sorted(rows, key=lambda x: -scores[x["id"]])
     results = []
     for item in ordered[:max(1, min(10, limit))]:
         links = con.execute("""SELECT f.va,l.source_status,l.evidence_quote,
             f.evidence_path FROM compiler_technique_links l
             JOIN findings f ON f.id=l.finding_id WHERE l.technique_id=?
+                AND l.source_hash=f.source_hash
             ORDER BY CASE l.source_status WHEN 'MATCH' THEN 0 ELSE 1 END,
             l.created_utc DESC LIMIT 3""", (item["id"],)).fetchall()
         results.append({
