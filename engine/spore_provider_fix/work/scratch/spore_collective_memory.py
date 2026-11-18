@@ -165,6 +165,31 @@ def _within_repo(repo, raw):
     return None
 
 
+def _matched_cpp_snippet(repo, va, safe_evidence):
+    """Find real local C++ for an independently verified match, never invent it."""
+    root = Path(repo).expanduser().resolve()
+    address = va[2:].lower()
+    candidates = []
+    if safe_evidence and safe_evidence.is_dir():
+        candidates.append(safe_evidence / "latest.cpp")
+    candidates.append(root / "match/slices" / ("s" + address) / ("s" + address + ".cpp"))
+    marker = re.compile(r"(?mi)^\s*//\s*@\s*0x0*" + re.escape(address) + r"\b")
+    for file in candidates:
+        try:
+            if not file.is_file() or file.stat().st_size > 250000:
+                continue
+            content = file.read_text(encoding="utf-8", errors="replace")
+            match = marker.search(content)
+            if match:
+                # Show only the marked function's opening code, not the whole
+                # slice or unrelated neighboring functions.
+                code = content[match.start():match.start() + 1000]
+                return _clean(code, 400)
+        except (OSError, UnicodeError):
+            continue
+    return ""
+
+
 def ingest(repo, va, pass_number, status, *, note, checker, evidence_path="", log_path=None):
     """Append independent pass evidence, never an unverified model MATCH claim.
 
@@ -195,6 +220,7 @@ def ingest(repo, va, pass_number, status, *, note, checker, evidence_path="", lo
     observation = evidence.concise_summary(note, checker, 900)
     experiments = evidence.parse_experiments(log_path, va, repo) if log_path else []
     brief = evidence.experiment_brief(experiments)
+    matched_cpp = _matched_cpp_snippet(repo, va, safe) if status == "MATCH" else ""
     title = f"{va} {status} " + (observation or verdict)[:180]
     # A duplicated note is not additional evidence. Emphasize real checker
     # commands, observed metrics and hypotheses, not the previous transcript.
@@ -202,7 +228,8 @@ def ingest(repo, va, pass_number, status, *, note, checker, evidence_path="", lo
         f"Outcome: {status}. Observation: {observation}. "
         f"Independent checker: {verdict}. "
         f"Actual checker experiments: {brief}. "
-        f"Curated hypotheses: {kept}. Source delta: {diff}", MAX_DOC)
+        f"Curated hypotheses: {kept}. Source delta: {diff}. "
+        f"Locally verified source excerpt (only for MATCH): {matched_cpp}", MAX_DOC)
     summary = observation or verdict
     digest = hashlib.sha256((title + summary + details).encode("utf-8")).hexdigest()
     rel = str(safe.relative_to(Path(repo).expanduser().resolve())) if safe else ""
