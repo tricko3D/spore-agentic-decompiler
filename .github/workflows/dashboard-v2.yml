@@ -1,7 +1,7 @@
 name: Dashboard V2 (React/TS + Python)
 on:
   push:
-    branches: [feature/dashboard-knowledge-v2, dev]
+    branches: ['feature/dashboard-*', dev]
     paths:
       - "dashboard_web/src/**"
       - "dashboard_web/package.json"
@@ -13,6 +13,7 @@ on:
       - "spore_dashboard.py"
       - "engine/spore_provider_fix/work/scratch/spore_technique_consolidator.py"
       - "tests/test_dashboard_v2.py"
+      - "tests/test_dashboard_compact.py"
       - ".github/workflows/dashboard-v2.yml"
   workflow_dispatch:
 
@@ -47,6 +48,7 @@ jobs:
         run: |
           python -m compileall -q dashboard spore_dashboard.py
           python -m unittest discover -s tests -p 'test_dashboard_v2.py' -v
+          python -m unittest discover -s tests -p 'test_dashboard_compact.py' -v
           python -m unittest discover -s tests -p 'test_technique_consolidator.py' -v
       - name: Ensure bundled UI is fully offline
         run: |
