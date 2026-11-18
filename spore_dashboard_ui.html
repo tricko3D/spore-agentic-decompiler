@@ -450,6 +450,43 @@ html,body,.grid,.table-scroll,.drawer,.timeline,.control-status{
  .bottom-hud .dock-console .control-form {overflow-x:auto;max-width:100%}
  .bottom-hud .dock-console .dock-field span{font-size:10px}
 }
+
+/* The agent fleet uses ALL available panel space, not capped square tiles. */
+@media(min-width:1900px){
+ .agent-column .grid{
+  display:grid;
+  flex:1 1 0;
+  width:100%;
+  height:100%;
+  min-height:0;
+  grid-template-columns:repeat(var(--worker-cols,4),minmax(0,1fr));
+  grid-template-rows:repeat(var(--worker-rows,4),minmax(0,1fr));
+  grid-auto-rows:minmax(0,1fr);
+  gap:8px;
+  justify-content:stretch;
+  align-content:stretch;
+  justify-items:stretch;
+  align-items:stretch;
+  overflow:hidden;
+ }
+ .agent-column .grid .agent{
+  width:100%;
+  height:100%;
+  min-width:0;
+  min-height:0;
+  max-width:none;
+  aspect-ratio:auto;
+  display:flex;
+  flex-direction:column;
+  overflow:hidden;
+ }
+ .agent-column .grid .agent .mini-stream{
+  flex:1 1 0;
+  min-height:0;
+  max-height:none;
+  overflow:hidden;
+ }
+}
 </style></head>
 <body>
 <div class="game-shell">
@@ -554,19 +591,23 @@ function arrangeWorkers(){
  if(w<200||h<200)return;
  const gap=8;
  let best=null;
+ // Fill the whole panel, choosing a grid close to square cells while
+ // avoiding unused slots. No pixel cap or centered island of workers.
  for(let cols=1;cols<=Math.min(count,12);cols++){
    const rows=Math.ceil(count/cols);
-   const size=Math.floor(Math.min((w-gap*(cols-1))/cols,(h-gap*(rows-1))/rows,210));
-   if(size<1)continue;
-   // Maximize readable square size first, favor a balanced grid when tied.
-   const score=size-0.001*Math.abs(cols-rows);
-   if(!best||score>best.score)best={cols,size,score};
+   const cellW=(w-gap*(cols-1))/cols;
+   const cellH=(h-gap*(rows-1))/rows;
+   if(cellW<110||cellH<105)continue;
+   const unused=cols*rows-count;
+   const score=Math.abs(Math.log(cellW/cellH))+unused*0.18;
+   if(!best||score<best.score)best={cols,rows,score};
  }
- if(best){
-   grid.style.setProperty('--worker-cols',best.cols);
-   grid.style.setProperty('--worker-size',best.size+'px');
-   // Deliberate 11px gutters replace space-evenly distribution.
+ if(!best){
+   const cols=Math.min(count,Math.max(1,Math.ceil(Math.sqrt(count*w/h))));
+   best={cols,rows:Math.ceil(count/cols)};
  }
+ grid.style.setProperty('--worker-cols',best.cols);
+ grid.style.setProperty('--worker-rows',best.rows);
 }
 if(typeof ResizeObserver!=='undefined'){
  const workerObserver=new ResizeObserver(()=>arrangeWorkers());
