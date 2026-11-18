@@ -31,6 +31,9 @@ class BrainAblationTests(unittest.TestCase):
         self.destination=self.base/"isolated-benchmark"
         (self.source/bench.WORK/"memory").mkdir(parents=True)
         (self.source/bench.RUNNER).parent.mkdir(parents=True,exist_ok=True)
+        (self.source/bench.PROMPT).write_text(
+            (ROOT/"engine/spore_first_pass_prompt.txt").read_text(encoding="utf-8"),
+            encoding="utf-8")
         (self.source/bench.RUNNER).write_text("""import os
 def run_one():
     prompt = "source"
@@ -229,6 +232,57 @@ def run_one():
         self.assertTrue(new_log.exists())
         self.assertEqual(json.loads(planpath.read_text())["arms"][0]["state"],"prepared")
 
+    def test_v2_claim_skip_is_flagged_protocol_invalid_even_when_runner_exits_zero(self):
+        bench.prepare(self.source,self.destination,repeats=1)
+        def model_ignoring_instructions(cmd,**kwargs):
+            with sqlite3.connect(kwargs["cwd"]/bench.OPS) as db:
+                db.execute("INSERT INTO attempts(va,status,note,utc) VALUES(?,?,?,?)",
+                           (VA,"SKIP","Pass 1: claimed | checker: no source",bench.now()))
+            return mock.Mock(returncode=0)
+        with mock.patch.dict("os.environ",{"OPENROUTER_API_KEY":"mock-not-a-real-key"}):
+            with mock.patch.object(bench,"_start_vectors",return_value=None):
+                with mock.patch.object(bench.subprocess,"run",side_effect=model_ignoring_instructions):
+                    bench.run_next(self.destination,execute=True,budget=.5)
+        plan=json.loads((self.destination/"plan.json").read_text())
+        item=plan["arms"][0]
+        self.assertEqual(item["state"],"protocol_invalid")
+        bench.report(self.destination)
+        row=next(x for x in json.loads((self.destination/"report.json").read_text())["trials"]
+                 if x["name"]==item["name"])
+        self.assertEqual(row["status"],"SKIP")
+        self.assertFalse(row["protocol_valid"])
+        self.assertIsNone(row["match"])
+
+    def test_existing_skipped_protocol_is_never_silently_reclassified(self):
+        bench.prepare(self.source,self.destination,repeats=1)
+        planpath=self.destination/"plan.json"
+        plan=json.loads(planpath.read_text(encoding="utf-8"))
+        raw=next(i for i in plan["arms"] if i["arm"]=="raw")
+        trial=self.destination/"trials"/raw["name"]
+        bench._clone(self.destination/"seed",trial)
+        with sqlite3.connect(trial/bench.OPS) as db:
+            db.execute("INSERT INTO attempts(va,status,note,utc) VALUES(?,?,?,?)",
+                       (VA,"SKIP","Pass 1: claimed | checker: no compiled function",bench.now()))
+        raw["state"]="completed"
+        plan["protocol_version"]=1
+        bench.write_json(planpath,plan)
+        with self.assertRaisesRegex(RuntimeError,"Cannot change benchmark tooling"):
+            bench.repair_seed(self.destination)
+        with mock.patch.object(bench,"_clone",
+                               side_effect=AssertionError("obsolete trial cloned")):
+            with self.assertRaisesRegex(RuntimeError,"obsolete claim/skip protocol"):
+                with mock.patch.dict("os.environ",{"OPENROUTER_API_KEY":"mock-not-a-real-key"}):
+                    bench.run_next(self.destination,execute=True,budget=.50)
+        self.assertEqual(json.loads(planpath.read_text())["protocol_version"],1)
+        bench.report(self.destination)
+        row=next(x for x in json.loads((self.destination/"report.json").read_text())["trials"]
+                 if x["name"]==raw["name"])
+        self.assertFalse(row["protocol_valid"])
+        self.assertIsNone(row["match"])
+        with sqlite3.connect(trial/bench.OPS) as db:
+            self.assertEqual(db.execute("SELECT status FROM attempts WHERE va=?",
+                                        (VA,)).fetchone()[0],"SKIP")
+
     def test_repair_seed_rejects_any_started_agent_or_completed_trial(self):
         bench.prepare(self.source,self.destination,repeats=1)
         seed=self.destination/"seed"
@@ -336,6 +390,13 @@ def run_one():
         self.assertIn("if not os.environ.get('SAD_BENCH_ACTIVE')",copied)
         self.assertIn("brain_trial_entry.py query",copied)
         self.assertTrue((self.destination/"seed"/bench.ENTRY).is_file())
+        self.assertEqual(plan["protocol_version"],2)
+        prompt=(self.destination/"seed"/bench.PROMPT).read_text()
+        self.assertIn(bench.PROTOCOL_MARKER,prompt)
+        self.assertIn("self-owned claim is NOT a reason to SKIP",prompt)
+        self.assertNotIn("if claimed, reply "+chr(96)+"SKIP: claimed"+chr(96),prompt)
+        self.assertIn("if claimed, reply "+chr(96)+"SKIP: claimed"+chr(96),
+                      (self.source/bench.PROMPT).read_text())
         with sqlite3.connect(self.source/bench.OPS) as original:
             self.assertEqual(original.execute(
                 "SELECT COUNT(*) FROM attempts WHERE va=?",(VA,)).fetchone()[0],7)

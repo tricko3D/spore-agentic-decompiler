@@ -27,6 +27,9 @@ WORK = Path("work/scratch/codex-pass1")
 OPS = WORK / "spore.sqlite3"
 KNOW = WORK / "memory/knowledge.sqlite3"
 RUNNER = Path("work/scratch/spore_first_pass_sqlite.py")
+PROMPT = Path("work/scratch/spore_first_pass_prompt.txt")
+PROTOCOL_VERSION = 2
+PROTOCOL_MARKER = "SAD_BRAIN_ABLATION_OWN_CLAIM_V2"
 MEMORY = Path("work/scratch/spore_collective_memory.py")
 RETRIEVAL = Path("work/scratch/brain_trial_query.py")
 CONFIG = WORK / "brain_trial.json"
@@ -191,6 +194,42 @@ def _validate_partial(repo, out, va, original):
     with sqlite3.connect(f"file:{(archive/'knowledge.sqlite3').resolve()}?mode=ro",uri=True) as db:
         db.execute("SELECT 1 FROM findings LIMIT 1").fetchone()
     return seed_tree
+
+
+def _patch_prompt(path):
+    """Eliminate the orchestrator-own-claim SKIP defect in the cloned prompt.
+
+    The production decompiler claims the target before launching the agent,
+    while its ordinary prompt says to SKIP when claimed. This instruction is
+    contradictory in a controlled one-agent/one-function experiment.
+    """
+    if not path.is_file() or path.is_symlink():
+        raise RuntimeError(f"Missing standalone benchmark prompt: {path}")
+    original=path.read_text(encoding="utf-8")
+    if PROTOCOL_MARKER in original:
+        if "if claimed, reply SKIP" in original:
+            raise RuntimeError("Partially patched benchmark prompt")
+        return False
+    needle="if claimed, reply "+chr(96)+"SKIP: claimed"+chr(96)
+    if original.count(needle)!=1:
+        raise RuntimeError("Unknown original claim rule. Refusing to change benchmark semantics blindly")
+    replacement=(
+        "if task.py reports this target as claimed, CONTINUE: the current "
+        "single-function benchmark runner itself owns that claim. "
+        "A self-owned claim is NOT a reason to SKIP. Never release, edit or "
+        "reset claims, and do not work on another function"
+    )
+    preface=(
+        "# "+PROTOCOL_MARKER+"\n"
+        "CONTROLLED BENCHMARK: Work only on the runner-assigned function {VA}. "
+        "The runner's existing claim on {VA} is EXPECTED. Do not terminate "
+        "because that claim exists. Before developing the first compiler "
+        "hypothesis, query the benchmark Brain tool from the additional runner "
+        "instructions. Its response may be empty by design. Keep testing "
+        "the assigned C++ candidate with the genuine checker.\n\n"
+    )
+    path.write_text(preface+original.replace(needle,replacement),encoding="utf-8")
+    return True
 
 
 def _patch_runner(path):
@@ -378,7 +417,7 @@ def prepare(repo, out, va=None, repeats=3, minimum=7, seed=20261118,
         va=choice["va"]
     else:
         raise ValueError("No eligible standalone slice. Run candidates and inspect target selection.")
-    if not (repo/RUNNER).is_file() or not (repo/MEMORY).is_file():
+    if not (repo/RUNNER).is_file() or not (repo/MEMORY).is_file() or not (repo/PROMPT).is_file():
         raise ValueError("Install the SAD runner and Collective Memory in the source checkout first")
     if not (repo/KNOW).is_file():
         raise ValueError("Collective Memory SQLite missing; consolidation has not been installed")
@@ -432,6 +471,7 @@ def prepare(repo, out, va=None, repeats=3, minimum=7, seed=20261118,
                 raise RuntimeError("Address anonymization collision")
         _mask_memory(seed_tree/KNOW,va,alias)
         _patch_runner(seed_tree/RUNNER)
+        _patch_prompt(seed_tree/PROMPT)
         _patch_memory_socket(seed_tree/MEMORY)
         shutil.copy2(RETRIEVAL_SOURCE,seed_tree/RETRIEVAL)
         shutil.copy2(ENTRY_SOURCE,seed_tree/ENTRY)
@@ -443,13 +483,14 @@ def prepare(repo, out, va=None, repeats=3, minimum=7, seed=20261118,
             item["state"]="prepared"
             item["seed"]=rng.randrange(1,2**31)
         write_json(out/"plan.json",{
-            "version":1,"created":now(),"source":str(repo),
+            "version":1,"protocol_version":PROTOCOL_VERSION,
+            "created":now(),"source":str(repo),
             "target":va,"alias":alias,"original_failures":choice["failures"],
             "original_cpp_sha256":hashlib.sha256(original.encode()).hexdigest(),
             "repeats":repeats,"random_seed":seed,
             "model":"deepseek/deepseek-v4.1-flash-1017","provider":"sail-research",
             "tooling_sha256":{name.as_posix():_tool_hash(seed_tree/name)
-                              for name in (ENTRY,RUNNER,RETRIEVAL,MEMORY)},
+                              for name in (ENTRY,RUNNER,RETRIEVAL,MEMORY,PROMPT)},
             "arms":order,
             "notes":"No paid calls performed; each run creates an isolated tree."})
         print(f"Prepared {len(order)} randomized, isolated test slots for {va}.")
@@ -533,7 +574,7 @@ def _tool_hash(path):
 def _seed_tooling(out, plan):
     """Fail before cloning or spending if the seed lacks its own safe launcher."""
     seed=out/"seed"
-    for name in (ENTRY,RUNNER,RETRIEVAL,MEMORY):
+    for name in (ENTRY,RUNNER,RETRIEVAL,MEMORY,PROMPT):
         file=seed/name
         if not file.is_file() or file.is_symlink():
             raise RuntimeError(
@@ -549,8 +590,13 @@ def _seed_tooling(out, plan):
         raise RuntimeError(
             "The frozen Brain memory module needs the short socket shim. "
             "Run: python3 brain_ablation.py repair-seed --out "+str(out))
+    if (plan.get("protocol_version")!=PROTOCOL_VERSION or
+            PROTOCOL_MARKER not in (seed/PROMPT).read_text(encoding="utf-8")):
+        raise RuntimeError(
+            "The experiment uses an obsolete claim/skip protocol. "
+            "Prepare a NEW randomized experiment with a different --out path.")
     expected=plan.get("tooling_sha256",{})
-    for name in (ENTRY,RUNNER,RETRIEVAL,MEMORY):
+    for name in (ENTRY,RUNNER,RETRIEVAL,MEMORY,PROMPT):
         key=name.as_posix()
         if key in expected and _tool_hash(seed/name)!=expected[key]:
             raise RuntimeError(f"Benchmark seed tooling changed after preparation: {key}")
@@ -613,7 +659,7 @@ def repair_seed(out):
     runner=seed/RUNNER
     query=seed/RETRIEVAL
     launcher=seed/ENTRY
-    if any(p.is_symlink() for p in (runner,query,launcher,seed/MEMORY)):
+    if any(p.is_symlink() for p in (runner,query,launcher,seed/MEMORY,seed/PROMPT)):
         raise RuntimeError("Benchmark tooling must never be symlinks")
     code=runner.read_text(encoding="utf-8")
     old_cmd=".venv/bin/python work/scratch/brain_trial_query.py --text"
@@ -628,6 +674,7 @@ def repair_seed(out):
     # Update the socket address selection in this clone only, leaving the
     # independent memory DB, vectors and evidence exactly as archived.
     _patch_memory_socket(seed/MEMORY)
+    _patch_prompt(seed/PROMPT)
     # Apply only benchmark-owned scripts. SQLite, user source, task/checker code,
     # archived evidence, seeds and existing trial data remain unchanged.
     tmp=runner.with_name(runner.name+".repair.tmp")
@@ -640,8 +687,9 @@ def repair_seed(out):
         tmp=dst.with_name(dst.name+".repair.tmp")
         shutil.copy2(src,tmp)
         tmp.replace(dst)
+    plan["protocol_version"]=PROTOCOL_VERSION
     plan["tooling_sha256"]={name.as_posix():_tool_hash(seed/name)
-                             for name in (ENTRY,RUNNER,RETRIEVAL,MEMORY)}
+                             for name in (ENTRY,RUNNER,RETRIEVAL,MEMORY,PROMPT)}
     plan["tooling_repair_utc"]=now()
     write_json(planpath,plan)
     _seed_tooling(out,plan)
@@ -724,16 +772,22 @@ def run_next(out, execute=False, budget=DEFAULT_BUDGET, minutes=20):
             proc=subprocess.run(cmd,cwd=trial,env=env,stdout=log,stderr=subprocess.STDOUT)
         item["exit_code"]=proc.returncode
         with sqlite3.connect(trial/OPS) as db:
-            completed=db.execute("SELECT 1 FROM attempts WHERE va=? LIMIT 1",
-                                  (plan["target"],)).fetchone() is not None
-        item["state"]="completed" if proc.returncode==0 and completed else "error"
-        if not completed:
+            result=db.execute("SELECT status,note FROM attempts WHERE va=? ORDER BY id DESC LIMIT 1",
+                              (plan["target"],)).fetchone()
+        completed=result is not None
+        own_claim_skip=bool(result and result[0]=="SKIP"
+                            and re.search(r"(?i)\bclaimed\b",result[1] or ""))
+        item["state"]=("protocol_invalid" if own_claim_skip else
+                       "completed" if proc.returncode==0 and completed else "error")
+        if own_claim_skip:
+            item["error"]="Agent treated the orchestrator-owned claim as a blocker"
+        elif not completed:
             item["error"]="Runner exited without a recorded decompilation attempt"
         item["finished"]=now()
         write_json(planpath,plan)
         print("Trial",item["name"],"finished with exit code",proc.returncode,
               "and",("an independent result" if completed else "NO_RESULT"),flush=True)
-        if item["state"]=="error":
+        if item["state"] in ("error","protocol_invalid"):
             logfile=trial/"benchmark-run.log"
             print("Trial invalid. Diagnostics:",logfile,flush=True)
             if logfile.exists():
@@ -885,17 +939,21 @@ def report(out):
               "arm":item["arm"],"state":item["state"],
               "match":None,"checker_calls":None,"input_tokens":None,
               "output_tokens":None,"brain_queries":None,"cost_usd":None,
-              "result_note":None, "exposure":None, "treatment_adherent":None}
+              "result_note":None, "exposure":None, "treatment_adherent":None,
+              "protocol_valid":plan.get("protocol_version")==PROTOCOL_VERSION}
         if (trial/OPS).exists():
             with sqlite3.connect(trial/OPS) as con:
                 result=con.execute("SELECT status,note,utc FROM attempts WHERE va=? ORDER BY id DESC LIMIT 1",
                                    (plan["target"],)).fetchone()
                 data["status"]=result[0] if result else "NO_RESULT"
-                # SKIP is an agent verdict, not a byte mismatch. Keep it in the
-                # intention-to-treat match denominator, but distinguish it
-                # from an independently checked FAIL.
-                data["match"]=(result[0]=="MATCH") if result else None
                 data["result_note"]=result[1] if result else None
+                if (result and result[0]=="SKIP" and
+                        re.search(r"(?i)\bclaimed\b",result[1] or "")):
+                    data["protocol_valid"]=False
+                if item["state"]=="protocol_invalid":
+                    data["protocol_valid"]=False
+                # Report old protocol claims as invalid, not failed trials.
+                data["match"]=(result[0]=="MATCH") if result and data["protocol_valid"] else None
                 diff=re.search(r"\bdiffs?\s*[=:]\s*(\d+)",result[1],re.I) if result and result[1] else None
                 data["diff_bytes"]=int(diff.group(1)) if diff else None
                 budget=con.execute(
@@ -912,12 +970,16 @@ def report(out):
             data["treatment_adherent"]=exposure["adherent"]
         rows.append(data)
     write_json(out/"report.json",{"target":plan["target"],"generated":now(),"trials":rows})
+    print("Benchmark protocol:",plan.get("protocol_version","legacy"),
+          "| function:",plan["target"])
     print("ARM             REP  STATE       RESULT     AGENT CHECKS  BRAIN  INPUT TOK.   OUTPUT TOK.  $ (shared key)")
     for x in rows:
         print(f"{x['arm']:<16}{x['repeat']:>3}  {x['state']:<12}"
               f"{x.get('status','-'):<10} {str(x['checker_calls']):>12}  "
               f"{str(x['brain_queries']):>5}  {str(x['input_tokens']):>10}  "
               f"{str(x['output_tokens']):>11}  {str(x['cost_usd']):>8}")
+        if not x["protocol_valid"] and x.get("status")!="NO_RESULT":
+            print("     INVALID PROTOCOL: excluded from causal comparison")
         if x.get("status") in ("SKIP","FAIL","DEFER") and x.get("result_note"):
             print("     Note:",str(x["result_note"]).replace("\n"," ")[:500])
         if x.get("brain_queries") is not None and x["state"]=="completed":
@@ -925,7 +987,7 @@ def report(out):
                   "yes" if x["treatment_adherent"] else "NO",
                   "| findings:",x.get("findings_returned",0),
                   "| techniques:",x.get("techniques_returned",0))
-    print("\nSummary by arm (intention to treat, includes SKIP as no match):")
+    print("\nSummary by arm (intention to treat within protocol v2; own-claim SKIPs excluded):")
     for arm in ARMS:
         group=[x for x in rows if x["arm"]==arm and x["match"] is not None]
         if group:
@@ -940,6 +1002,7 @@ def report(out):
                   f" {adhered}/{len(group)} treatment adherence,"
                   f" {avg_checks:.1f} agent checks/trial, {avg_tokens:.0f} tokens/trial")
     print("\nSKIP is the agent's decision, not an independently verified mismatch.")
+    print("Old claim/skip protocol runs are retained as archival failures, not treatment outcomes.")
     print("AGENT CHECKS count shell check.py calls observed in the agent's JSONL;")
     print("the runner's independent verification is separate and is recorded in result notes.")
     print("Assignment without Brain retrieval is not proof that knowledge was evaluated.")

@@ -19,6 +19,28 @@ The vector database and its precomputed embeddings remain in the raw, consolidat
 
 The target's own historical findings remain semantically discoverable in raw/consolidated memory, but its exact address is replaced with a stable pseudonymous address in cloned memory tables, FTS records and evidence labels. Direct target-address queries are rejected by the benchmark query tool. This is intentional: the experiment tests whether agents can reason with earlier failures when they discover those failures through technical relevance, not by directly loading the previous target history.
 
+## Protocol v2: runner-owned claims are not evidence
+
+The production prompt contains the instruction to return `SKIP: claimed` whenever `task.py` reports a claimed function. However, this runner must claim its assigned function before launching the agent. In the original scientific pilot, the raw-findings agent replied `SKIP: claimed`, made no Brain calls, and did no compilation. Its automatic post-run checker then reported no compiled function. This is a **protocol defect**, not a decompilation failure or evidence for/against consolidation.
+
+Protocol v2 patches the **copied experiment prompt only** so the runner's own claim is explicitly expected. It retains the claim lock for correct concurrency and forbids modifying or releasing it. The agent must investigate the exact assigned target and is instructed to query the Brain before its first compiler hypothesis, even in the baseline where no knowledge will be supplied.
+
+The patch and its SHA-256 are identical for every treatment arm. The actual production prompt and SQLite checkout are left untouched. The old protocol v1 experiment and its terminal SKIP remain archived; its result should be reported in a **protocol-validation log**, not interpreted as evidence of a measured difference between knowledge conditions.
+
+To run a new and internally consistent study, use a **new** experiment output directory instead of changing only the remaining v1 trials:
+
+```bash
+cd ~/spore-agentic-decompiler
+git pull --ff-only
+python3 brain_ablation.py prepare --repo ~/spore-decomp \
+  --out ~/sad-brain-benchmark-v2 --repeats 3 --va 0x00b848f0
+python3 brain_ablation.py run-next --out ~/sad-brain-benchmark-v2
+```
+
+The above is preparation and a dry run only. If the target's 7-failure eligibility changes, `candidates` shows other targets. Protocol v2 refuses to execute old v1 plans, even if their remaining arms are still prepared, to prevent contamination by mixed prompts. Re-running the original v1 trial selectively as if it were a missing baseline would compromise randomization.
+
+A valid *test of whether the knowledge was used* still requires successful Brain tool invocation and retrieved evidence. A mere assignment to the raw or consolidated arm is not proof of exposure. Protocol v2 prompts the agent consistently across arms but does not force its tool calls; the report tracks this distinction. An additional protocol-validity gate or controlled query mechanism would be needed to guarantee equal knowledge delivery without relying on voluntary agent behavior.
+
 ## Preparation, free and non-destructive
 
 Prerequisites: SAD installed inside the Spore checkout, the independent Collective Memory database initialized with consolidated techniques, a working local embedding service environment, and a target with at least seven genuine failed/deferred attempts whose implementation lives in its own dedicated `match/slices/sXXXXXXXX/sXXXXXXXX.cpp` file.
