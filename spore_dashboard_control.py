@@ -7,6 +7,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import tempfile
 import sqlite3
 from pathlib import Path
 import re
@@ -82,39 +83,123 @@ class Controller:
         except FileNotFoundError:
             raise ValueError('SQLite not initialized. Run setup first.')
 
-    def _retry_allowlist(self,module):
-        """Resolve one explicit allowlist. All-modules dashboard runs fail closed.
-
-        The existing environment override takes priority. When no environment
-        override is present, selecting all modules automatically uses the
-        user's saved retry-all.json. Never silently expand to the whole queue.
-        """
+    def _allowlist_location(self):
         configured=os.environ.get('SPORE_RETRY_ALLOWLIST','').strip()
-        fallback=self.repo/'work/scratch/codex-pass1/retry-all.json'
         if configured:
-            path=Path(configured).expanduser().resolve()
-            source='SPORE_RETRY_ALLOWLIST'
-        elif module=='*':
-            path=fallback
-            source='retry-all.json'
-        else:
+            return Path(configured).expanduser().resolve(), 'SPORE_RETRY_ALLOWLIST'
+        return self.repo/'work/scratch/codex-pass1/retry-all.json', 'retry-all.json'
+
+    @staticmethod
+    def _parse_allowlist(raw):
+        try:
+            data=json.loads(raw)
+        except (ValueError,TypeError) as exc:
+            raise ValueError('Invalid JSON: '+str(exc)) from exc
+        if not isinstance(data,list) or not data:
+            raise ValueError('Allow list must be a nonempty JSON array of function addresses')
+        if len(data)>12000:
+            raise ValueError('Allow list exceeds 12,000 addresses')
+        result=[]
+        seen=set()
+        for index,item in enumerate(data):
+            if not isinstance(item,str) or not re.fullmatch(r'0x[0-9a-fA-F]{1,8}',item):
+                raise ValueError('Address '+str(index+1)+' must be 0x followed by 1 to 8 hex digits')
+            address='0x'+format(int(item,16),'08x')
+            if address in seen:
+                raise ValueError('Duplicate function address: '+address)
+            seen.add(address)
+            result.append(address)
+        return result
+
+    def allowlist_document(self):
+        """Read only the configured JSON list, never an arbitrary URL/path."""
+        path,source=self._allowlist_location()
+        with self.lock:
+            if not path.is_file():
+                return {'path':str(path),'source':source,'exists':False,
+                        'revision':'missing','content':'[\\n]\\n','addresses':[],
+                        'count':0,'valid':False,
+                        'validation_error':'No list exists. Enter at least one address to create it.'}
+            raw=path.read_bytes()
+            if len(raw)>256000:
+                raise ValueError('Allow list is larger than 256 KB')
+            try:
+                content=raw.decode('utf-8')
+            except UnicodeDecodeError as exc:
+                raise ValueError('Allow list must be UTF-8 JSON') from exc
+            error=None
+            try:
+                addresses=self._parse_allowlist(content)
+            except ValueError as exc:
+                addresses=[]
+                error=str(exc)
+            return {'path':str(path),'source':source,'exists':True,
+                    'revision':hashlib.sha256(raw).hexdigest(),
+                    'content':content,'addresses':addresses,
+                    'count':len(addresses),'valid':error is None,
+                    'validation_error':error}
+
+    def save_allowlist(self,data):
+        """Atomically update a checked, nonempty JSON array while idle."""
+        if not self.enabled:
+            raise PermissionError('Dashboard controls disabled')
+        if not isinstance(data,dict) or not isinstance(data.get('content'),str):
+            raise ValueError('Expected JSON content for the allow list')
+        content=data['content']
+        if len(content.encode('utf-8'))>256000:
+            raise ValueError('Allow list exceeds 256 KB')
+        addresses=self._parse_allowlist(content)
+        revision=data.get('revision')
+        if not isinstance(revision,str):
+            raise ValueError('Missing file revision. Reload the allow list.')
+        with self.lock:
+            self._confirm_idle()
+            path,_=self._allowlist_location()
+            previous=path.read_bytes() if path.exists() else None
+            if previous is not None and len(previous)>256000:
+                raise ValueError('Existing allow list exceeds 256 KB')
+            actual=hashlib.sha256(previous).hexdigest() if previous is not None else 'missing'
+            if actual!=revision:
+                raise ValueError('Allow list changed on disk. Reload it before saving.')
+            # A canonical JSON file also makes future manual edits and diffs clear.
+            payload=(json.dumps(addresses,indent=2)+'\\n').encode('utf-8')
+            path.parent.mkdir(parents=True,exist_ok=True)
+            fd,tmp=tempfile.mkstemp(prefix='.sad-allowlist-',suffix='.tmp',dir=str(path.parent))
+            try:
+                with os.fdopen(fd,'wb') as out:
+                    out.write(payload)
+                    out.flush()
+                    os.fsync(out.fileno())
+                if previous is not None:
+                    os.chmod(tmp,path.stat().st_mode & 0o777)
+                os.replace(tmp,path)
+                try:
+                    dirfd=os.open(str(path.parent),os.O_RDONLY)
+                    try:os.fsync(dirfd)
+                    finally:os.close(dirfd)
+                except OSError:
+                    pass
+            finally:
+                if os.path.exists(tmp):
+                    os.unlink(tmp)
+            return self.allowlist_document()
+
+    def _retry_allowlist(self,module):
+        """All-modules runs use a validated list and never fall back to the queue."""
+        path,source=self._allowlist_location()
+        configured=bool(os.environ.get('SPORE_RETRY_ALLOWLIST','').strip())
+        if module!='*' and not configured:
             return None
         if not path.is_file():
-            raise ValueError(
-                'Retry allowlist not found: '+str(path)+'. '
-                'All-modules dashboard runs require retry-all.json; '
-                'no unrestricted paid run will be started.')
+            raise ValueError('Retry allow list not found: '+str(path)+
+                             '. All-modules launches require a saved nonempty list.')
+        raw=path.read_bytes()
+        if len(raw)>256000:
+            raise ValueError('Retry allow list exceeds 256 KB')
         try:
-            data=json.loads(path.read_text(encoding='utf-8'))
-        except (OSError,ValueError) as exc:
-            raise ValueError('Cannot read retry allowlist: '+str(exc)) from exc
-        if not isinstance(data,list) or not data:
-            raise ValueError('Retry allowlist must be a nonempty JSON array of addresses')
-        addresses=set()
-        for entry in data:
-            if not isinstance(entry,str) or not re.fullmatch(r'0x[0-9a-fA-F]{1,8}',entry):
-                raise ValueError('Retry allowlist contains an invalid function address')
-            addresses.add(int(entry,16))
+            addresses=self._parse_allowlist(raw.decode('utf-8'))
+        except UnicodeDecodeError as exc:
+            raise ValueError('Retry allow list must be UTF-8 JSON') from exc
         return {'path':str(path),'source':source,'count':len(addresses)}
 
     def preview(self,module,workers):
