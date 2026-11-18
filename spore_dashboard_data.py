@@ -461,15 +461,21 @@ def functions(repo,status='ALL',search='',offset=0,limit=75):
             if search and search.lower() not in (r['va']+' '+(r['suggested_file'] or '')).lower():continue
             rows.append({'va':r['va'],'size':r['size'],'file':sanitize(r['suggested_file'],180),
                          '_last_log':x['log_path'] if x else None,
+                         '_last_id':x['id'] if x else -1,
+                         'last_activity':x['utc'] if x else None,
                          'status':kind,'effort':x['effort'] if x else '',
                          'reason':failure_reason(x['note']) if x and kind in ('FAIL','DEFER','SKIP') else '',
                          'agreement':byte_agreement(kind,r['size'],x['note'] if x else ''),
                          'attempts':attempts[r['va']]})
+        # Sort across the full filtered result set before pagination. Pending
+        # functions have no activity and remain at the bottom in queue order.
+        rows.sort(key=lambda item: (-item['_last_id'], item['va']))
         items=rows[offset:offset+limit]
         for item in items:
             if item['agreement'] is None:
                 item['agreement']=logged_byte_agreement(repo,item['_last_log'],item['status'],item['size'])
             item.pop('_last_log',None)
+            item.pop('_last_id',None)
         return {'total':len(rows),'bytes':sum(r['size'] for r in rows),
                 'offset':offset,'items':items}
 
