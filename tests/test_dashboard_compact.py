@@ -97,7 +97,7 @@ class CompactUIRegression(unittest.TestCase):
         self.assertNotIn('className="app-header"',self.app)
         self.assertNotIn('className="dock-knowledge"',self.agent_dock)
         self.assertIn('<KnowledgeDock state={overview?.consolidator',self.knowledge)
-        self.assertIn('className="knowledge-service-body"',self.knowledge_dock)
+        self.assertIn('className="brain-service-line"',self.knowledge_dock)
         self.assertIn('.bottom-hud .control-dock',self.css)
         self.assertIn('flex:0 0 50px',self.css)
 
@@ -175,7 +175,7 @@ class CompactUIRegression(unittest.TestCase):
     def test_knowledge_list_and_sidebar_keep_independent_sizes(self):
         self.assertIn('className="brain-list-pane"',self.knowledge)
         self.assertIn('className="brain-sidebar"',self.knowledge)
-        self.assertIn('className="brain-service-widget"',self.knowledge_dock)
+        self.assertIn('className="brain-widget brain-service-widget"',self.knowledge_dock)
         self.assertIn('className="brain-queue-widget"',self.knowledge)
         self.assertIn('className="brain-errors-widget"',self.knowledge)
         self.assertIn('grid-template-columns:minmax(0,1fr) clamp(288px,20vw,350px)',self.brain_css)
@@ -233,7 +233,7 @@ class CompactUIRegression(unittest.TestCase):
         self.assertNotIn('<Panel title="Explore the brain"',self.knowledge)
         self.assertNotIn('className="knowledge-card"',self.knowledge)
         self.assertIn("mode==='techniques'",self.knowledge)
-        self.assertIn("mode==='findings'",self.knowledge)
+        self.assertIn("!isTechniques",self.knowledge)
         self.assertIn("setSelection({kind:'technique',id:x.id})",self.knowledge)
         self.assertIn("setSelection({kind:'finding',id:x.id})",self.knowledge)
         self.assertIn(".brain-workspace .brain-data-row",self.brain_css)
