@@ -395,6 +395,50 @@ def _get_key():
     return key
 
 
+class CompletionResponseError(ValueError):
+    """A paid response arrived, but did not contain parseable final JSON.
+
+    Attach only cost and token-count metadata so it can be settled accurately.
+    Never persist the raw response, its reasoning, or potentially private text.
+    """
+    def __init__(self, reason, usage):
+        super().__init__(reason)
+        self.usage = usage
+
+
+def _response_usage(result):
+    raw = result.get("usage") if isinstance(result, dict) else None
+    raw = raw if isinstance(raw, dict) else {}
+    cost = raw.get("cost")
+    try:
+        cost = float(cost) if cost is not None else None
+        if cost is not None and not 0 <= cost < 100:
+            cost = None
+    except (TypeError, ValueError, OverflowError):
+        cost = None
+    return {
+        "cost": cost,
+        "prompt_tokens": raw.get("prompt_tokens"),
+        "completion_tokens": raw.get("completion_tokens"),
+        "reasoning_tokens": ((raw.get("completion_tokens_details") or {}).get(
+            "reasoning_tokens") if isinstance(
+                raw.get("completion_tokens_details"), dict) else None),
+    }
+
+
+def _completion_diagnostic(choice, usage):
+    """Only log structured outcome metadata, never the raw model completion."""
+    finish = choice.get("finish_reason", "unknown") if isinstance(choice, dict) else "unknown"
+    if not isinstance(finish, str) or not re.fullmatch(r"[a-zA-Z_]{1,35}", finish):
+        finish = "unknown"
+    metrics = [f"finish_reason={finish}"]
+    for key in ("completion_tokens", "reasoning_tokens"):
+        value = usage.get(key)
+        if type(value) is int and 0 <= value < 10_000_000:
+            metrics.append(f"{key}={value}")
+    return ", ".join(metrics)
+
+
 def call_deepseek(key, user, *, timeout=95):
     payload = {
         "model": MODEL,
@@ -402,7 +446,10 @@ def call_deepseek(key, user, *, timeout=95):
                      "max_price": {"prompt": 0.50, "completion": 1.00}},
         "messages": [{"role":"system","content":SYSTEM}, {"role":"user","content":user}],
         "temperature": 0,
-        "max_tokens": 1900,
+        # OpenRouter counts reasoning AND visible text against max_tokens.
+        # Cap reasoning to keep enough budget for the required JSON answer.
+        "reasoning": {"effort": "low"},
+        "max_tokens": 2800,
         "response_format": {"type":"json_object"},
         "usage": {"include": True},
         "stream": False,
@@ -417,22 +464,27 @@ def call_deepseek(key, user, *, timeout=95):
         with urllib.request.urlopen(req, timeout=timeout) as res:
             raw = res.read(250000)
         result = json.loads(raw)
-        message = result["choices"][0]["message"]["content"]
-        if isinstance(message, list):
-            message = "".join(x.get("text","") for x in message if isinstance(x,dict))
-        if not isinstance(message, str):
-            raise ValueError("No JSON response content")
-        parsed = json.loads(message.strip())
-        usage = result.get("usage") or {}
-        # Cost can be absent; caller conservatively accounts the reservation.
-        cost = usage.get("cost")
-        if cost is not None:
-            cost = float(cost)
-            if not 0 <= cost < 100:
-                cost = None
-        return parsed, {
-            "cost": cost, "prompt_tokens": usage.get("prompt_tokens"),
-            "completion_tokens": usage.get("completion_tokens")}
+        usage = _response_usage(result)
+        options = result.get("choices", []) if isinstance(result, dict) else []
+        if not isinstance(options, list) or not options or not isinstance(options[0], dict):
+            raise CompletionResponseError("OpenRouter returned no completion choices", usage)
+        choice = options[0]
+        msg = choice.get("message")
+        msg = msg if isinstance(msg, dict) else {}
+        content = msg.get("content")
+        if isinstance(content, list):
+            content = "".join(x.get("text", "") for x in content
+                              if isinstance(x, dict) and isinstance(x.get("text"), str))
+        if not isinstance(content, str) or not content.strip():
+            raise CompletionResponseError(
+                "No final JSON content (" + _completion_diagnostic(choice, usage) + ")", usage)
+        try:
+            parsed = json.loads(content.strip())
+        except (json.JSONDecodeError, TypeError):
+            raise CompletionResponseError(
+                "Final content was not valid JSON (" +
+                _completion_diagnostic(choice, usage) + ")", usage) from None
+        return parsed, usage
     except urllib.error.HTTPError as exc:
         # Never log server responses that might contain request content or keys.
         raise RuntimeError(f"OpenRouter HTTP {exc.code}") from None
@@ -560,6 +612,10 @@ def process(repo, *, max_items=4, daily_usd=0.15, caller=call_deepseek, key=None
                     created += apply(con,finding_id,source_hash,proposals)
                     done += 1
                 except Exception as exc:
+                    if isinstance(exc, CompletionResponseError):
+                        # A response may exhaust its tokens on reasoning but
+                        # still have an accurate usage/cost in the API reply.
+                        _settle(con, request_id, exc.usage)
                     reason = type(exc).__name__ + ": " + str(exc)[:140]
                     _error(con, finding_id, reason)
                     failed += 1
