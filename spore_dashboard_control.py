@@ -104,7 +104,7 @@ class Controller:
         if result.returncode:
             raise ValueError('Preview unavailable: '+
                              (result.stdout+' '+result.stderr)[-300:])
-        found=re.search(r'runnable functions \\(passes are additional per run\\): (\\d+)',
+        found=re.search(r'runnable functions \(passes are additional per run\): (\d+)',
                         result.stdout)
         if not found:
             raise ValueError('Preview output could not be interpreted. No agents started.')
