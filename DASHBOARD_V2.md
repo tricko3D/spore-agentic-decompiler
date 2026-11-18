@@ -1,4 +1,4 @@
-# SAD Dashboard V2: Operations + Knowledge
+# SAD Dashboard V2: Agents + Brain + Infra Docs
 
 The dashboard is a local, offline-bundled React/TypeScript application with a
 Python/stdlib localhost API. It preserves the Spore-inspired instrument panels,
@@ -9,6 +9,8 @@ while providing a separately managed, interactive Collective Memory view.
 
 - dashboard_web/src/App.tsx: shell, shared telemetry polling and one permanent bottom command bar.
 - dashboard_web/src/components/AgentDock.tsx: permanent inline decompiler launch/stop controls.
+- dashboard_web/src/views/InfraDocs.tsx: read-only, annotated system diagram grounded in actual controller, API, persistence and consolidator modules.
+- dashboard_web/src/components/ErrorModal.tsx: scrollable full consolidation error detail with clipboard copy.
 - dashboard_web/src/components/KnowledgeDock.tsx: consolidator control panel available in Brain view.
 - dashboard_web/src/views/Operations.tsx: existing worker fleet, byte metrics,
   function explorer, expedition controls, provisional planning, allowlist editor,
@@ -54,9 +56,7 @@ large Windows/Chromium displays. The compact mode addresses this structurally:
 - Keeps 16 agent cards small and fixed-height instead of stretching the grid
   to the entire document's height.
 - One permanent Spore-style bottom bar shows SAD, Agents and Brain navigation, agent controls and actual backend connection status in that order. Consolidation controls are available inside Brain, not as a second bottom bubble.
-- Replaces the width-scaled SVG graph with a bounded, clickable source-link
-  adjacency map. Selecting a technique reveals the investigations supporting
-  that specific observation, with explicit access to full details.
+- Restores the original clickable SVG technique-to-finding source-link map within a fixed, scrollable panel. Graph contents cannot change the size of neighbouring panels.
 - Loads only the active React view and pauses its requests when it is
   unmounted or the browser is hidden. Polling is serialized, abortable and
   cannot pile up overlapping requests.
@@ -171,3 +171,7 @@ Knowledge now has a single native scrolling owner. Its previously nested result-
 ## Raw findings crash and render isolation
 
 The Knowledge technique and raw-findings tabs use different item shapes. The polling hook previously retained the previous URL's data during the next query, so switching tabs rendered technique entries as findings and passed an absent status into the Tag component. Poll responses are now URL-keyed, and tags tolerate missing data defensively. The entire Knowledge component is memoized so the shell's three-second agent-snapshot refresh doesn't cause Brain rerenders. Search is memoized, and off-screen result cards use CSS content-visibility to skip rendering. The backend already uses ThreadingHTTPServer and paginates findings/techniques at 30 records per page; there is no full raw dump.
+
+## Fixed workspace and Infra Docs
+
+Agents, Brain and Infra Docs occupy the viewport above the single persistent 50px command bar. Brain no longer repeats a large title or the instructional How knowledge is formed pipeline. Its six metric cards, search bar, relationship graph, evidence explorer, consolidation controls, queue and error list are allocated fixed grid tracks. Contents scroll only inside the assigned panel, with stable card rows. Opening a result or detail uses a React portal so the overlay sits over the HUD, not behind it, and never expands an existing card. Consolidation errors show compact summaries in the sidebar; clicking opens a centered scrollable modal with the original error text and a Copy button. No error handling semantics are changed. Infra Docs is a separate #infra view, reached by its button immediately before CONNECTED, showing an annotated source-grounded topology diagram and design commentary.

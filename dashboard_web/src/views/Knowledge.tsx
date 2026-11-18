@@ -5,8 +5,9 @@ import {Drawer,ErrorText,Metric,Panel,Tag} from '../components/Panel';
 import BrainGraph from '../components/BrainGraph';
 import BrainSearch from '../components/BrainSearch';
 import KnowledgeDock from '../components/KnowledgeDock';
+import ErrorModal from '../components/ErrorModal';
 import type {BrainGraph as Graph,Finding,FindingDetail,
-  KnowledgeOverview,Paginated,Technique,TechniqueDetail} from '../types';
+  KnowledgeOverview,Paginated,QueueError,Technique,TechniqueDetail} from '../types';
 
 type Selection={kind:'technique'|'finding';id:number};
 type Category='all'|'calling_convention'|'register_allocation'|'stack_layout'|'compiler_flags'|'optimization'|'control_flow'|'layout_types'|'templates'|'link_time'|'other';
@@ -84,6 +85,7 @@ function Knowledge({active,overview,summaryError,refreshOverview}:{active:boolea
  const [mode,setMode]=useState<'techniques'|'findings'>('techniques');
  const [draft,setDraft]=useState(''),[search,setSearch]=useState(''),[category,setCategory]=useState<Category>('all');
  const [status,setStatus]=useState(''),[offset,setOffset]=useState(0),[selection,setSelection]=useState<Selection|null>(null);
+ const [selectedError,setSelectedError]=useState<QueueError|null>(null);
  const openTechnique=useCallback((id:number)=>setSelection({kind:'technique',id}),[]);
  const openFinding=useCallback((id:number)=>setSelection({kind:'finding',id}),[]);
  useEffect(()=>{const t=window.setTimeout(()=>{setSearch(draft);setOffset(0)},300);return ()=>clearTimeout(t)},[draft]);
@@ -93,11 +95,6 @@ function Knowledge({active,overview,summaryError,refreshOverview}:{active:boolea
  const {value:list,error:listError}=usePoll<Paginated<Technique|Finding>>(endpoint,20000,active);
  const queue=overview?.queue||{},waiting=(queue.pending||0)+(queue.claimed||0);
  return <section className="knowledge-view view-body">
-  <div className="knowledge-intro"><div><p className="eyebrow">COLLECTIVE INTELLIGENCE</p>
-   <h1>Compiler Knowledge</h1>
-   <p>Explore what the fleet learned, trace each claim back to its checker evidence, and steer consolidation independently of the workers.</p>
-  </div><div className="brain-state"><span className={'status-dot '+(overview?.consolidator?.active?'online':'offline')}></span>
-   {overview?.consolidator?.active?'Brain consolidating':'Consolidator idle'}</div></div>
   <div className="metrics knowledge-metrics">
    <Metric label="Historical findings" value={pretty(overview?.findings)} detail={pretty(overview?.verified_matches)+' matched functions'}/>
    <Metric label="Reusable techniques" value={pretty(overview?.techniques)} tone="tone-match" detail={pretty(overview?.links)+' evidence links'}/>
@@ -105,7 +102,7 @@ function Knowledge({active,overview,summaryError,refreshOverview}:{active:boolea
    <Metric label="Failed extraction" value={pretty(queue.failed||0)} tone={queue.failed?'tone-fail':''} detail="Inspectable below"/>
    <Metric label="Embedding backlog" value={pretty(overview?.pending_embeddings)} detail="Local ONNX model"/>
    <Metric label="Today’s spend" value={money(overview?.daily_spend)} detail="Separate from worker spend"/>
-  </div><ErrorText error={summaryError}/>
+  </div><div className="knowledge-error-banner"><ErrorText error={summaryError}/></div>
   <BrainSearch onTechnique={openTechnique} onFinding={openFinding}/>
   <div className="knowledge-layout">
    <div className="knowledge-main">
@@ -168,22 +165,20 @@ function Knowledge({active,overview,summaryError,refreshOverview}:{active:boolea
      </div>
      <p className="subtle">An extracted technique is observed or hypothetical, not automatically proven by byte-exact matches.</p>
     </Panel>
-    <Panel title="Recent consolidation errors" subtitle="Failures have backoff, so one bad response does not block other findings">
+    <Panel title="Recent consolidation errors" subtitle="Select one to inspect and copy its full error">
      <div className="stack-list">{overview?.errors?.map(x=><button key={x.finding_id} className="error-record"
-      onClick={()=>setSelection({kind:'finding',id:x.finding_id})}>
-      <div className="row-between"><strong className="mono">{x.va}</strong><Tag value={x.state}/></div>
-      <p>{x.error}</p><small>{x.failures} failures · Next retry {x.next_retry_utc||'not scheduled'}</small></button>)}
+      onClick={()=>setSelectedError(x)} aria-label={'Inspect error for '+x.va}>
+      <span className="row-between"><strong className="mono">{x.va}</strong><Tag value={x.state}/></span>
+      <span className="error-record-summary">{x.error||'Unknown consolidation error'}</span>
+      <small>{x.failures} failed attempts · View full error</small></button>)}
       {!overview?.errors?.length&&<p className="subtle">No recorded consolidation errors.</p>}</div>
     </Panel>
-    <Panel title="How knowledge is formed" subtitle="Source-grounded, never model-verified">
-     <div className="pipeline-flow"><span>Checker evidence</span><b>↓</b>
-      <span>Collective Memory</span><b>↓</b><span>DeepSeek consolidator</span><b>↓</b>
-      <span>Verbatim evidence validation</span><b>↓</b><span>Reusable technique + source links</span></div>
-    </Panel>
+
    </div>
   </div>
   {selection&&<EvidenceInspector selection={selection} onChoose={setSelection}
     onClose={()=>setSelection(null)} refresh={refreshOverview}/>}
+  {selectedError&&<ErrorModal error={selectedError} onClose={()=>setSelectedError(null)}/>}
  </section>;
 }
 

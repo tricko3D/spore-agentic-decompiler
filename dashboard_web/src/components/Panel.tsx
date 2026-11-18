@@ -1,3 +1,4 @@
+import {createPortal} from 'react-dom';
 import type {ReactNode} from 'react';
 export function Panel({title,subtitle,action,children,className=''}:{
  title:string;subtitle?:string;action?:ReactNode;children:ReactNode;className?:string
@@ -18,12 +19,12 @@ export function Tag({value,tone}: {value?:string|null;tone?:string}){
  return <span className={'tag '+(tone||label.toLowerCase().replace(/[^a-z0-9]+/g,'-'))}>{label}</span>;
 }
 export function Drawer({title,subtitle,onClose,children}:{title:string;subtitle?:string;onClose:()=>void;children:ReactNode}){
- return <div className="overlay" onMouseDown={e=>{if(e.target===e.currentTarget)onClose()}}>
+ return createPortal(<div className="overlay" onMouseDown={e=>{if(e.target===e.currentTarget)onClose()}}>
    <aside className="detail-drawer" role="dialog" aria-modal="true" aria-label={title}>
     <header className="drawer-head"><div><h2>{title}</h2>{subtitle&&<p className="subtle mono">{subtitle}</p>}</div>
      <button type="button" onClick={onClose}>Close</button></header>
     <div className="drawer-content">{children}</div>
    </aside>
-  </div>;
+  </div>,document.body);
 }
 export function ErrorText({error}:{error?:string|null}){return error?<p className="error-text" role="alert">{error}</p>:null}

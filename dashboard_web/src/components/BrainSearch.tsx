@@ -1,6 +1,6 @@
 import {memo,useState,type FormEvent} from 'react';
 import {get,query} from '../api';
-import {Panel,Tag} from './Panel';
+import {Drawer,Panel,Tag} from './Panel';
 
 interface SearchResults {
  mode:'hybrid'|'lexical';
@@ -20,35 +20,37 @@ function BrainSearch({onTechnique,onFinding}:{
   catch(e){setError((e as Error).message)}
   finally{setQuerying(false)}
  }
- return <Panel title="Search Collective Memory" subtitle="Ask about compiler behavior, registers, calling conventions or specific mismatches; retrieval is local and free"
-  action={<span className="subtle">FTS5 + 384D similarity</span>}>
+ return <><Panel title="Search Collective Memory" subtitle="Ask about compiler behavior, registers, calling conventions or specific mismatches; retrieval is local and free"
+  action={<span className="subtle">FTS5 + 384D similarity</span>} className="brain-search-panel">
   <form className="brain-search" onSubmit={e=>void search(e)}>
    <input type="search" placeholder="Why is MSVC putting this in EBX instead of ESI?"
     value={text} onChange={e=>setText(e.target.value)} maxLength={180}
     aria-label="Search Collective Memory"/>
    <button className="primary" disabled={querying||text.trim().length<2}>{querying?'Searching…':'Search brain'}</button>
   </form>
-  {error&&<p className="error-text">{error}</p>}
-  {result&&<div className="brain-search-results">
+  {error&&<p className="brain-search-error" role="status">{error}</p>}
+ </Panel>
+ {result&&<Drawer title="Collective Memory results" subtitle="Traceable compiler techniques and original investigations" onClose={()=>setResult(null)}>
+  <div className="brain-search-results">
    <div className="row-between"><span className="subtle">Matched original investigations and reusable techniques</span>
     <Tag value={result.mode==='hybrid'?'semantic + lexical':'lexical fallback'}/></div>
    <div className="brain-match-grid">
     <div><h3>Reusable techniques</h3>
-     {result.techniques.map(x=><button className="brain-match" key={x.id} onClick={()=>onTechnique(x.id)}>
-      <span className="mono accent">#{x.id} · {x.category.replaceAll('_',' ')}</span>
+     {result.techniques.map(x=><button className="brain-match" key={x.id} onClick={()=>{setResult(null);onTechnique(x.id)}}>
+      <span className="mono accent">#{x.id} · {(x.category||'other').replaceAll('_',' ')}</span>
       <strong>{x.title}</strong><small>{x.problem}</small>
      </button>)}
      {!result.techniques.length&&<p className="subtle">No applicable consolidated techniques yet.</p>}
     </div>
     <div><h3>Original findings</h3>
-     {result.findings.map(x=><button className="brain-match" key={x.id} onClick={()=>onFinding(x.id)}>
+     {result.findings.map(x=><button className="brain-match" key={x.id} onClick={()=>{setResult(null);onFinding(x.id)}}>
       <span className="row-between"><strong className="mono accent">{x.va} · pass {x.pass}</strong>
         <Tag value={x.status}/></span><small>{x.summary}</small>
      </button>)}
      {!result.findings.length&&<p className="subtle">No matching investigations.</p>}
     </div>
    </div>
-  </div>}
- </Panel>;
+  </div></Drawer>}
+ </>;
 }
 export default memo(BrainSearch);

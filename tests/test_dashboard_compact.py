@@ -23,6 +23,8 @@ class CompactUIRegression(unittest.TestCase):
         cls.brain_search=(WEB/"components/BrainSearch.tsx").read_text()
         cls.ops=(WEB/"views/Operations.tsx").read_text()
         cls.knowledge=(WEB/"views/Knowledge.tsx").read_text()
+        cls.infra=(WEB/"views/InfraDocs.tsx").read_text()
+        cls.error_modal=(WEB/"components/ErrorModal.tsx").read_text()
         cls.agent_dock=(WEB/"components/AgentDock.tsx").read_text()
         cls.knowledge_dock=(WEB/"components/KnowledgeDock.tsx").read_text()
 
@@ -40,7 +42,7 @@ class CompactUIRegression(unittest.TestCase):
         self.assertRegex(self.css,r"-webkit-backdrop-filter:\s*none")
         self.assertRegex(self.css,r"background-attachment:\s*scroll")
         self.assertRegex(self.css,r"\.game-shell:before\s*\{\s*display:none\s*\}")
-        self.assertNotIn("position:fixed",self.css)
+        self.assertNotIn("background-attachment:fixed",self.css)
 
     def test_fleet_is_dense_and_not_stretched_to_document_height(self):
         self.assertRegex(self.css,r"grid-auto-rows:\s*112px")
@@ -48,15 +50,15 @@ class CompactUIRegression(unittest.TestCase):
         self.assertIn(".agent-grid",self.css)
         self.assertIn(".agent.offline",self.base)
 
-    def test_graph_is_bounded_and_not_scaled_svg(self):
-        self.assertNotIn("<svg",self.graph)
-        self.assertNotIn("viewBox",self.graph)
-        self.assertIn("techniques.slice(0,7)",self.graph)
-        self.assertIn("connections.slice(0,6)",self.graph)
-        self.assertIn("graph.links.filter",self.graph)
+    def test_restored_svg_graph_is_scoped_to_fixed_panel(self):
+        self.assertIn("<svg",self.graph)
+        self.assertIn("viewBox",self.graph)
+        self.assertIn("width={980}",self.graph)
+        self.assertIn("graph?.links",self.graph)
         self.assertIn("onFinding(x.id)",self.graph)
-        self.assertIn("onTechnique(selected.id)",self.graph)
-        self.assertIn("aria-pressed",self.graph)
+        self.assertIn("onTechnique(x.id)",self.graph)
+        self.assertIn(".knowledge-view .graph-wrap",self.css)
+        self.assertIn("display:block;flex:1 1 0;min-height:0;max-height:none;overflow:auto",self.css)
 
     def test_views_are_lazy_and_only_the_current_view_is_mounted(self):
         self.assertIn("lazy(()=>import('./views/Operations'))",self.app)
@@ -96,13 +98,43 @@ class CompactUIRegression(unittest.TestCase):
         self.assertIn('.bottom-hud .control-dock',self.css)
         self.assertIn('flex:0 0 50px',self.css)
 
-    def test_knowledge_one_scroll_owner_and_no_heavy_hover(self):
-        self.assertIn('view-content>.knowledge-view',self.css)
-        self.assertRegex(self.css,r'\.knowledge-view \.knowledge-results\s*\{[^}]*max-height:none')
-        self.assertRegex(self.css,r'\.knowledge-view \.knowledge-results\s*\{[^}]*overflow:visible')
-        self.assertIn('transition:none!important',self.css)
-        self.assertIn('background:#15324b',self.css)
-        self.assertIn('contain:layout paint',self.css)
+    def test_knowledge_view_fixed_and_cannot_expand_panels(self):
+        self.assertNotIn('className="knowledge-intro"',self.knowledge)
+        self.assertNotIn('How knowledge is formed',self.knowledge)
+        self.assertIn('grid-template-rows:minmax(0,45fr) minmax(0,55fr)',self.css)
+        self.assertIn('grid-auto-rows:111px',self.css)
+        self.assertIn('max-height:111px',self.css)
+        self.assertIn('overflow-y:auto;overflow-x:hidden',self.css)
+        self.assertIn('content-visibility:visible',self.css)
+
+    def test_search_results_and_evidence_do_not_resize_panels(self):
+        self.assertIn('className="brain-search-panel"',self.brain_search)
+        self.assertIn('<Drawer title="Collective Memory results"',self.brain_search)
+        self.assertIn("createPortal",self.panels)
+        self.assertIn("document.body",self.panels)
+        self.assertIn("body>.overlay",self.css)
+        self.assertIn("z-index:1000!important",self.css)
+
+    def test_consolidation_errors_open_centered_copyable_modal(self):
+        self.assertIn('<ErrorModal error={selectedError}',self.knowledge)
+        self.assertIn('setSelectedError(x)',self.knowledge)
+        self.assertIn("createPortal",self.error_modal)
+        self.assertIn('className="error-modal-code"',self.error_modal)
+        self.assertIn("navigator.clipboard.writeText",self.error_modal)
+        self.assertIn('Copy error',self.error_modal)
+        self.assertIn('.error-record-summary',self.css)
+
+    def test_infra_docs_is_a_separate_full_height_view(self):
+        self.assertIn("const InfraDocs=lazy",self.app)
+        self.assertIn("navigate('infra')",self.app)
+        self.assertIn("Infra Docs</button>",self.app)
+        self.assertIn("view==='infra'",self.app)
+        self.assertIn("export default function InfraDocs()",self.infra)
+        self.assertIn('className="infra-branches"',self.infra)
+        self.assertIn("spore_dashboard_control.py",self.infra)
+        self.assertIn("dashboard/server.py",self.infra)
+        self.assertIn("spore_technique_consolidator.py",self.infra)
+        self.assertIn(".view-content>.infra-view",self.css)
 
     def test_raw_investigations_do_not_render_cached_technique_rows(self):
         self.assertIn('response.url===url',self.hooks)
@@ -132,7 +164,7 @@ class CompactUIRegression(unittest.TestCase):
 
     def test_scroll_containers_are_bounded_without_zoom_hacks(self):
         self.assertRegex(self.css,r"\.table-scroll\s*\{[^}]*max-height:\s*350px")
-        self.assertRegex(self.css,r"\.knowledge-results\s*\{[^}]*max-height:\s*410px")
+        self.assertIn("grid-auto-rows:111px",self.css)
         self.assertNotIn("scale(",self.css)
         self.assertNotIn("zoom:",self.css)
 

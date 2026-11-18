@@ -6,7 +6,8 @@ import type {KnowledgeOverview,Snapshot,View} from './types';
 // Only the selected workspace mounts. The bottom command bar never unmounts.
 const Operations=lazy(()=>import('./views/Operations'));
 const Knowledge=lazy(()=>import('./views/Knowledge'));
-function initialView():View{return window.location.hash==='#knowledge'?'knowledge':'operations'}
+const InfraDocs=lazy(()=>import('./views/InfraDocs'));
+function initialView():View{return window.location.hash==='#knowledge'?'knowledge':window.location.hash==='#infra'?'infra':'operations'}
 export default function App(){
  const [view,setView]=useState<View>(initialView);
  const {value:snapshot,error:snapshotError,refresh:refreshSnapshot}=usePoll<Snapshot>('/api/snapshot',3000);
@@ -17,7 +18,7 @@ export default function App(){
   return ()=>window.removeEventListener('hashchange',update);
  },[]);
  const navigate=useCallback((next:View)=>{
-  window.location.hash=next==='knowledge'?'knowledge':'operations';
+  window.location.hash=next==='knowledge'?'knowledge':next==='infra'?'infra':'operations';
   setView(next);
  },[]);
  const connection=snapshotError?'disconnected':snapshot?'connected':'connecting';
@@ -26,7 +27,9 @@ export default function App(){
    <Suspense fallback={<div className="panel">Loading dashboard…</div>}>
     {view==='operations'
       ?<Operations active snapshot={snapshot} snapshotError={snapshotError}/>
-      :<Knowledge active overview={overview} summaryError={summaryError} refreshOverview={refreshOverview}/>}
+      :view==='knowledge'
+       ?<Knowledge active overview={overview} summaryError={summaryError} refreshOverview={refreshOverview}/>
+       :<InfraDocs/>}
    </Suspense>
   </main>
   <footer className="bottom-hud" aria-label="SAD dashboard command bar">
@@ -40,6 +43,8 @@ export default function App(){
    <div className="hud-spacer" aria-hidden="true"/>
    <AgentDock snapshot={snapshot} onUpdated={refreshSnapshot}/>
    <div className="hud-spacer hud-spacer-end" aria-hidden="true"/>
+   <button type="button" className={'hud-infra'+(view==='infra'?' selected':'')}
+    aria-current={view==='infra'?'page':undefined} onClick={()=>navigate('infra')}>Infra Docs</button>
    <div className={'hud-connection '+connection} role="status" title={snapshotError||'Dashboard backend connection'}>
     <span className={'status-dot '+(connection==='connected'?'online':'offline')}/>
     <strong>{connection==='connected'?'CONNECTED':connection==='disconnected'?'DISCONNECTED':'CONNECTING'}</strong>
