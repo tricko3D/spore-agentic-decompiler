@@ -159,12 +159,26 @@ class Controller:
             return {'started':True,'controller_pid':self.process.pid,'module':module}
 
     def state(self):
-        """Expose the last dashboard-launched coordinator's exit status, not raw logs."""
+        """Report both dashboard-launched and existing local coordinator state.
+
+        A coordinator started from a terminal must also put the dashboard's
+        single Launch/Stop control into Stop mode. No log contents or secrets
+        are returned, only PID, activity and an exit status where known.
+        """
+        active=coordinators(self.repo)
         if self.process is None:
-            return {}
+            return {'running':bool(active),
+                    'pid':active[0] if active else None,
+                    'external':bool(active),'returncode':None}
         rc=self.process.poll()
-        info={'pid':self.process.pid,'running':rc is None,'returncode':rc}
-        if rc is not None and rc != 0:
+        # A dashboard-owned CLI can have already exited while its spawned
+        # coordinator is still active. Keep Stop available until all finish.
+        running=rc is None or bool(active)
+        info={'pid':self.process.pid if rc is None or not active else active[0],
+              'running':running,
+              'external':bool(active) and rc is not None,
+              'returncode':None if running else rc}
+        if not running and rc is not None and rc != 0:
             from spore_dashboard_data import sanitize
             logfile=self.repo/'work/scratch/codex-pass1/dashboard-controller.log'
             try:
