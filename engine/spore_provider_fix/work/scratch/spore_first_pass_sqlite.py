@@ -676,7 +676,7 @@ def run_one(va, minutes, unsafe, backend, model='mistral4', reasoning='medium',
             pass_number=1, prompt_override=None, slot=None, evidence=None,
             model_choice=None):
     LOGS.mkdir(parents=True, exist_ok=True)
-    suffix = model if backend == 'nvidia' else ('deepinfra' if backend == 'deepinfra' else ('routed-openrouter' if backend == 'openrouter' else 'codex'))
+    suffix = model if backend == 'nvidia' else ('deepinfra' if backend == 'deepinfra' else ('deepseek-openrouter' if backend == 'openrouter' else 'codex'))
     pass_suffix = f'.pass{pass_number}' if pass_number > 1 else ''
     # Unique immutable logs: retrying a recovered pass must not overwrite the
     # original evidence referenced by an archived SQLite attempt.
@@ -887,7 +887,7 @@ def history_by_va():
 
 
 def previous_log(va, backend, model, previous_pass):
-    suffix = model if backend == 'nvidia' else ('deepseek-openrouter' if backend == 'openrouter' else 'codex')
+    suffix = model if backend == 'nvidia' else ('deepinfra' if backend == 'deepinfra' else ('deepseek-openrouter' if backend == 'openrouter' else 'codex'))
     pass_suffix = f'.pass{previous_pass}' if previous_pass > 1 else ''
     return LOGS / f'{va[2:]}.{suffix}{pass_suffix}.jsonl'
 
@@ -1171,7 +1171,7 @@ def process(minutes, unsafe, backend, quota_wait, max_functions,
     if backend in ('openrouter','deepinfra'):
         try:
             if not budget_check_or_wait(budget, adaptive=adaptive, backend=backend):
-                print('Run budget or OpenRouter key limit reached. Stopped without starting a function.')
+                print('Run budget or provider spending guard reached. Stopped without starting a function.')
                 return
         except (OSError, ValueError, RuntimeError) as e:
             print(f'Spending guard check failed, stopping: {e}', file=sys.stderr)
@@ -1253,7 +1253,7 @@ def process(minutes, unsafe, backend, quota_wait, max_functions,
                 if backend in ('openrouter', 'deepinfra'):
                     try:
                         if not budget_check_or_wait(budget, adaptive=adaptive, backend=backend):
-                            print('Run budget or OpenRouter key limit reached; queue/results preserved.', flush=True)
+                            print('Run budget or provider spending guard reached; queue/results preserved.', flush=True)
                             status()
                             return
                     except (OSError, ValueError, RuntimeError) as e:
