@@ -424,8 +424,8 @@ def command_run(args, mode):
         settings.update(scope_settings(args, saved))
         validate_settings(settings)
         env = with_scope(os.environ.copy(), settings)
-        provider = args.provider or env.get('SPORE_INFERENCE_PROVIDER') or 'openrouter'
-        policy = args.model_policy or env.get('SPORE_MODEL_POLICY') or 'fixed'
+        provider = getattr(args, 'provider', None) or env.get('SPORE_INFERENCE_PROVIDER') or 'openrouter'
+        policy = getattr(args, 'model_policy', None) or env.get('SPORE_MODEL_POLICY') or 'fixed'
         if provider == 'deepinfra':
             if not env.get('DEEPINFRA_API_KEY', '').strip():
                 fail('DEEPINFRA_API_KEY must be set in the launching shell.')
