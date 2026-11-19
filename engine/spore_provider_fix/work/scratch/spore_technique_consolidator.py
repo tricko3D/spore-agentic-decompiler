@@ -41,7 +41,7 @@ memory = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(memory)
 
 MODEL = "deepseek/deepseek-v4.1-flash-1017"
-PROVIDERS = ['ambient/fp4', 'particle-ai/us/flex', 'deepinfra/fp8/flex']
+PROVIDERS = ['nebius/fp4', 'relace/fp4', 'stepfun/fp8']
 ENDPOINT = "https://openrouter.ai/api/v1/chat/completions"
 RESERVE_USD = 0.01
 SCHEMA_VERSION = 1
@@ -444,7 +444,7 @@ def call_deepseek(key, user, *, timeout=95):
         "model": MODEL,
         "provider": {"order": PROVIDERS, "only": PROVIDERS,
                      "allow_fallbacks": False, "data_collection": "deny",
-                     "max_price": {"prompt": 0.08, "completion": 0.30}},
+                     "max_price": {"prompt": 0.18, "completion": 0.72}},
         "messages": [{"role":"system","content":SYSTEM}, {"role":"user","content":user}],
         "temperature": 0,
         # DeepSeek V4.1 Flash can spend the entire output budget reasoning
