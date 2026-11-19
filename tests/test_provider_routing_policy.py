@@ -5,7 +5,7 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
 RUNNER = ROOT / "engine/spore_provider_fix/work/scratch/spore_first_pass_sqlite.py"
-EXPECTED = ["ambient/fp4", "particle-ai/us/flex", "deepinfra/fp8/flex"]
+EXPECTED = ["nebius/fp4", "relace/fp4", "stepfun/fp8"]
 
 
 class ProviderRoutingPolicyTests(unittest.TestCase):
@@ -27,7 +27,7 @@ class ProviderRoutingPolicyTests(unittest.TestCase):
         self.assertFalse(payload["provider"]["allow_fallbacks"])
         self.assertEqual(payload["provider"]["data_collection"], "deny")
         self.assertEqual(payload["provider"]["max_price"],
-                         {"prompt": 0.08, "completion": 0.30})
+                         {"prompt": 0.18, "completion": 0.72})
 
 
 if __name__ == "__main__":
