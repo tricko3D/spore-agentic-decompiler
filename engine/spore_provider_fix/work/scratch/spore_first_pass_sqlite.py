@@ -50,7 +50,7 @@ NVIDIA_MODELS = {
 }
 NVIDIA_BASE_URL = 'https://integrate.api.nvidia.com/v1'
 OPENROUTER_MODEL = 'deepseek/deepseek-v4.1-flash-1017'
-OPENROUTER_PROVIDER = 'sail-research'
+OPENROUTER_PROVIDER = 'ambient/fp4'
 OPENROUTER_API = 'https://openrouter.ai/api/v1'
 BUDGET_STATE = WORK / 'openrouter-budget.json'
 MODULE_MAP = ROOT / 'work' / 'migrate' / 'modmap.json'
@@ -525,7 +525,7 @@ def nvidia_opencode_config(model='mistral4', reasoning='medium'):
 
 
 def openrouter_config(reasoning='high'):
-    """Use native OpenRouter OpenCode provider, forcing Sail Research only.
+    """Use native OpenRouter OpenCode provider, using three approved, price-capped providers.
 
     The API token is read from OPENROUTER_API_KEY in the subprocess environment,
     never written into configuration or logs by this runner.
@@ -541,13 +541,17 @@ def openrouter_config(reasoning='high'):
             'openrouter': {
                 'models': {
                     OPENROUTER_MODEL: {
-                        'name': 'DeepSeek V4.1 Flash 1017 (Sail only)',
+                        'name': 'DeepSeek V4.1 Flash 1017 (ordered capped providers)',
                         'modelID': OPENROUTER_MODEL,
                         'settings': {'reasoningEffort': reasoning},
                         'body': {
                             'provider': {
-                                'order': [OPENROUTER_PROVIDER],
+                                # SAD_BENCH_ORDERED_CAPPED_ROUTING_V2
+                                'order': ['ambient/fp4', 'particle-ai/us/flex', 'deepinfra/fp8/flex'],
+                                'only': ['ambient/fp4', 'particle-ai/us/flex', 'deepinfra/fp8/flex'],
                                 'allow_fallbacks': False,
+                                'data_collection': 'deny',
+                                'max_price': {'prompt': 0.08, 'completion': 0.30},
                             },
                             'reasoning': {'effort': reasoning},
                         },
@@ -1141,7 +1145,7 @@ def process(minutes, unsafe, backend, quota_wait, max_functions,
         print(f"Backend: NVIDIA {NVIDIA_MODELS[model]['name']} via OpenCode ({reasoning} reasoning). "
               'OpenCode shell tools run WITHOUT a sandbox.', flush=True)
     elif backend == 'openrouter':
-        print(f'Backend: OpenRouter {OPENROUTER_MODEL} ({OPENROUTER_PROVIDER} only, '
+        print(f'Backend: OpenRouter {OPENROUTER_MODEL} ({OPENROUTER_PROVIDER} preferred; two approved fallbacks, '
               f'{reasoning} reasoning). OpenCode shell tools run WITHOUT a sandbox.', flush=True)
         try:
             if not budget_check_or_wait(budget, adaptive=adaptive):
