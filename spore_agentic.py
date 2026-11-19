@@ -509,6 +509,8 @@ def main(argv=None):
     for name, type_ in [('workers', int), ('max-inflight', int), ('passes', int), ('minutes', int), ('budget', float)]:
         setup.add_argument('--'+name, type=type_)
     add_scope_arguments(setup)
+    deploy = sub.add_parser('install', help='Update installed engine scripts in the existing checkout, backing up changed files')
+    deploy.add_argument('--repo', help='Existing spore-decomp checkout path (default: configured repository)')
     rotation = sub.add_parser('rotate-key', help='Authorize an already-configured replacement OpenRouter key without resetting spending')
     rotation.add_argument('--repo')
     rotation.add_argument('--save-key', action='store_true',
@@ -547,6 +549,8 @@ def main(argv=None):
     args = ap.parse_args(argv)
     if args.command == 'setup':
         return command_setup(args)
+    if args.command == 'install':
+        return install(repo_path(args))
     if args.command == 'rotate-key':
         return command_rotate_key(args)
     if args.command == 'dashboard':
