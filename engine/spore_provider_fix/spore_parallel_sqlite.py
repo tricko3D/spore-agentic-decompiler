@@ -202,7 +202,7 @@ def status():
     window = adaptive_ctl.snapshot()
     if window and window['run_id'] == r['run_id']:
         pause = max(0, int(window['cooldown_until'] - time.time()))
-        print(f'Adaptive Sail: cap {window["concurrency"]}/{window["ceiling"]} | '
+        print(f'Adaptive OpenRouter: cap {window["concurrency"]}/{window["ceiling"]} | '
               f'verified streams {window["productive_samples"]} | overload {window["provider_failures"]} | '
               f'cooldown {pause}s')
     print('Settings:', r['workers'], 'workers,', r['passes'], 'total passes,', max(15, r['minutes']), 'idle minutes (no wall-clock cap),',
@@ -274,7 +274,7 @@ def run(a):
         store.create_run(run_id,a.workers,a.passes,assignments,group_keys=group_keys)
         if a.adaptive:
             adaptive_ctl.begin(run_id, ceiling=a.max_inflight, start=1)
-            print(f'Adaptive Sail concurrency: start 1, ceiling {a.max_inflight}; token-verified ramp and selective rollback.', flush=True)
+            print(f'Adaptive OpenRouter concurrency: start 1, ceiling {a.max_inflight}; token-verified ramp and selective rollback.', flush=True)
         print(f'{mod.module_scope()}: {len(allowed)}/{len(queue)} runnable targets. '
               f'Workers: {a.workers}; assignment sizes: {counts}', flush=True)
         print(f'Shared SQLite state: {store.DB} (WAL transactions)', flush=True)
@@ -358,7 +358,7 @@ def main():
     r.add_argument('--minutes', type=int, default=20, help='Inactivity watchdog minutes (minimum 15); no total runtime limit')
     r.add_argument('--quota-wait', type=int, default=1, help='Minutes to wait on API rate limit; 0 stops that worker')
     r.add_argument('--max-inflight', type=int, default=8, help='Maximum concurrency for adaptive scaling, fixed cap if --fixed-inflight')
-    r.add_argument('--fixed-inflight', dest='adaptive', action='store_false', help='Disable adaptive Sail congestion control')
+    r.add_argument('--fixed-inflight', dest='adaptive', action='store_false', help='Disable adaptive OpenRouter congestion control')
     r.set_defaults(adaptive=True)
     r.add_argument('--provider-retries', type=int, default=2, help='Additional provider-only retries before worker stops, without ticking a pass')
     r.add_argument('--budget', type=float, default=20.0, help='Shared spending limit for THIS run, USD; OpenRouter key limits remain separate')

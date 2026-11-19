@@ -41,7 +41,7 @@ memory = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(memory)
 
 MODEL = "deepseek/deepseek-v4.1-flash-1017"
-PROVIDER = "sail-research"
+PROVIDERS = ['ambient/fp4', 'particle-ai/us/flex', 'deepinfra/fp8/flex']
 ENDPOINT = "https://openrouter.ai/api/v1/chat/completions"
 RESERVE_USD = 0.01
 SCHEMA_VERSION = 1
@@ -442,8 +442,9 @@ def _completion_diagnostic(choice, usage):
 def call_deepseek(key, user, *, timeout=95):
     payload = {
         "model": MODEL,
-        "provider": {"only": [PROVIDER], "allow_fallbacks": False,
-                     "max_price": {"prompt": 0.50, "completion": 1.00}},
+        "provider": {"order": PROVIDERS, "only": PROVIDERS,
+                     "allow_fallbacks": False, "data_collection": "deny",
+                     "max_price": {"prompt": 0.08, "completion": 0.30}},
         "messages": [{"role":"system","content":SYSTEM}, {"role":"user","content":user}],
         "temperature": 0,
         # DeepSeek V4.1 Flash can spend the entire output budget reasoning
@@ -658,7 +659,7 @@ def status(repo):
                    q.state,q.next_retry_utc
             FROM technique_queue q JOIN findings f ON f.id=q.finding_id
             WHERE q.error<>'' ORDER BY q.updated_utc DESC LIMIT 5""").fetchall()
-        return {"installed":True,"model":MODEL,"provider":PROVIDER,
+        return {"installed":True,"model":MODEL,"provider":PROVIDERS[0], "providers":PROVIDERS,
                 "techniques":techniques,"linked_evidence":total,
                 "queue":{x["state"]:x["n"] for x in rows},
                 "recent_errors":[dict(x) for x in errors],

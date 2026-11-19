@@ -234,11 +234,46 @@ def main(va):
             runner=(sub/"seed"/brain.RUNNER).read_text()
             self.assertIn(brain.ROUTING_MARKER,runner)
             self.assertIn("'data_collection': 'deny'",runner)
-            self.assertIn("'allow_fallbacks': True",runner)
+            self.assertIn("'allow_fallbacks': False",runner)
+            self.assertIn("'ambient/fp4'",runner)
+            self.assertIn("'particle-ai/us/flex'",runner)
+            self.assertIn("'deepinfra/fp8/flex'",runner)
+            self.assertIn("'max_price': {'prompt': 0.08, 'completion': 0.30}",runner)
             self.assertNotIn(brain.OLD_PROVIDER_ROUTE,runner)
             inner=json.loads((sub/"plan.json").read_text())
             self.assertEqual(inner["provider_routing"],brain.ROUTING_MARKER)
             self.assertEqual(inner["model"],"deepseek/deepseek-v4.1-flash-1017")
+
+    def test_previous_privacy_fallback_suite_upgrades_without_paid_work(self):
+        suite.prepare(self.source,self.out,repeats=1)
+        top=self.out/"suite-plan.json"
+        master=json.loads(top.read_text())
+        master["provider_routing"]=brain.LEGACY_ROUTING_MARKER
+        brain.write_json(top,master)
+        for va in master["targets"]:
+            sub=suite._target_dir(self.out,va)
+            path=sub/"plan.json"
+            inner=json.loads(path.read_text())
+            runner=sub/"seed"/brain.RUNNER
+            code=runner.read_text()
+            self.assertIn(brain.NEW_PROVIDER_ROUTE,code)
+            runner.write_text(code.replace(brain.NEW_PROVIDER_ROUTE,
+                                           brain.LEGACY_PROVIDER_ROUTE))
+            inner["provider_routing"]=brain.LEGACY_ROUTING_MARKER
+            inner["tooling_sha256"][brain.RUNNER.as_posix()]=brain._tool_hash(runner)
+            brain.write_json(path,inner)
+        with mock.patch.object(suite.brain,"run_next",
+                               side_effect=AssertionError("paid agent started")):
+            suite.run(self.source,self.out,repeats=1,execute=False)
+        self.assertEqual(json.loads(top.read_text())["provider_routing"],
+                         brain.ROUTING_MARKER)
+        for va in master["targets"]:
+            sub=suite._target_dir(self.out,va)
+            inner=json.loads((sub/"plan.json").read_text())
+            self.assertEqual(inner["provider_routing"],brain.ROUTING_MARKER)
+            self.assertIn(brain.NEW_PROVIDER_ROUTE,
+                          (sub/"seed"/brain.RUNNER).read_text())
+            brain._seed_tooling(sub,inner)
 
     def test_legacy_suite_requeues_only_pre_model_provider_404(self):
         master,first,oldname,logpath=self._legacy_provider_fixture()

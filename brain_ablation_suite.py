@@ -150,7 +150,7 @@ def _ensure_routing(out, suite_plan):
                 raise RuntimeError("Mixed provider routing policies in one benchmark")
             brain._seed_tooling(sub,inner)
         return suite_plan
-    if suite_plan.get("provider_routing") not in (None,"sail-only-legacy"):
+    if suite_plan.get("provider_routing") not in (None,"sail-only-legacy",brain.LEGACY_ROUTING_MARKER):
         raise RuntimeError("Unknown provider policy, refusing benchmark upgrade")
     staged=[]
     for va in suite_plan["targets"]:
@@ -203,7 +203,7 @@ def _ensure_routing(out, suite_plan):
     suite_plan["provider_routing"]=brain.ROUTING_MARKER
     suite_plan["provider_routing_repair_utc"]=brain.now()
     write(out/"suite-plan.json",suite_plan)
-    print("All targets now use fallback providers with data_collection=deny.",
+    print("All targets now use Ambient, Particle AI Flex, and DeepInfra Flex with strict price caps.",
           flush=True)
     print("Original model, task, knowledge snapshot, assignments and failed logs preserved.",
           flush=True)

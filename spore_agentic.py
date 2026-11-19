@@ -519,7 +519,7 @@ def main(argv=None):
         r.add_argument('--'+name, type=type_)
     add_scope_arguments(r)
     r.add_argument('--max-functions-per-worker', type=int, default=0)
-    r.add_argument('--fixed-inflight', action='store_true', help='Disable adaptive Sail congestion control')
+    r.add_argument('--fixed-inflight', action='store_true', help='Disable adaptive OpenRouter congestion control')
     plan = sub.add_parser('plan', help='Preview eligible functions and worker split')
     plan.add_argument('--repo'); plan.add_argument('--workers', type=int)
     add_scope_arguments(plan)
