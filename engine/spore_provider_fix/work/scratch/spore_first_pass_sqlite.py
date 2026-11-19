@@ -5,6 +5,7 @@ import csv
 import spore_sqlite_store as store
 from spore_provider_log import provider_only, provider_pressure
 import spore_adaptive as adaptive_ctl
+import spore_model_router as model_router
 import spore_progress_watch as progress_watch
 import spore_investigation as investigation
 import spore_collective_memory as collective_memory
@@ -524,35 +525,37 @@ def nvidia_opencode_config(model='mistral4', reasoning='medium'):
     }
 
 
-def openrouter_config(reasoning='high'):
+def openrouter_config(reasoning='high', model_id=None):
     """Use native OpenRouter OpenCode provider, using three approved, price-capped providers.
 
     The API token is read from OPENROUTER_API_KEY in the subprocess environment,
     never written into configuration or logs by this runner.
     """
+    selected = model_id or OPENROUTER_MODEL
+    provider_routing = (
+        {'sort': 'price', 'allow_fallbacks': False, 'data_collection': 'deny'}
+        if selected != OPENROUTER_MODEL else
+        {'order': ['nebius/fp4', 'relace/fp4', 'stepfun/fp8'],
+         'only': ['nebius/fp4', 'relace/fp4', 'stepfun/fp8'],
+         'allow_fallbacks': False, 'data_collection': 'deny',
+         'max_price': {'prompt': 0.18, 'completion': 0.72}}
+    )
     return {
         '$schema': 'https://opencode.ai/config.json',
         'share': 'disabled',
         # Compact accumulated tool/search conversation before input grows huge.
         # This is not a limit on investigation steps or reasoning effort.
         'compaction': {'auto': True, 'keep': {'tokens': 2000}, 'buffer': '65%'},
-        'model': 'openrouter/' + OPENROUTER_MODEL,
+        'model': 'openrouter/' + selected,
         'providers': {
             'openrouter': {
                 'models': {
-                    OPENROUTER_MODEL: {
-                        'name': 'DeepSeek V4.1 Flash 1017 (speed-value capped providers)',
-                        'modelID': OPENROUTER_MODEL,
+                    selected: {
+                        'name': selected,
+                        'modelID': selected,
                         'settings': {'reasoningEffort': reasoning},
                         'body': {
-                            'provider': {
-                                # SAD_BENCH_SPEED_VALUE_ROUTING_V3
-                                'order': ['nebius/fp4', 'relace/fp4', 'stepfun/fp8'],
-                                'only': ['nebius/fp4', 'relace/fp4', 'stepfun/fp8'],
-                                'allow_fallbacks': False,
-                                'data_collection': 'deny',
-                                'max_price': {'prompt': 0.18, 'completion': 0.72},
-                            },
+                            'provider': provider_routing,
                             'reasoning': {'effort': reasoning},
                         },
                     },
@@ -661,9 +664,10 @@ def classify_failure(log, code, backend, message=''):
 
 
 def run_one(va, minutes, unsafe, backend, model='mistral4', reasoning='medium',
-            pass_number=1, prompt_override=None, slot=None, evidence=None):
+            pass_number=1, prompt_override=None, slot=None, evidence=None,
+            model_choice=None):
     LOGS.mkdir(parents=True, exist_ok=True)
-    suffix = model if backend == 'nvidia' else ('deepseek-openrouter' if backend == 'openrouter' else 'codex')
+    suffix = model if backend == 'nvidia' else ('deepinfra' if backend == 'deepinfra' else ('routed-openrouter' if backend == 'openrouter' else 'codex'))
     pass_suffix = f'.pass{pass_number}' if pass_number > 1 else ''
     # Unique immutable logs: retrying a recovered pass must not overwrite the
     # original evidence referenced by an archived SQLite attempt.
@@ -752,8 +756,13 @@ fix requires changing a shared header, report SKIP instead.
         # OpenCode is not a filesystem sandbox. --unsafe is accepted only
         # for backwards CLI compatibility. Do not mistake --auto for sandboxing.
         if backend == 'openrouter':
-            env['OPENCODE_CONFIG_CONTENT'] = json.dumps(openrouter_config(reasoning))
-            selected_model = 'openrouter/' + OPENROUTER_MODEL
+            routed_id = (model_choice or {}).get('model') or OPENROUTER_MODEL
+            env['OPENCODE_CONFIG_CONTENT'] = json.dumps(openrouter_config(reasoning, routed_id))
+            selected_model = 'openrouter/' + routed_id
+        elif backend == 'deepinfra':
+            routed_id = (model_choice or {}).get('model') or model_router.DEEPINFRA_MODEL
+            env['OPENCODE_CONFIG_CONTENT'] = json.dumps(model_router.direct_opencode_config(routed_id, reasoning))
+            selected_model = 'spore_deepinfra/' + routed_id
         else:
             env['OPENCODE_CONFIG_CONTENT'] = json.dumps(nvidia_opencode_config(model, reasoning))
             selected_model = f"spore_nvidia/{NVIDIA_MODELS[model]['slug']}"
@@ -773,7 +782,7 @@ fix requires changing a shared header, report SKIP instead.
             cmd += ['--title', f'Spore {va}']
         cmd += [prompt]
     def save_session_from_log():
-        if backend not in ('openrouter', 'nvidia') or not log.exists():
+        if backend not in ('openrouter', 'deepinfra', 'nvidia') or not log.exists():
             return
         try:
             for line in log.read_text(encoding='utf-8', errors='replace').splitlines():
@@ -824,7 +833,7 @@ fix requires changing a shared header, report SKIP instead.
             raise
 
     save_session_from_log()
-    if backend == 'openrouter':
+    if backend in ('openrouter', 'deepinfra'):
         only, reason = provider_only(log)
         if only:
             return 'PROVIDER', reason, log
