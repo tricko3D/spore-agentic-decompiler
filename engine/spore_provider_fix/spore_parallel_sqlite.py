@@ -16,7 +16,8 @@ import shutil
 import signal
 import subprocess
 import sys
-sys.path.insert(0,str(Path(__file__).resolve().parent / "work" / "scratch"))
+# Keep stdlib ahead of Spore helpers: work/scratch/dis.py shadows Python 3.14 stdlib dis.
+sys.path.append(str(Path(__file__).resolve().parent / "work" / "scratch"))
 import spore_sqlite_store as store
 import spore_adaptive as adaptive_ctl
 import time
