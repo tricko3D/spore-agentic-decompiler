@@ -50,7 +50,7 @@ NVIDIA_MODELS = {
 }
 NVIDIA_BASE_URL = 'https://integrate.api.nvidia.com/v1'
 OPENROUTER_MODEL = 'deepseek/deepseek-v4.1-flash-1017'
-OPENROUTER_PROVIDER = 'ambient/fp4'
+OPENROUTER_PROVIDER = 'nebius/fp4'
 OPENROUTER_API = 'https://openrouter.ai/api/v1'
 BUDGET_STATE = WORK / 'openrouter-budget.json'
 MODULE_MAP = ROOT / 'work' / 'migrate' / 'modmap.json'
@@ -541,17 +541,17 @@ def openrouter_config(reasoning='high'):
             'openrouter': {
                 'models': {
                     OPENROUTER_MODEL: {
-                        'name': 'DeepSeek V4.1 Flash 1017 (ordered capped providers)',
+                        'name': 'DeepSeek V4.1 Flash 1017 (speed-value capped providers)',
                         'modelID': OPENROUTER_MODEL,
                         'settings': {'reasoningEffort': reasoning},
                         'body': {
                             'provider': {
-                                # SAD_BENCH_ORDERED_CAPPED_ROUTING_V2
-                                'order': ['ambient/fp4', 'particle-ai/us/flex', 'deepinfra/fp8/flex'],
-                                'only': ['ambient/fp4', 'particle-ai/us/flex', 'deepinfra/fp8/flex'],
+                                # SAD_BENCH_SPEED_VALUE_ROUTING_V3
+                                'order': ['nebius/fp4', 'relace/fp4', 'stepfun/fp8'],
+                                'only': ['nebius/fp4', 'relace/fp4', 'stepfun/fp8'],
                                 'allow_fallbacks': False,
                                 'data_collection': 'deny',
-                                'max_price': {'prompt': 0.08, 'completion': 0.30},
+                                'max_price': {'prompt': 0.18, 'completion': 0.72},
                             },
                             'reasoning': {'effort': reasoning},
                         },
@@ -1413,7 +1413,7 @@ def doctor(backend, model='mistral4', reasoning='high', live=False, budget=5.0):
     elif backend == 'openrouter':
         print('API key:', 'set' if os.environ.get('OPENROUTER_API_KEY', '').strip() else 'MISSING')
         print('Model:', OPENROUTER_MODEL)
-        print('Routing: Ambient preferred, Particle AI Flex and DeepInfra Flex only; price caps enforced')
+        print('Routing: Nebius preferred, Relace and StepFun backups only; price caps enforced')
         print('Reasoning requested:', reasoning, '(provider may not honor specific effort)')
         print('Per-run budget: $%.2f; OpenRouter key limit remains a separate hard cap' % budget)
         print('OpenCode shell tools are NOT sandboxed')
