@@ -494,15 +494,35 @@ print(json.dumps({
         if type(budget) not in (float,int) or not 0<float(budget)<=100000:
             raise ValueError('budget must be positive')
         values['budget']=float(budget)
+        provider=data.get('provider','openrouter')
+        policy=data.get('model_policy','fixed')
+        if provider not in ('openrouter','deepinfra'):
+            raise ValueError('Unsupported inference provider')
+        if policy not in ('fixed','cheapest'):
+            raise ValueError('Unsupported model policy')
+        if provider == 'deepinfra' and policy != 'fixed':
+            raise ValueError('Direct DeepInfra uses fixed model until prices are independently verified')
         with self.lock:
             self._confirm_idle()
             self.process=None  # Do not replay a previous launch failure after a new attempt.
             selected=(self._claim_scope(data.get('claim_user'),force=True) if module=='__claimed__'
                       else self._retry_allowlist(module))
-            launch_env=self._launch_environment()
-            # Fail before expanding queue or spawning workers if the provider
-            # key cannot fund a single inference. This is an unpaid /key GET.
-            self._provider_key_preflight(launch_env,values['budget'])
+            if provider == 'deepinfra':
+                launch_env=os.environ.copy()
+                key=launch_env.get('DEEPINFRA_API_KEY','').strip()
+                if not key:
+                    raise ValueError('DEEPINFRA_API_KEY is not available to the dashboard process. Restart dashboard with the key in its environment.')
+                # Permission and billing availability are required, fail closed.
+                import importlib.util
+                scratch=self.repo/'work/scratch'
+                if str(scratch) not in sys.path:
+                    sys.path.append(str(scratch))
+                import spore_model_router
+                spore_model_router.deepinfra_month_spend(key)
+            else:
+                launch_env=self._launch_environment()
+                # Unpaid provider-key allowance verification.
+                self._provider_key_preflight(launch_env,values['budget'])
             if selected:
                 launch_env['SPORE_RETRY_ALLOWLIST']=selected['path']
             # Scope selection can add functions but never deletes historical work.
@@ -517,7 +537,8 @@ print(json.dumps({
             if result.returncode:
                 raise ValueError('Module selection failed: '+(result.stdout+' '+result.stderr)[-700:])
             # CLI owns API-key validation. If it fails, dashboard records failure.
-            cmd=[sys.executable,str(CLI),'run','--repo',str(self.repo)]
+            cmd=[sys.executable,str(CLI),'run','--repo',str(self.repo),
+                 '--provider',provider,'--model-policy',policy]
             cmd+=['--all-modules'] if module in ('*','__allowlist__','__claimed__') else ['--module',module]
             for name,value in values.items():cmd+=['--'+name.replace('_','-'),str(value)]
             work=self.repo/'work/scratch/codex-pass1'
@@ -531,7 +552,7 @@ print(json.dumps({
                                               stdout=file,stderr=subprocess.STDOUT,
                                               env=launch_env,start_new_session=True)
             self.launch_settings={
-                'module':module,
+                'module':module,'provider':provider,'model_policy':policy,
                 'claim_user':selected.get('claim_user') if selected else None,
                 'workers':values['workers'],
                 'max_inflight':values['max_inflight'],
