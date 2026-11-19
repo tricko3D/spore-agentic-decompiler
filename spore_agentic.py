@@ -37,6 +37,7 @@ INSTALL = {
     'spore_recover_provider_attempts.py': 'spore_provider_fix/spore_recover_provider_attempts.py',
     'work/scratch/spore_first_pass_sqlite.py': 'spore_provider_fix/work/scratch/spore_first_pass_sqlite.py',
     'work/scratch/spore_sqlite_store.py': 'spore_provider_fix/work/scratch/spore_sqlite_store.py',
+    'work/scratch/spore_model_router.py': 'spore_provider_fix/work/scratch/spore_model_router.py',
     'work/scratch/spore_provider_log.py': 'spore_provider_fix/work/scratch/spore_provider_log.py',
     'work/scratch/spore_adaptive.py': 'spore_provider_fix/work/scratch/spore_adaptive.py',
     'work/scratch/spore_progress_watch.py': 'spore_provider_fix/work/scratch/spore_progress_watch.py',
@@ -423,15 +424,24 @@ def command_run(args, mode):
         settings.update(scope_settings(args, saved))
         validate_settings(settings)
         env = with_scope(os.environ.copy(), settings)
-        env['OPENROUTER_API_KEY'] = get_key()
-        expected_key_fingerprint = hashlib.sha256(env['OPENROUTER_API_KEY'].encode()).hexdigest()[:20]
-        with sqlite3.connect(repo/'work/scratch/codex-pass1/spore.sqlite3') as budget_db:
-            stored = budget_db.execute('SELECT key_fingerprint FROM budget WHERE singleton=1').fetchone()
-        if stored and stored[0] != expected_key_fingerprint:
-            fail('OpenRouter key changed since the stored spending baseline. '
-                 'Run `python3 spore_agentic.py rotate-key` to safely preserve the existing budget '
-                 'before launching workers.')
+        provider = args.provider or env.get('SPORE_INFERENCE_PROVIDER') or 'openrouter'
+        policy = args.model_policy or env.get('SPORE_MODEL_POLICY') or 'fixed'
+        if provider == 'deepinfra':
+            if not env.get('DEEPINFRA_API_KEY', '').strip():
+                fail('DEEPINFRA_API_KEY must be set in the launching shell.')
+            if policy != 'fixed':
+                fail('Direct DeepInfra currently supports fixed-model routing only.')
+        else:
+            env['OPENROUTER_API_KEY'] = get_key()
+            expected_key_fingerprint = hashlib.sha256(env['OPENROUTER_API_KEY'].encode()).hexdigest()[:20]
+            with sqlite3.connect(repo/'work/scratch/codex-pass1/spore.sqlite3') as budget_db:
+                stored = budget_db.execute('SELECT key_fingerprint FROM budget WHERE singleton=1').fetchone()
+            if stored and stored[0] != expected_key_fingerprint:
+                fail('OpenRouter key changed since the stored spending baseline. '
+                     'Run `python3 spore_agentic.py rotate-key` before launching workers.')
+        env['SPORE_MODEL_POLICY'] = policy
         argv = ['spore_parallel_sqlite.py', 'run',
+                '--backend', provider, '--model-policy', policy,
                 '--workers', settings['workers'], '--max-inflight', settings['max_inflight'],
                 '--passes', settings['passes'], '--minutes', settings['minutes'],
                 '--budget', settings['budget'], '--quota-wait', settings.get('quota_wait', 1),
@@ -442,6 +452,25 @@ def command_run(args, mode):
         if args.max_functions_per_worker:
             argv += ['--max-functions-per-worker', args.max_functions_per_worker]
         return execute(repo, *argv, env=env, check=False)
+    if mode == 'models':
+        import importlib.util
+        script = repo/'work/scratch/spore_model_router.py'
+        if not script.is_file():
+            fail('Model router is not installed. Run python3 spore_agentic.py install first.')
+        sys.path.append(str(script.parent))
+        import spore_model_router
+        try:
+            entries = spore_model_router.top_ten(
+                repo/'work/scratch/codex-pass1/openrouter-model-catalog.json',
+                refresh=args.refresh)
+        except (OSError, ValueError, RuntimeError) as exc:
+            fail('Model discovery failed: '+str(exc))
+        print('Ten least expensive eligible tool-calling models (estimated 50k input + 8k output)')
+        for i, item in enumerate(entries, 1):
+            print(f'{i:2}. {item["model"]:<52} ${item["estimate_usd"]:.5f}/pass '
+                  f'input ${item["prompt_per_m"]:.3f}/M, output ${item["completion_per_m"]:.3f}/M')
+        print('Prices are estimates, not billed spend; quality is learned after verified attempts.')
+        return 0
     if mode in ('plan', 'status'):
         argv = ['spore_parallel_sqlite.py', mode]
         if mode == 'plan':
@@ -523,6 +552,11 @@ def main(argv=None):
     add_scope_arguments(r)
     r.add_argument('--max-functions-per-worker', type=int, default=0)
     r.add_argument('--fixed-inflight', action='store_true', help='Disable adaptive OpenRouter congestion control')
+    r.add_argument('--provider', choices=['openrouter', 'deepinfra'], default=None)
+    r.add_argument('--model-policy', choices=['fixed', 'cheapest'], default=None)
+    models = sub.add_parser('models', help='Show ten cheapest eligible OpenRouter models, no paid inference')
+    models.add_argument('--repo')
+    models.add_argument('--refresh', action='store_true', help='Force live price catalog refresh')
     plan = sub.add_parser('plan', help='Preview eligible functions and worker split')
     plan.add_argument('--repo'); plan.add_argument('--workers', type=int)
     add_scope_arguments(plan)
@@ -554,6 +588,8 @@ def main(argv=None):
         return install(repo_path(args))
     if args.command == 'rotate-key':
         return command_rotate_key(args)
+    if args.command == 'models':
+        return command_run(args, 'models')
     if args.command == 'dashboard':
         from spore_dashboard import serve
         return serve(repo_path(args), args.port, control=args.control)
