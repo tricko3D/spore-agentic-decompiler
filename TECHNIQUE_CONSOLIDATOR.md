@@ -7,8 +7,8 @@ edit C++, touch the operational SQLite database, or promote model claims into
 byte-exact matches.
 
 The configured model is the same one used by current SAD workers:
-deepseek/deepseek-v4.1-flash-1017. It is pinned to Sail Research with
-provider fallback disabled. Requests are small, non-streaming, JSON-only, and
+deepseek/deepseek-v4.1-flash-1017. It prioritizes Ambient FP4, then Particle AI US Flex, then DeepInfra FP8 Flex.
+No other endpoint is permitted; unavailable or overpriced hosts are skipped. Requests are small, non-streaming, JSON-only, and
 use OpenRouter's per-token max-price limits. No new key is needed: it reads the
 existing protected SAD API key from the environment or
 ~/.config/spore-agentic-decompiler/openrouter.key.
@@ -99,7 +99,7 @@ and substitutes its actual reported provider cost when available. Failures
 where billing is uncertain retain their reservation. This is deliberately
 conservative, but not a provider-enforced hard guarantee. For a hard account
 cap, configure the key or workspace credit limit with OpenRouter. The provider
-also has per-million-token price ceilings of $0.50 input and $1.00 output,
+also has per-million-token price ceilings of $0.08 input and $0.30 output,
 which are maximum rates, not expected rates.
 
 ### Automatic consolidation, no manual batches
