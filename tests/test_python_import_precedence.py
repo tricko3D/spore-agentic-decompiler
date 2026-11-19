@@ -84,6 +84,7 @@ class StdlibImportPrecedenceTests(TestCase):
                 spore_agentic.install(repo)
             self.assertEqual(existing_prompt.read_text(), "my custom prompt\n")
             self.assertIn("sys.path.append(", outdated.read_text())
+            self.assertTrue((repo / 'spore_worker_entry.py').is_file())
             backup_root = repo / "work/scratch/codex-pass1/sqlite-backups"
             backups = sorted(backup_root.glob("agentic-scripts-*/spore_parallel_sqlite.py"))
             self.assertEqual(len(backups), 1)
