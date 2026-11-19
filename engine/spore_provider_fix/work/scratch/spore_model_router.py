@@ -17,7 +17,7 @@ from urllib.request import Request, urlopen
 
 CATALOG_URL = "https://openrouter.ai/api/v1/models?supported_parameters=tools"
 DEEPINFRA_URL = "https://api.deepinfra.com/v1/openai"
-DEEPINFRA_MODEL = "deepseek-ai/DeepSeek-V4.1-Flash"
+DEEPINFRA_MODEL = "deepseek-ai/DeepSeek-V4.1-Flash-1017"
 CACHE_TTL = 6 * 3600
 MAX_STALE = 24 * 3600
 EXPECTED_INPUT = 50_000
@@ -285,8 +285,12 @@ def deepinfra_month_spend(key):
         raise RuntimeError("DeepInfra billing:read access required for safe run budgets (" +
                            type(exc).__name__ + ")") from None
     months = body.get("months") if isinstance(body, dict) else None
-    if not isinstance(months, list) or not months:
-        raise RuntimeError("DeepInfra returned no current-month usage; refusing to guess spending")
+    if not isinstance(months, list):
+        raise RuntimeError("DeepInfra response lacks a monthly usage array")
+    if not months:
+        if isinstance(body.get("initial_month"), str):
+            return 0.0
+        raise RuntimeError("DeepInfra returned empty usage without an initial_month marker")
     # The endpoint is requested for 'current' only. Sum explicit cost fields
     # rather than interpreting invoice balances or token counts as dollars.
     try:
