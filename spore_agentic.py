@@ -465,7 +465,7 @@ def command_run(args, mode):
         if args.live:
             env = os.environ.copy()
             env['OPENROUTER_API_KEY'] = get_key()
-            return execute(repo, 'work/scratch/spore_first_pass_sqlite.py', 'doctor', '--live', env=env, check=False)
+            return execute(repo, 'spore_worker_entry.py', 'doctor', '--live', env=env, check=False)
         return 0
 
 
