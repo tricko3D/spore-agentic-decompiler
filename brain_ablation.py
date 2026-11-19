@@ -42,14 +42,20 @@ ENTRY = Path("brain_trial_entry.py")
 ENTRY_SOURCE = SOURCE_DIR / ENTRY.name
 MEMORY_TEMPLATE = SOURCE_DIR / "engine/spore_provider_fix/work/scratch/spore_collective_memory.py"
 SOCKET_MARKER = "SAD_SHORT_UNIX_SOCKET_V1"
-ROUTING_MARKER = "SAD_BENCH_PRIVACY_ROUTING_FALLBACK_V1"
-# The provider was previously hard-pinned to Sail Research. OpenRouter
-# excluded every endpoint for accounts that opt out of paid training.
+ROUTING_MARKER = "SAD_BENCH_ORDERED_CAPPED_ROUTING_V2"
+LEGACY_ROUTING_MARKER = "SAD_BENCH_PRIVACY_ROUTING_FALLBACK_V1"
+# Strict three-host allowlist and USD-per-million token ceilings.
 OLD_PROVIDER_ROUTE = """                                'order': [OPENROUTER_PROVIDER],
                                 'allow_fallbacks': False,"""
-NEW_PROVIDER_ROUTE = """                                # SAD_BENCH_PRIVACY_ROUTING_FALLBACK_V1
+LEGACY_PROVIDER_ROUTE = """                                # SAD_BENCH_PRIVACY_ROUTING_FALLBACK_V1
                                 'allow_fallbacks': True,
                                 'data_collection': 'deny',"""
+NEW_PROVIDER_ROUTE = """                                # SAD_BENCH_ORDERED_CAPPED_ROUTING_V2
+                                'order': ['ambient/fp4', 'particle-ai/us/flex', 'deepinfra/fp8/flex'],
+                                'only': ['ambient/fp4', 'particle-ai/us/flex', 'deepinfra/fp8/flex'],
+                                'allow_fallbacks': False,
+                                'data_collection': 'deny',
+                                'max_price': {'prompt': 0.08, 'completion': 0.30},"""
 DEFAULT_BUDGET = 0.50
 
 
@@ -402,19 +408,30 @@ def _patch_prompt(path):
     return True
 
 def _rewrite_benchmark_provider_route(code):
-    """Allow only privacy-compatible fallback hosts for the SAME fixed model.
+    """Upgrade a benchmark runner's routing without changing its model or arms.
 
-    OpenRouter account privacy preferences still apply. This changes only
-    endpoint routing, never the model, prompt, task, toolset or treatment.
+    The suite audits every previous trial before upgrading a frozen seed.
     """
     if ROUTING_MARKER in code:
-        if code.count(NEW_PROVIDER_ROUTE)!=1 or OLD_PROVIDER_ROUTE in code:
-            raise RuntimeError("Malformed benchmark privacy-provider routing patch")
-        return code,False
-    if code.count(OLD_PROVIDER_ROUTE)!=1:
+        if (code.count(NEW_PROVIDER_ROUTE) != 1 or
+                OLD_PROVIDER_ROUTE in code or LEGACY_PROVIDER_ROUTE in code):
+            raise RuntimeError("Malformed benchmark ordered-provider routing patch")
+        return code, False
+    if code.count(OLD_PROVIDER_ROUTE) == 1:
+        code = code.replace(OLD_PROVIDER_ROUTE, NEW_PROVIDER_ROUTE)
+    elif code.count(LEGACY_PROVIDER_ROUTE) == 1:
+        code = code.replace(LEGACY_PROVIDER_ROUTE, NEW_PROVIDER_ROUTE)
+    else:
         raise RuntimeError("Unknown OpenRouter provider configuration; refusing blind rewrite")
-    code=code.replace(OLD_PROVIDER_ROUTE,NEW_PROVIDER_ROUTE)
-    return code,True
+    code = code.replace("OPENROUTER_PROVIDER = 'sail-research'",
+                        "OPENROUTER_PROVIDER = 'ambient/fp4'")
+    code = code.replace("DeepSeek V4.1 Flash 1017 (Sail only)",
+                        "DeepSeek V4.1 Flash 1017 (ordered capped providers)")
+    code = code.replace("({OPENROUTER_PROVIDER} only, ",
+                        "({OPENROUTER_PROVIDER} preferred; two approved fallbacks, ")
+    if code.count(NEW_PROVIDER_ROUTE) != 1:
+        raise RuntimeError("Ordered-provider routing patch did not apply cleanly")
+    return code, True
 
 
 def _patch_runner(path, *, privacy_routing=False):
@@ -726,7 +743,7 @@ def prepare(repo, out, va=None, repeats=3, minimum=7, seed=20261118,
             "source_knowledge_sha256":_tool_hash(archive/"knowledge.sqlite3"),
             "original_cpp_sha256":hashlib.sha256(original.encode()).hexdigest(),
             "repeats":repeats,"random_seed":seed,
-            "model":"deepseek/deepseek-v4.1-flash-1017","provider":"sail-research",
+            "model":"deepseek/deepseek-v4.1-flash-1017","provider":"ordered-price-capped",
             "tooling_sha256":{name.as_posix():_tool_hash(seed_tree/name)
                               for name in ((ENTRY,RUNNER,RETRIEVAL,MEMORY,PROMPT,TASK)
                                            if solved else (ENTRY,RUNNER,RETRIEVAL,MEMORY,PROMPT))},
