@@ -75,7 +75,7 @@ export default function AgentDock({snapshot,onUpdated}:{snapshot:Snapshot|null;o
  };
  return <><div className="control-dock" aria-label="Agent controls">
   <div className="control-fields">
-   <label>Provider<select value={form.provider} onChange={e=>setForm(old=>({...old,provider:e.target.value as Launch['provider'],model_policy:'fixed'}))}>
+   <label>Provider<select value={form.provider} onChange={e=>setForm(old=>({...old,provider:e.target.value as Launch['provider'],model_policy:'fixed',max_inflight:e.target.value==='deepinfra'?Math.min(old.max_inflight,4):old.max_inflight}))}>
     <option value="openrouter">OpenRouter</option>
     <option value="deepinfra">DeepInfra direct</option>
    </select></label>
