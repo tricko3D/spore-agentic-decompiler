@@ -11,7 +11,9 @@ import sqlite3
 import sys
 
 ROOT = Path.cwd()
-sys.path.insert(0, str(ROOT/'work/scratch'))
+# Preserve stdlib module precedence (notably `dis` on Python 3.14).
+# The upstream checkout also has work/scratch/dis.py, which otherwise shadows it.
+sys.path.append(str(ROOT/'work/scratch'))
 import spore_first_pass_sqlite as agent
 import spore_sqlite_store as store
 
