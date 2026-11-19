@@ -1311,7 +1311,7 @@ def process(minutes, unsafe, backend, quota_wait, max_functions,
                             store.defer_run_target(rid,va,delay)
                             print(f'Deferred {va} for {delay}s; returning work to shared queue.', flush=True)
                             break
-                        print('Adaptive Sail cooldown; retrying this pass without consuming it.' if adaptive
+                        print('Adaptive OpenRouter cooldown; retrying this pass without consuming it.' if adaptive
                               else f'Waiting {quota_wait} minute(s) before retry in same session...', flush=True)
                         try:
                             if not adaptive:
@@ -1413,7 +1413,7 @@ def doctor(backend, model='mistral4', reasoning='high', live=False, budget=5.0):
     elif backend == 'openrouter':
         print('API key:', 'set' if os.environ.get('OPENROUTER_API_KEY', '').strip() else 'MISSING')
         print('Model:', OPENROUTER_MODEL)
-        print('Routing: Sail Research only, fallbacks disabled')
+        print('Routing: Ambient preferred, Particle AI Flex and DeepInfra Flex only; price caps enforced')
         print('Reasoning requested:', reasoning, '(provider may not honor specific effort)')
         print('Per-run budget: $%.2f; OpenRouter key limit remains a separate hard cap' % budget)
         print('OpenCode shell tools are NOT sandboxed')
