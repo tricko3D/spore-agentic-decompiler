@@ -237,6 +237,8 @@ def status():
 def run(a):
     if Path.cwd().resolve() != ROOT:
         sys.exit(f'Run from {ROOT}')
+    if a.backend == 'deepinfra' and a.model_policy != 'fixed':
+        sys.exit('DeepInfra currently supports fixed-model routing; use --model-policy fixed')
     if not (1 <= a.workers <= 32):
         sys.exit('--workers must be between 1 and 32')
     if not (1 <= a.passes <= 24):
@@ -245,8 +247,13 @@ def run(a):
         sys.exit('Invalid time, budget, quota wait or function limit')
     if shutil.which('opencode') is None:
         sys.exit('opencode not found on PATH')
-    if not os.environ.get('OPENROUTER_API_KEY', '').strip():
+    if a.backend == 'openrouter' and not os.environ.get('OPENROUTER_API_KEY', '').strip():
         sys.exit('OPENROUTER_API_KEY not set in this shell')
+    if a.backend == 'deepinfra' and not os.environ.get('DEEPINFRA_API_KEY', '').strip():
+        sys.exit('DEEPINFRA_API_KEY not set (requires billing:read permission)')
+    if a.backend == 'deepinfra':
+        # Independent provider: no OpenRouter-specific adaptive backoff.
+        a.adaptive = False
     mod = load_runner()
     verify_checker()
     RUN_LOGS.mkdir(parents=True, exist_ok=True)
@@ -286,7 +293,7 @@ def run(a):
         live = []
         for i in range(a.workers):
             log_path = folder / f'worker-{i+1:02d}.log'
-            cmd = [sys.executable, str(WORKER_ENTRY), 'run', '--passes', str(a.passes),
+            cmd = [sys.executable, str(WORKER_ENTRY), 'run', '--backend', a.backend, '--passes', str(a.passes),
                    '--reasoning', a.reasoning, '--minutes', str(a.minutes),
                    '--quota-wait', str(a.quota_wait), '--budget', str(a.budget),
                    '--max-inflight', str(a.max_inflight),
@@ -297,7 +304,8 @@ def run(a):
             if a.unsafe:
                 cmd += ['--unsafe']
             env = os.environ.copy()
-            env.update({'PWD': str(ROOT), 'SPORE_ADAPTIVE_INFLIGHT': '1' if a.adaptive else '0'})
+            env.update({'PWD': str(ROOT), 'SPORE_ADAPTIVE_INFLIGHT': '1' if a.adaptive else '0',
+                        'SPORE_MODEL_POLICY': a.model_policy})
             with log_path.open('w', encoding='utf-8') as output:
                 p = subprocess.Popen(cmd, cwd=ROOT, env=env, stdin=subprocess.DEVNULL,
                                      stdout=output, stderr=subprocess.STDOUT, start_new_session=True)
@@ -306,7 +314,8 @@ def run(a):
             print(f'  Worker {i+1}/{a.workers}: PID {p.pid}, assigned {counts[i]}, log {log_path.name}', flush=True)
         report = {'run_id': run_id, 'directory': str(folder), 'workers': a.workers,
                   'passes': a.passes, 'minutes': a.minutes, 'max_inflight': a.max_inflight,
-                  'provider_retries': a.provider_retries, 'processes': processes}
+                  'provider_retries': a.provider_retries, 'backend': a.backend,
+                  'model_policy': a.model_policy, 'processes': processes}
         (folder / 'run.json').write_text(json.dumps(report, indent=2) + '\n')
         tmp = LATEST.with_name(f'latest.{os.getpid()}.tmp')
         tmp.write_text(json.dumps(report, indent=2) + '\n')
@@ -355,6 +364,8 @@ def main():
     sub = p.add_subparsers(dest='command', required=True)
     r = sub.add_parser('run', help='Start N workers using SQLite WAL')
     r.add_argument('--workers', type=int, default=5, help='Number of concurrent agents (default: 5)')
+    r.add_argument('--backend', choices=['openrouter', 'deepinfra'], default='openrouter')
+    r.add_argument('--model-policy', choices=['fixed', 'cheapest'], default='fixed')
     r.add_argument('--passes', type=int, default=3, help='Additional valid attempts per eligible function in this run (1-24)')
     r.add_argument('--reasoning', choices=['low', 'medium', 'high'], default='medium')
     r.add_argument('--minutes', type=int, default=20, help='Inactivity watchdog minutes (minimum 15); no total runtime limit')
