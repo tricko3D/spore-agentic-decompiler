@@ -25,6 +25,7 @@ import time
 ROOT = Path(__file__).resolve().parent
 WORK = ROOT / 'work' / 'scratch' / 'codex-pass1'
 RUNNER = ROOT / 'work' / 'scratch' / 'spore_first_pass_sqlite.py'
+WORKER_ENTRY = ROOT / 'spore_worker_entry.py'
 RUN_LOGS = WORK / 'parallel'
 LOCK = WORK / 'sqlite-parallel.lock'
 LATEST = RUN_LOGS / 'latest.json'
@@ -32,8 +33,8 @@ KNOWN_CHECK_MARKER = 'SPGONZAGO_SQLITE_CHECK_LOCK_V1'
 
 
 def load_runner():
-    if not RUNNER.is_file():
-        sys.exit('Parallel runner not installed. Unzip the package into your repository root.')
+    if not RUNNER.is_file() or not WORKER_ENTRY.is_file():
+        sys.exit('Parallel runner not installed. Run: python3 spore_agentic.py install')
     spec = importlib.util.spec_from_file_location('spore_parallel_worker_runner', RUNNER)
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
@@ -229,7 +230,7 @@ def status():
         if tail:
             print('    ', tail[:230])
     print('\nOverall status:')
-    p = subprocess.run([sys.executable, str(RUNNER), 'status'], cwd=ROOT)
+    p = subprocess.run([sys.executable, str(WORKER_ENTRY), 'status'], cwd=ROOT)
     return p.returncode
 
 
@@ -285,7 +286,7 @@ def run(a):
         live = []
         for i in range(a.workers):
             log_path = folder / f'worker-{i+1:02d}.log'
-            cmd = [sys.executable, str(RUNNER), 'run', '--passes', str(a.passes),
+            cmd = [sys.executable, str(WORKER_ENTRY), 'run', '--passes', str(a.passes),
                    '--reasoning', a.reasoning, '--minutes', str(a.minutes),
                    '--quota-wait', str(a.quota_wait), '--budget', str(a.budget),
                    '--max-inflight', str(a.max_inflight),
@@ -345,7 +346,7 @@ def run(a):
                     proc.wait()
         store.finish_run(run_id)
         print('\nFinal shared status:', flush=True)
-        subprocess.run([sys.executable, str(RUNNER), 'status'], cwd=ROOT)
+        subprocess.run([sys.executable, str(WORKER_ENTRY), 'status'], cwd=ROOT)
         return 130 if interrupted else (0 if all(p.returncode == 0 for p in live) else 1)
 
 
