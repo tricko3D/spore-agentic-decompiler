@@ -659,7 +659,7 @@ def status(repo):
                    q.state,q.next_retry_utc
             FROM technique_queue q JOIN findings f ON f.id=q.finding_id
             WHERE q.error<>'' ORDER BY q.updated_utc DESC LIMIT 5""").fetchall()
-        return {"installed":True,"model":MODEL,"provider":PROVIDER,
+        return {"installed":True,"model":MODEL,"provider":PROVIDERS[0], "providers":PROVIDERS,
                 "techniques":techniques,"linked_evidence":total,
                 "queue":{x["state"]:x["n"] for x in rows},
                 "recent_errors":[dict(x) for x in errors],
