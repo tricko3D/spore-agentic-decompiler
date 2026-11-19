@@ -32,6 +32,7 @@ STAMP = lambda: datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')
 # This is intentionally an explicit allowlist, not a recursive checkout copy.
 INSTALL = {
     'spore_parallel_sqlite.py': 'spore_provider_fix/spore_parallel_sqlite.py',
+    'spore_worker_entry.py': 'spore_worker_entry.py',
     'spore_matched_bytes.py': 'spore_provider_fix/spore_matched_bytes.py',
     'spore_recover_provider_attempts.py': 'spore_provider_fix/spore_recover_provider_attempts.py',
     'work/scratch/spore_first_pass_sqlite.py': 'spore_provider_fix/work/scratch/spore_first_pass_sqlite.py',
@@ -120,7 +121,7 @@ def live_workers():
                     (p/'cmdline').read_bytes().split(b'\x00') if x]
         except (PermissionError, OSError):
             continue
-        scripts = ('spore_first_pass_sqlite.py', 'spore_parallel_sqlite.py')
+        scripts = ('spore_first_pass_sqlite.py', 'spore_parallel_sqlite.py', 'spore_worker_entry.py')
         if 'run' in argv and any(Path(arg).name in scripts for arg in argv):
             found.append(p.name)
     return found
