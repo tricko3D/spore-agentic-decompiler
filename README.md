@@ -33,7 +33,7 @@ python3 spore_agentic.py status
 python3 spore_agentic.py progress
 ```
 
-`run` **incurs OpenRouter charges** and uses the existing upstream checkout to write real C++ and invoke the upstream compiler verifier. It defaults to **SPGonzago** but can select other confidently classified modules via `scope --module NAME --apply` or the dashboard control panel. The model remains DeepSeek V4.1 Flash (`deepseek/deepseek-v4.1-flash-1017`) through a strict ordered provider list: Ambient FP4, Particle AI US Flex, and DeepInfra FP8 Flex. Ambient is always preferred when available. Fully persistent OpenCode *processes* are not implemented.
+`run` **incurs OpenRouter charges** and uses the existing upstream checkout to write real C++ and invoke the upstream compiler verifier. It defaults to **SPGonzago** but can select other confidently classified modules via `scope --module NAME --apply` or the dashboard control panel. The model remains DeepSeek V4.1 Flash (`deepseek/deepseek-v4.1-flash-1017`) through a strict higher-throughput provider list: Nebius FP4 first, Relace FP4 second, and StepFun FP8 third. Fully persistent OpenCode *processes* are not implemented.
 
 ## OpenRouter adaptive throughput (default)
 
@@ -44,7 +44,7 @@ python3 spore_agentic.py run --workers 16 --max-inflight 16 --passes 3 --budget 
 python3 spore_agentic.py status
 ```
 
-OpenRouter routing is restricted to `ambient/fp4` → `particle-ai/us/flex` → `deepinfra/fp8/flex`, with `data_collection=deny` and a maximum listed price of **$0.08 per million input tokens** and **$0.30 per million output tokens**. If no listed endpoint qualifies, SAD fails closed rather than selecting a fourth provider. These are price ceilings, not a total expenditure cap. The local `--budget` remains soft, and the OpenRouter key limit remains the hard spending cap.
+OpenRouter routing is restricted to `nebius/fp4` → `relace/fp4` → `stepfun/fp8`, with `data_collection=deny` and a maximum listed price of **$0.18 per million input tokens** and **$0.72 per million output tokens**. If no listed endpoint qualifies, SAD fails closed rather than selecting a fourth provider. These are price ceilings, not a total expenditure cap. The local `--budget` remains soft, and the OpenRouter key limit remains the hard spending cap.
 
 Here 16 is an upper bound and the controller may settle at 1, 3 or any other sustainable number. The actual usable cap varies by provider availability. It uses **verified output-token events** for ramp-up and confirmed provider HTTP 429 events for rollback. The controller does not infer capacity from a completed decompilation function alone. It does not guarantee zero TTFT errors, nor is it a guarantee of optimal dollars per match. Fixed-cap behavior is still available via `--fixed-inflight`. Each new run begins a fresh capacity search; the historical attempts, provider-error incidents, and expense tracking persist separately. The old `--minutes` flag is now an **inactivity watchdog**, not a total pass deadline. Existing values below 15 minutes are clamped to 15; new runs default to 20. Meaningful model/tool events reset the watchdog; repeated retry events do not. Idle-stalled functions preserve their source edits and OpenCode session, consume no matching pass, and remain eligible for a later run.
 

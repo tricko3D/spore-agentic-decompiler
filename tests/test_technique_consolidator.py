@@ -253,9 +253,9 @@ class ConsolidationTests(unittest.TestCase):
         self.assertEqual(sent["model"],tech.MODEL)
         self.assertEqual(sent["provider"]["only"],tech.PROVIDERS)
         self.assertEqual(sent["provider"]["order"],tech.PROVIDERS)
-        self.assertEqual(tech.PROVIDERS,["ambient/fp4", "particle-ai/us/flex", "deepinfra/fp8/flex"])
+        self.assertEqual(tech.PROVIDERS,["nebius/fp4", "relace/fp4", "stepfun/fp8"])
         self.assertEqual(sent["provider"]["data_collection"],"deny")
-        self.assertEqual(sent["provider"]["max_price"],{"prompt":0.08,"completion":0.30})
+        self.assertEqual(sent["provider"]["max_price"],{"prompt":0.18,"completion":0.72})
         self.assertFalse(sent["provider"]["allow_fallbacks"])
         self.assertEqual(sent["response_format"]["type"],"json_object")
         # "low" reasoning exhausted all 2800 tokens in production, leaving
