@@ -709,6 +709,46 @@ def update_budget(key_fingerprint,usage,budget,limit_remaining=None,*,run_id):
             raise
 
 
+def update_secondary_budget(key_fingerprint, usage, budget, *, run_id):
+    """Separate direct-provider baseline; never modifies OpenRouter's key history.
+
+    This guard uses DeepInfra's official account usage, not OpenCode's
+    estimated per-step costs. It is a soft run limit, not an atomic provider
+    billing limit; the provider's own account spending cap remains essential.
+    """
+    if not run_id or budget <= 0 or usage < 0:
+        raise ValueError('Invalid provider budget inputs')
+    with connect() as db:
+        db.execute('BEGIN IMMEDIATE')
+        try:
+            session=db.execute('SELECT * FROM run_budgets WHERE run_id=?',(run_id,)).fetchone()
+            if session:
+                if session['key_fingerprint']!=key_fingerprint:
+                    raise RuntimeError('DeepInfra key changed during this run')
+                if abs(float(session['budget_limit'])-float(budget))>0.000001:
+                    raise RuntimeError('Run budget changed; start a new run')
+                baseline=float(session['baseline_usage'])
+                last=max(float(session['last_usage']),float(usage))
+                db.execute('UPDATE run_budgets SET last_usage=?,updated_utc=? WHERE run_id=?',
+                           (last,utc(),run_id))
+            else:
+                baseline=last=float(usage)
+                db.execute('''INSERT INTO run_budgets
+                    (run_id,key_fingerprint,baseline_usage,last_usage,budget_limit,updated_utc)
+                    VALUES(?,?,?,?,?,?)''',
+                    (run_id,key_fingerprint,baseline,last,float(budget),utc()))
+            reserved=float(db.execute(
+                'SELECT COALESCE(SUM(amount),0) FROM reservations WHERE run_id=?',
+                (run_id,)).fetchone()[0])
+            spent=max(0.0,last-baseline)
+            allowed=spent+reserved+0.10<=float(budget)+0.0000001
+            db.execute('COMMIT')
+            return allowed,spent,reserved
+        except Exception:
+            db.execute('ROLLBACK')
+            raise
+
+
 def reserve_budget(run_id,va,amount,budget):
     """Reserve provider spend against this run, never the original key baseline."""
     if not run_id:
