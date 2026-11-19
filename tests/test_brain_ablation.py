@@ -41,6 +41,16 @@ def run_one():
         prompt += "brain"
     if os.environ.get('SPORE_SQLITE_RUN_ID'):
         prompt += f\"\"\"PARALLEL\"\"\"
+
+def openrouter_config():
+    return {
+        'body': {
+            'provider': {
+                                'order': [OPENROUTER_PROVIDER],
+                                'allow_fallbacks': False,
+            }
+        }
+    }
 """,encoding="utf-8")
         # Simulate an older installed Brain version with a long Unix-socket path.
         self._make_legacy_memory(self.source/bench.MEMORY)

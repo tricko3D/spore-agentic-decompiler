@@ -42,6 +42,14 @@ ENTRY = Path("brain_trial_entry.py")
 ENTRY_SOURCE = SOURCE_DIR / ENTRY.name
 MEMORY_TEMPLATE = SOURCE_DIR / "engine/spore_provider_fix/work/scratch/spore_collective_memory.py"
 SOCKET_MARKER = "SAD_SHORT_UNIX_SOCKET_V1"
+ROUTING_MARKER = "SAD_BENCH_PRIVACY_ROUTING_FALLBACK_V1"
+# The provider was previously hard-pinned to Sail Research. OpenRouter
+# excluded every endpoint for accounts that opt out of paid training.
+OLD_PROVIDER_ROUTE = """                                'order': [OPENROUTER_PROVIDER],
+                                'allow_fallbacks': False,"""
+NEW_PROVIDER_ROUTE = """                                # SAD_BENCH_PRIVACY_ROUTING_FALLBACK_V1
+                                'allow_fallbacks': True,
+                                'data_collection': 'deny',"""
 DEFAULT_BUDGET = 0.50
 
 
@@ -393,7 +401,23 @@ def _patch_prompt(path):
     tmp.replace(path)
     return True
 
-def _patch_runner(path):
+def _rewrite_benchmark_provider_route(code):
+    """Allow only privacy-compatible fallback hosts for the SAME fixed model.
+
+    OpenRouter account privacy preferences still apply. This changes only
+    endpoint routing, never the model, prompt, task, toolset or treatment.
+    """
+    if ROUTING_MARKER in code:
+        if code.count(NEW_PROVIDER_ROUTE)!=1 or OLD_PROVIDER_ROUTE in code:
+            raise RuntimeError("Malformed benchmark privacy-provider routing patch")
+        return code,False
+    if code.count(OLD_PROVIDER_ROUTE)!=1:
+        raise RuntimeError("Unknown OpenRouter provider configuration; refusing blind rewrite")
+    code=code.replace(OLD_PROVIDER_ROUTE,NEW_PROVIDER_ROUTE)
+    return code,True
+
+
+def _patch_runner(path, *, privacy_routing=False):
     source=path.read_text(encoding="utf-8")
     needle="if collective_memory.paths(ROOT)[2].is_file():"
     if source.count(needle)!=1:
@@ -420,6 +444,8 @@ Focus on the current function. Do not edit unrelated files.
 """
 '''
     source=source.replace(anchor,insert+anchor)
+    if privacy_routing:
+        source,_=_rewrite_benchmark_provider_route(source)
     path.write_text(source,encoding="utf-8")
 
 
@@ -675,7 +701,7 @@ def prepare(repo, out, va=None, repeats=3, minimum=7, seed=20261118,
                     raise RuntimeError("Address anonymization collision")
             if not solved:
                 _mask_memory(seed_tree/KNOW,va,alias)
-            _patch_runner(seed_tree/RUNNER)
+            _patch_runner(seed_tree/RUNNER,privacy_routing=solved)
         else:
             print("Recovering post-database, pre-plan seed; leaving frozen SQLite unchanged.",flush=True)
         _patch_prompt(seed_tree/PROMPT)
@@ -694,6 +720,7 @@ def prepare(repo, out, va=None, repeats=3, minimum=7, seed=20261118,
             "created":now(),"source":str(repo),
             "target":va,"alias":alias,"original_failures":choice["failures"],
             "solved_cohort":bool(solved),
+            "provider_routing":ROUTING_MARKER if solved else "sail-only-legacy",
             "holdouts":list(holdouts) if solved else [],
             "knowledge_pruning":prune_metrics,
             "source_knowledge_sha256":_tool_hash(archive/"knowledge.sqlite3"),
@@ -810,6 +837,11 @@ def _seed_tooling(out, plan):
                     if "0x"+parts[2].lower() in holdouts:
                         raise RuntimeError("Old MATCH manifest leaked into suite seed")
     runner=(seed/RUNNER).read_text(encoding="utf-8")
+    if plan.get("provider_routing")==ROUTING_MARKER:
+        if (ROUTING_MARKER not in runner or
+                OLD_PROVIDER_ROUTE in runner or
+                runner.count(NEW_PROVIDER_ROUTE)!=1):
+            raise RuntimeError("Benchmark seed provider privacy/fallback policy changed")
     if ("brain_trial_entry.py query" not in runner or
             ".venv/bin/python work/scratch/brain_trial_query.py --text" in runner):
         raise RuntimeError(

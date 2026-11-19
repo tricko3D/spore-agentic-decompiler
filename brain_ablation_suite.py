@@ -11,8 +11,11 @@ import contextlib
 import csv
 import io
 import json
+import hashlib
 from pathlib import Path
 import random
+import sqlite3
+import uuid
 
 import brain_ablation as brain
 
@@ -75,6 +78,138 @@ def _eligible_solved_sources(repo):
     return included[:MAX_TARGETS],rejected,history
 
 
+def _audit_unserved_provider_trial(sub, plan, item):
+    """Prove the recorded OpenCode 404 was rejected before any model response.
+
+    Do not generalize this to other provider failures, paid sessions or
+    attempts. The old log and all evidence remain unmodified.
+    """
+    if (item.get("state")!="error" or item.get("exit_code")!=0 or
+            item.get("error")!="Runner exited without a recorded decompilation attempt"):
+        raise RuntimeError("Provider trial was not the known no-attempt OpenCode failure")
+    trial=sub/"trials"/item["name"]
+    if not trial.is_dir():
+        raise RuntimeError("Provider-error trial directory missing")
+    logs=list((trial/brain.WORK/"logs").rglob("*.jsonl"))
+    if len(logs)!=1:
+        raise RuntimeError("Expected exactly one failed OpenCode JSONL log")
+    events=[]
+    for line in logs[0].read_text(encoding="utf-8",errors="replace").splitlines():
+        try:
+            events.append(json.loads(line))
+        except ValueError as exc:
+            raise RuntimeError("Unparseable provider log; manual audit required") from exc
+    if ([x.get("type") for x in events if isinstance(x,dict)]!=
+            ["step_start","error"] or len(events)!=2):
+        raise RuntimeError("Provider log contains model output, tools or unexpected events")
+    error=events[-1].get("error") or {}
+    message=error.get("message") or ""
+    if (error.get("type")!="provider.invalid-request" or
+            error.get("status")!=404 or
+            "No endpoints found for "+plan["model"] not in message or
+            "Every candidate endpoint was removed during routing" not in message or
+            "Filter by Fallback" not in message):
+        raise RuntimeError("Different upstream error; cannot automatically requeue")
+    with sqlite3.connect(f"file:{(trial/brain.OPS).resolve()}?mode=ro",uri=True) as db:
+        attempted=db.execute("SELECT COUNT(*) FROM attempts").fetchone()[0]
+        charged=db.execute("SELECT COALESCE(SUM(last_usage-baseline_usage),0) "
+                           "FROM run_budgets").fetchone()[0]
+        if attempted or abs(float(charged or 0))>0.000001:
+            raise RuntimeError("A provider trial recorded attempts or key usage")
+    source=trial/brain.slice_path(plan["target"])
+    expected=sub/"seed"/brain.slice_path(plan["target"])
+    if (not source.is_file() or not expected.is_file() or
+            source.read_bytes()!=expected.read_bytes()):
+        raise RuntimeError("Provider trial source changed; manual audit required")
+    trace=trial/brain.WORK/"brain-queries.jsonl"
+    if trace.is_file() and trace.stat().st_size:
+        raise RuntimeError("Brain was queried in supposed pre-model provider failure")
+    if any(path.stat().st_size for path in (trial/brain.WORK/"logs").rglob("*.last.txt")):
+        raise RuntimeError("Final model answer exists in supposedly unserved trial")
+    runlog=trial/"benchmark-run.log"
+    if not runlog.is_file() or "openrouter error, stopping without ticking" not in runlog.read_text(
+            encoding="utf-8",errors="replace"):
+        raise RuntimeError("Missing expected no-attempt runner evidence")
+    return {"jsonl_sha256":brain._tool_hash(logs[0]),"error_status":404,
+            "kind":"provider.invalid-request","event_count":2}
+
+
+def _ensure_routing(out, suite_plan):
+    """Upgrade a previously prepared, entirely unmeasured 36-trial suite.
+
+    First audit ALL targets and every failed trial; only after passing the
+    audits, update the frozen benchmark-only runner code and its hash manifest.
+    Retain old failure logs under their original trial IDs. This is not a
+    general retry mechanism.
+    """
+    if suite_plan.get("provider_routing")==brain.ROUTING_MARKER:
+        for va in suite_plan["targets"]:
+            sub=_target_dir(out,va)
+            inner=json.loads((sub/"plan.json").read_text(encoding="utf-8"))
+            if inner.get("provider_routing")!=brain.ROUTING_MARKER:
+                raise RuntimeError("Mixed provider routing policies in one benchmark")
+            brain._seed_tooling(sub,inner)
+        return suite_plan
+    if suite_plan.get("provider_routing") not in (None,"sail-only-legacy"):
+        raise RuntimeError("Unknown provider policy, refusing benchmark upgrade")
+    staged=[]
+    for va in suite_plan["targets"]:
+        sub=_target_dir(out,va)
+        inner=json.loads((sub/"plan.json").read_text(encoding="utf-8"))
+        if (inner.get("target")!=va or not inner.get("solved_cohort") or
+                inner.get("source_knowledge_sha256")!=suite_plan["frozen_knowledge_sha256"]):
+            raise RuntimeError("Experiment source or knowledge provenance mismatch")
+        brain._seed_tooling(sub,inner)
+        audits=[]
+        for item in inner["arms"]:
+            if item["state"]=="error":
+                audits.append((item,_audit_unserved_provider_trial(sub,inner,item)))
+            elif item["state"]!="prepared":
+                raise RuntimeError("An agent may have run; refusing to change provider policy")
+        runner=sub/"seed"/brain.RUNNER
+        if runner.is_symlink() or not runner.is_file():
+            raise RuntimeError("Benchmark runner source is not isolated")
+        code=runner.read_text(encoding="utf-8")
+        updated,changed=brain._rewrite_benchmark_provider_route(code)
+        if brain._tool_hash(runner)!=inner["tooling_sha256"][brain.RUNNER.as_posix()]:
+            raise RuntimeError("Seed runner changed outside the frozen experiment")
+        staged.append((sub,inner,runner,updated,changed,audits))
+    for sub,inner,runner,updated,changed,audits in staged:
+        if changed:
+            tmp=runner.with_name(runner.name+".routing-repair.tmp")
+            tmp.write_text(updated,encoding="utf-8")
+            tmp.chmod(runner.stat().st_mode & 0o777)
+            tmp.replace(runner)
+        inner["provider_routing"]=brain.ROUTING_MARKER
+        inner["tooling_sha256"][brain.RUNNER.as_posix()]=brain._tool_hash(runner)
+        inner["provider_routing_repair_utc"]=brain.now()
+        for item,proof in audits:
+            old_name=item["name"]
+            new_name="trial-provider-retry-"+uuid.uuid4().hex[:12]
+            if (sub/"trials"/new_name).exists():
+                raise RuntimeError("Provider trial retry ID already exists")
+            item.setdefault("invalid_history",[]).append({
+                "name":old_name,"state":"provider_rejected_before_model",
+                "exit_code":item.get("exit_code"),"reason":item.get("error",""),
+                "evidence":proof,"retired_utc":brain.now()})
+            item["name"]=new_name
+            item["state"]="prepared"
+            for field in ("error","started","finished","exit_code"):
+                item.pop(field,None)
+            print(f"Preserved HTTP 404 trial {old_name}; requeued as {new_name}",
+                  flush=True)
+        write(sub/"plan.json",inner)
+        brain._seed_tooling(sub,inner)
+    suite_plan["provider_routing"]=brain.ROUTING_MARKER
+    suite_plan["provider_routing_repair_utc"]=brain.now()
+    write(out/"suite-plan.json",suite_plan)
+    print("All targets now use fallback providers with data_collection=deny.",
+          flush=True)
+    print("Original model, task, knowledge snapshot, assignments and failed logs preserved.",
+          flush=True)
+    return suite_plan
+
+
 def prepare(repo,out,repeats=3,seed=20261118):
     repo=repo.resolve()
     out=out.resolve()
@@ -113,6 +248,7 @@ def prepare(repo,out,repeats=3,seed=20261118):
             "random_seed":seed,
             "schedule":schedule,
             "model":"deepseek/deepseek-v4.1-flash-1017",
+            "provider_routing":brain.ROUTING_MARKER,
             "notes":"Frozen solved-function cohort, no original solution is included in a trial."
         }
         write(out/"suite-plan.json",plan)
@@ -194,6 +330,7 @@ def compare(out):
     rows.sort(key=lambda r:(plan["targets"].index(r["target"]),
                            order[r["arm"]],r["repeat"]))
     doc={"suite_version":SUITE_VERSION,"generated":brain.now(),
+         "provider_routing":plan.get("provider_routing","sail-only-legacy"),
          "targets":plan["targets"],"repeats":plan["repeats"],
          "primary_endpoint":"independently verified byte-perfect MATCH",
          "trials":rows}
@@ -243,6 +380,7 @@ def run(repo,out,repeats=3,seed=20261118,*,execute=False,budget=.50,minutes=20):
     if not .10<=budget<=25 or not 1<=minutes<=180:
         raise ValueError("Trial budget must be $0.10-$25; inactivity minutes 1-180")
     plan=prepare(repo,out,repeats,seed)
+    plan=_ensure_routing(out,plan)
     total=len(plan["schedule"])
     print(f"Suite ready: {len(plan['targets'])} known MATCH functions x 4 arms x "
           f"{repeats} repetitions = {total} trials")

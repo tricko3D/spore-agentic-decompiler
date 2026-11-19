@@ -1,3 +1,14 @@
+## OpenRouter routing in the solved-function suite (provider-invalid-request 404)
+
+The original benchmark code pinned DeepSeek Flash to **Sail Research only**, with no provider fallbacks. OpenRouter can reject that request before inference when the account does not permit training on paid prompts, and when the preferred hosting endpoint is unavailable. In that case OpenCode logs a structured JSONL error: HTTP 404, "No endpoints found", "Every candidate endpoint was removed during routing", "Filter by Fallback".
+
+The solved-function suite now keeps the exact same model, prompt and experiment arms, but removes the provider pin. It allows fallback **among providers serving that same model**, and explicitly sets `data_collection='deny'`, so account privacy restrictions remain in force. A compatible endpoint is not guaranteed to exist at every moment. Provider routing can affect latency and effective implementation details, so trial logs should be reviewed before attributing a difference to retrieval.
+
+The one-command suite automatically repairs **previously prepared but entirely unmeasured** frozen seeds when they still contain the legacy routing configuration. It audits all three target plans and the frozen-knowledge checksum before any write. It accepts only one narrowly defined failed-trial shape: no recorded attempts or provider spending, original unchanged C++, no Brain query, and precisely one OpenCode JSONL containing a `step_start` event followed by the above `provider.invalid-request` HTTP 404. It archives the old trial name and SHA256 of that log, requeues the same condition under a new trial ID, patches the **cloned runner only**, and updates all three frozen tooling manifests. Historical failure logs are not deleted, and the trial is not scored as a decompilation failure.
+
+Any real tool call, model answer, checker result, amount billed, or different provider error makes the upgrade stop for manual review instead. This protects against silently re-running a measured condition with changed provider policy.
+
+
 ## Recovery: prepared trial contains historical attempts (WAL copy defect)
 
 Before the trial runner starts, the cloned source SQLite DB can have a WAL containing the deleted historical attempts. Older trial-copy code used shutil.copy2() on the seed's .sqlite3 file but ignored its -wal file. This copied old pages, resurrected the archived attempts, and stopped with "Old target attempts leaked into trial." The **same bug could also omit knowledge redaction**, so these are protocol-integrity failures rather than decompilation failures.

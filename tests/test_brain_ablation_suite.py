@@ -175,6 +175,114 @@ def main(va):
                 suite.run(self.source,self.out,repeats=1,execute=True)
         self.assertFalse((self.out/"functions").exists())
 
+    def _legacy_provider_fixture(self, *, contaminated=False):
+        """A fully prepared suite with exactly one 404 before model tokens."""
+        suite.prepare(self.source,self.out,repeats=1)
+        top=self.out/"suite-plan.json"
+        master=json.loads(top.read_text())
+        master.pop("provider_routing",None)
+        brain.write_json(top,master)
+        for va in master["targets"]:
+            sub=suite._target_dir(self.out,va)
+            planpath=sub/"plan.json"
+            inner=json.loads(planpath.read_text())
+            runner=sub/"seed"/brain.RUNNER
+            code=runner.read_text()
+            self.assertIn(brain.NEW_PROVIDER_ROUTE,code)
+            runner.write_text(code.replace(
+                brain.NEW_PROVIDER_ROUTE,brain.OLD_PROVIDER_ROUTE))
+            inner.pop("provider_routing",None)
+            inner["tooling_sha256"][brain.RUNNER.as_posix()]=brain._tool_hash(runner)
+            brain.write_json(planpath,inner)
+        first=master["schedule"][0]
+        sub=suite._target_dir(self.out,first)
+        planpath=sub/"plan.json"
+        inner=json.loads(planpath.read_text())
+        item=inner["arms"][0]
+        oldname=item["name"]
+        trial=sub/"trials"/oldname
+        brain._clone(sub/"seed",trial)
+        logpath=trial/brain.WORK/"logs"/(
+            first[2:]+".deepseek-openrouter.test.jsonl")
+        logpath.parent.mkdir(parents=True,exist_ok=True)
+        events=[
+            {"type":"step_start"},
+            {"type":"error","error":{
+                "type":"provider.invalid-request","status":404,
+                "message":"No endpoints found for "+inner["model"]+
+                ". Every candidate endpoint was removed during routing: "
+                "Filter by Fallback removed other providers",
+            }}
+        ]
+        if contaminated:
+            events.insert(1,{"type":"tool_use","part":{"state":{
+                "input":{"command":"tools/contrib/check.py"}}}})
+        logpath.write_text("\n".join(json.dumps(x) for x in events)+"\n")
+        (trial/"benchmark-run.log").write_text(
+            "OpenRouter charged in THIS run: $0.0000 / $0.50\n"
+            "openrouter error, stopping without ticking "+first+"\n")
+        item["state"]="error"
+        item["exit_code"]=0
+        item["error"]="Runner exited without a recorded decompilation attempt"
+        brain.write_json(planpath,inner)
+        return master,first,oldname,logpath
+
+    def test_privacy_provider_config_preserves_model_and_disallows_training(self):
+        suite.prepare(self.source,self.out,repeats=1)
+        for va in self.targets:
+            sub=suite._target_dir(self.out,va)
+            runner=(sub/"seed"/brain.RUNNER).read_text()
+            self.assertIn(brain.ROUTING_MARKER,runner)
+            self.assertIn("'data_collection': 'deny'",runner)
+            self.assertIn("'allow_fallbacks': True",runner)
+            self.assertNotIn(brain.OLD_PROVIDER_ROUTE,runner)
+            inner=json.loads((sub/"plan.json").read_text())
+            self.assertEqual(inner["provider_routing"],brain.ROUTING_MARKER)
+            self.assertEqual(inner["model"],"deepseek/deepseek-v4.1-flash-1017")
+
+    def test_legacy_suite_requeues_only_pre_model_provider_404(self):
+        master,first,oldname,logpath=self._legacy_provider_fixture()
+        old_sha=brain._tool_hash(logpath)
+        with mock.patch.object(brain,"run_next",
+                               side_effect=AssertionError("No paid agent allowed")):
+            result=suite.run(self.source,self.out,repeats=1,execute=False)
+        self.assertTrue(logpath.is_file())
+        self.assertEqual(brain._tool_hash(logpath),old_sha)
+        self.assertEqual(len(result["trials"]),12)
+        after=json.loads((self.out/"suite-plan.json").read_text())
+        self.assertEqual(after["provider_routing"],brain.ROUTING_MARKER)
+        self.assertEqual(after["frozen_knowledge_sha256"],master["frozen_knowledge_sha256"])
+        oldsub=suite._target_dir(self.out,first)
+        inner=json.loads((oldsub/"plan.json").read_text())
+        retried=inner["arms"][0]
+        self.assertEqual(retried["state"],"prepared")
+        self.assertNotEqual(retried["name"],oldname)
+        self.assertEqual(retried["invalid_history"][-1]["name"],oldname)
+        self.assertEqual(retried["invalid_history"][-1]["evidence"]["error_status"],404)
+        for va in self.targets:
+            sub=suite._target_dir(self.out,va)
+            inner=json.loads((sub/"plan.json").read_text())
+            self.assertEqual(inner["provider_routing"],brain.ROUTING_MARKER)
+            self.assertEqual(inner["source_knowledge_sha256"],
+                             master["frozen_knowledge_sha256"])
+            brain._seed_tooling(sub,inner)
+        with mock.patch.object(brain,"run_next",
+                               side_effect=AssertionError("No model call")):
+            suite.run(self.source,self.out,repeats=1,execute=False)
+        again=json.loads((oldsub/"plan.json").read_text())
+        self.assertEqual(again["arms"][0]["name"],retried["name"])
+
+    def test_legacy_suite_refuses_any_model_or_tool_activity(self):
+        _,_,name,logpath=self._legacy_provider_fixture(contaminated=True)
+        with self.assertRaisesRegex(RuntimeError,"model output, tools"):
+            suite.run(self.source,self.out,repeats=1,execute=False)
+        oldsub=suite._target_dir(self.out,json.loads(
+            (self.out/"suite-plan.json").read_text())["schedule"][0])
+        inner=json.loads((oldsub/"plan.json").read_text())
+        self.assertEqual(inner["arms"][0]["name"],name)
+        self.assertIsNone(inner.get("provider_routing"))
+        self.assertTrue(logpath.is_file())
+
     def test_missing_match_history_fails_before_preparation(self):
         with sqlite3.connect(self.source/brain.OPS) as db:
             db.execute("DELETE FROM attempts WHERE va=? AND status='MATCH'",
