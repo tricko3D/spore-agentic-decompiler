@@ -597,8 +597,17 @@ def openrouter_get_key():
     return data
 
 
-def budget_progress(budget):
+def budget_progress(budget, backend='openrouter'):
     """Refresh OpenRouter key spending into the shared SQLite budget record."""
+    if backend == 'deepinfra':
+        key=os.environ['DEEPINFRA_API_KEY']
+        usage=model_router.deepinfra_month_spend(key)
+        fingerprint='deepinfra:' + hashlib.sha256(key.encode()).hexdigest()[:20]
+        ok,spent,reserved=store.update_secondary_budget(
+            fingerprint,usage,budget,run_id=budget_session_id())
+        print(f'DeepInfra billed in THIS run: ${spent:.4f} / ${budget:.2f} soft cap '
+              f'(in-flight reserve ${reserved:.2f})',flush=True)
+        return ok
     key_hash=hashlib.sha256(os.environ['OPENROUTER_API_KEY'].encode()).hexdigest()[:20]
     current=openrouter_get_key()
     usage=float(current['usage'])
@@ -1088,12 +1097,12 @@ def checked_result(va, log_path=None, minutes=2):
     return False, last_failure
 
 
-def budget_check_or_wait(budget, adaptive=False):
+def budget_check_or_wait(budget, adaptive=False, backend='openrouter'):
     """Wait out transient billing API outages, but never bypass the spend guard."""
     delay = 10
     while True:
         try:
-            return budget_progress(budget)
+            return budget_progress(budget, backend=backend)
         except RuntimeError as exc:
             reason = str(exc)
             transient = ('OpenRouter /key request failed:' in reason or
@@ -1114,6 +1123,8 @@ def process(minutes, unsafe, backend, quota_wait, max_functions,
         sys.exit(f'{executable} executable not found in PATH.')
     if backend == 'nvidia' and not os.environ.get('NVIDIA_API_KEY', '').strip():
         sys.exit('NVIDIA_API_KEY not set. Export your build.nvidia.com API key in this shell.')
+    if backend == 'deepinfra' and not os.environ.get('DEEPINFRA_API_KEY', '').strip():
+        sys.exit('DEEPINFRA_API_KEY is required, with billing:read scope for the spending guard.')
     if backend == 'openrouter' and not os.environ.get('OPENROUTER_API_KEY', '').strip():
         sys.exit('OPENROUTER_API_KEY not set. Export your OpenRouter API key in this shell.')
     if not PROMPT_FILE.exists():
@@ -1154,10 +1165,12 @@ def process(minutes, unsafe, backend, quota_wait, max_functions,
         print(f"Backend: NVIDIA {NVIDIA_MODELS[model]['name']} via OpenCode ({reasoning} reasoning). "
               'OpenCode shell tools run WITHOUT a sandbox.', flush=True)
     elif backend == 'openrouter':
-        print(f'Backend: OpenRouter {OPENROUTER_MODEL} ({OPENROUTER_PROVIDER} preferred; two approved fallbacks, '
-              f'{reasoning} reasoning). OpenCode shell tools run WITHOUT a sandbox.', flush=True)
+        print(f'Backend: OpenRouter ({reasoning} reasoning). OpenCode shell tools run WITHOUT a sandbox.', flush=True)
+    elif backend == 'deepinfra':
+        print(f'Backend: direct DeepInfra ({reasoning} reasoning); soft run cap, use provider account limits too.',flush=True)
+    if backend in ('openrouter','deepinfra'):
         try:
-            if not budget_check_or_wait(budget, adaptive=adaptive):
+            if not budget_check_or_wait(budget, adaptive=adaptive, backend=backend):
                 print('Run budget or OpenRouter key limit reached. Stopped without starting a function.')
                 return
         except (OSError, ValueError, RuntimeError) as e:
@@ -1237,9 +1250,9 @@ def process(minutes, unsafe, backend, quota_wait, max_functions,
                 if va in manifests.refresh() or not modules.eligible(va):
                     print(f'  {va} became manifested or out-of-scope; skipped.', flush=True)
                     break
-                if backend == 'openrouter':
+                if backend in ('openrouter', 'deepinfra'):
                     try:
-                        if not budget_check_or_wait(budget, adaptive=adaptive):
+                        if not budget_check_or_wait(budget, adaptive=adaptive, backend=backend):
                             print('Run budget or OpenRouter key limit reached; queue/results preserved.', flush=True)
                             status()
                             return
@@ -1261,40 +1274,55 @@ def process(minutes, unsafe, backend, quota_wait, max_functions,
                     evidence = folder.relative_to(ROOT)
                 except (OSError, ValueError, RuntimeError) as exc:
                     print(f'  Evidence snapshot unavailable ({exc}); continuing safely.', flush=True)
+                choice = None
+                if backend in ('openrouter','deepinfra'):
+                    try:
+                        with store.connect() as model_db:
+                            choice = model_router.choose(
+                                model_db, run_id=rid or budget_session_id(),
+                                va=va,pass_number=pass_number,
+                                provider=backend,
+                                policy=os.environ.get('SPORE_MODEL_POLICY', 'fixed'),
+                                cache_path=WORK/'openrouter-model-catalog.json')
+                        print(f'  Selected {choice["provider"]}/{choice["model"]} '
+                              f'({choice["policy"]} policy) for pass {pass_number}',flush=True)
+                    except (OSError,ValueError,RuntimeError) as exc:
+                        print(f'  Model selection unavailable, no inference started: {exc}',file=sys.stderr)
+                        return
                 print(f'  Pass {pass_number}/{pass_ceiling}...', flush=True)
                 provider_failures = 0
                 while True:
                     reservation = None
                     slot = None
                     try:
-                        if backend == 'openrouter' and max_inflight:
+                        if backend in ('openrouter','deepinfra') and max_inflight:
                             # Waiting for the slot never consumes the model's 5-minute budget.
                             while slot is None:
                                 slot = store.reserve_inference_slot(va, rid, max_inflight)
                                 if slot is None:
                                     time.sleep(2)
-                        if backend == 'openrouter':
+                        if backend in ('openrouter','deepinfra'):
                             reservation = store.reserve_budget(budget_session_id(), va, 0.10, budget)
                             if reservation is None:
                                 print('Run budget reserved for other workers or exhausted; stopping.', flush=True)
                                 return
                         kind, answer, log = run_one(va, minutes, unsafe, backend,
                                                     model, reasoning, pass_number, prompt, slot=slot,
-                                                    evidence=evidence)
+                                                    evidence=evidence, model_choice=choice)
                     except KeyboardInterrupt:
                         print('\nStopped. Completed passes remain recorded; unfinished pass can be retried.')
                         return
                     finally:
                         store.release_reservation(reservation)
                         store.release_inference_slot(slot)
-                    if backend == 'openrouter':
+                    if backend in ('openrouter','deepinfra'):
                         if adaptive:
                             pressure = provider_pressure(log)
                             signal = adaptive_ctl.observe(rid, overloaded=kind in ('QUOTA','PROVIDER') or pressure > 0)
                             if signal:
                                 print('    ADAPTIVE: ' + signal, flush=True)
                         try:
-                            under_budget = budget_check_or_wait(budget, adaptive=adaptive)
+                            under_budget = budget_check_or_wait(budget, adaptive=adaptive, backend=backend)
                         except (OSError, ValueError, RuntimeError) as e:
                             print(f'Spending guard failed after attempt: {e}; recording this pass before stopping.',
                                   file=sys.stderr)
@@ -1376,6 +1404,14 @@ def process(minutes, unsafe, backend, quota_wait, max_functions,
                     except (OSError, ValueError, RuntimeError) as exc:
                         print(f'  Evidence update skipped ({exc}).', flush=True)
                 record(va, *outcome, log_path=log)
+                if choice is not None:
+                    try:
+                        with store.connect() as model_db:
+                            model_router.record(model_db,run_id=rid or budget_session_id(),
+                                                va=va,pass_number=pass_number,
+                                                status=outcome[0],log=log)
+                    except (OSError,ValueError,RuntimeError) as exc:
+                        print(f'  Model telemetry unavailable: {exc}',flush=True)
                 # The operational result is authoritative. Shared memory
                 # learns ONLY after this independently checked record exists.
                 # Memory is optional; its failures cannot consume an attempt
@@ -1393,7 +1429,7 @@ def process(minutes, unsafe, backend, quota_wait, max_functions,
                                                       'effort': outcome[1], 'note': outcome[2]})
                 print(f'    {outcome[0]} {outcome[1]} {outcome[2]}', flush=True)
                 if under_budget is not True:
-                    print('Run budget or OpenRouter key guard reached or unavailable after recording pass; stopped.', flush=True)
+                    print('Run budget or provider billing guard reached/unavailable after recording pass; stopped.', flush=True)
                     status()
                     return
                 if outcome[0] in ('MATCH', 'SKIP'):
@@ -1445,7 +1481,7 @@ def main():
     run = sub.add_parser('run', help='Run unmanifested functions in selected modules with confident mapping')
     run.add_argument('--minutes', type=int, default=20, help='Time budget per function (default 5)')
     run.add_argument('--unsafe', action='store_true', help='Disable Codex sandbox; for OpenRouter/NVIDIA, accepted for backwards compatibility only')
-    run.add_argument('--backend', choices=['openrouter', 'nvidia', 'codex'], default='openrouter', help='Agent backend (default OpenRouter DeepSeek/OpenCode)')
+    run.add_argument('--backend', choices=['openrouter', 'deepinfra', 'nvidia', 'codex'], default='openrouter', help='Agent backend (default OpenRouter DeepSeek/OpenCode)')
     run.add_argument('--quota-wait', type=int, default=5, help='Wait this many minutes on 429/quota; 0 = stop with queue unchanged')
     run.add_argument('--max-inflight', type=int, default=8, help='Maximum active OpenRouter inferences across all SQLite workers; 0 disables cap')
     run.add_argument('--provider-retries', type=int, default=2, help='Additional retries for provider-only failures; never counts as an attempt')
