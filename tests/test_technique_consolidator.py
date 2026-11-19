@@ -238,7 +238,7 @@ class ConsolidationTests(unittest.TestCase):
         self.assertEqual(tech.status(self.root)["queue"]["pending"],1)
         self.assertEqual(tech.search(self.root,"EAX custom register ABI",4), [])
 
-    def test_response_http_api_never_logs_key_and_pins_provider(self):
+    def test_response_http_api_never_logs_key_and_restricts_provider_list(self):
         payload = json.dumps({"choices":[{"message":{
             "content":json.dumps({"techniques":[]})}}],
             "usage":{"cost":0.001,"prompt_tokens":50,"completion_tokens":10}}).encode()
@@ -251,7 +251,11 @@ class ConsolidationTests(unittest.TestCase):
         req,_ = calls[0]
         sent = json.loads(req.data)
         self.assertEqual(sent["model"],tech.MODEL)
-        self.assertEqual(sent["provider"]["only"],["sail-research"])
+        self.assertEqual(sent["provider"]["only"],tech.PROVIDERS)
+        self.assertEqual(sent["provider"]["order"],tech.PROVIDERS)
+        self.assertEqual(tech.PROVIDERS,["ambient/fp4", "particle-ai/us/flex", "deepinfra/fp8/flex"])
+        self.assertEqual(sent["provider"]["data_collection"],"deny")
+        self.assertEqual(sent["provider"]["max_price"],{"prompt":0.08,"completion":0.30})
         self.assertFalse(sent["provider"]["allow_fallbacks"])
         self.assertEqual(sent["response_format"]["type"],"json_object")
         # "low" reasoning exhausted all 2800 tokens in production, leaving
