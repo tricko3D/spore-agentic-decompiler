@@ -23,6 +23,7 @@ MAX_STALE = 24 * 3600
 EXPECTED_INPUT = 50_000
 EXPECTED_OUTPUT = 8_000
 CACHED_READ_FRACTION = 0.25
+CACHED_WRITE_FRACTION = 0.05
 MIN_CONTEXT = 65_536
 MIN_OUTPUT = 8_192
 
@@ -45,14 +46,17 @@ def estimate(pricing, *, input_tokens=EXPECTED_INPUT, output_tokens=EXPECTED_OUT
     fresh = _money(pricing["prompt"])
     out = _money(pricing["completion"])
     cached = _money(pricing.get("input_cache_read", fresh))
-    # Cache-write premiums are intentionally excluded: without proof of a
-    # cache-writing contract, counting only read savings is optimistic.
-    # Use no caching at all when the provider does not advertise read pricing.
+    # Only credit cache hits if the provider advertises a read price.
     if "input_cache_read" not in pricing:
         cached_fraction = 0
+    writing = _money(pricing.get("input_cache_write", fresh))
+    write_fraction = CACHED_WRITE_FRACTION if "input_cache_write" in pricing else 0
+    if cached_fraction + write_fraction > 1:
+        raise ValueError("cache fractions exceed all input")
     request = _money(pricing.get("request", 0))
-    return (input_tokens * (1 - cached_fraction) * fresh +
+    return (input_tokens * (1 - cached_fraction - write_fraction) * fresh +
             input_tokens * cached_fraction * cached +
+            input_tokens * write_fraction * writing +
             output_tokens * out + request)
 
 
@@ -148,8 +152,10 @@ def catalogue(cache_path, *, refresh=False, now=None):
     return fresh
 
 
-def top_ten(cache_path, *, refresh=False):
-    return parse_catalog(catalogue(cache_path, refresh=refresh))[:10]
+def top_ten(cache_path, *, refresh=False, input_tokens=EXPECTED_INPUT,
+            output_tokens=EXPECTED_OUTPUT):
+    return parse_catalog(catalogue(cache_path, refresh=refresh),
+                         input_tokens=input_tokens, output_tokens=output_tokens)[:10]
 
 
 def ensure_schema(db):
@@ -170,6 +176,18 @@ def performance(db, provider, model):
         FROM model_passes WHERE provider=? AND model=?
         AND status IN ('MATCH','FAIL','DEFER','SKIP')""", (provider, model)).fetchone()
     return int(row[0]), int(row[1] or 0)
+
+
+def usage_profile(db):
+    """Prefer observed SAD token volume once five passes have emitted usage."""
+    ensure_schema(db)
+    rows = db.execute("""SELECT input_tokens,output_tokens FROM model_passes
+                         WHERE input_tokens>0 AND output_tokens>0
+                         ORDER BY chosen_utc DESC LIMIT 80""").fetchall()
+    if len(rows) < 5:
+        return EXPECTED_INPUT,EXPECTED_OUTPUT
+    return (max(1000,round(sum(x[0] for x in rows)/len(rows))),
+            max(1000,round(sum(x[1] for x in rows)/len(rows))))
 
 
 def score(candidate, db):
@@ -205,7 +223,9 @@ def choose(db, *, run_id, va, pass_number, provider="openrouter",
     else:
         if cache_path is None:
             raise ValueError("Price cache path required")
-        candidates = top_ten(cache_path)
+        expected_input,expected_output = usage_profile(db)
+        candidates = top_ten(cache_path,input_tokens=expected_input,
+                             output_tokens=expected_output)
         if not candidates:
             raise RuntimeError("No eligible models in refreshed price catalog")
         selected = min(candidates, key=lambda x: (score(x, db), x["estimate_usd"], x["model"]))
