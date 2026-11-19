@@ -36,18 +36,18 @@ class StdlibImportPrecedenceTests(TestCase):
             entry = repo / "spore_worker_entry.py"
             shutil.copyfile(ROOT / "engine" / "spore_worker_entry.py", entry)
             (scratch / "dis.py").write_text(
-                "raise RuntimeError('scratch dis shadowed Python standard library')\\n",
+                "raise RuntimeError('scratch dis shadowed Python standard library')\n",
                 encoding="utf-8",
             )
-            (scratch / "worker_helper.py").write_text("VALUE = 'helper-import-ok'\\n")
+            (scratch / "worker_helper.py").write_text("VALUE = 'helper-import-ok'\n")
             (scratch / "spore_first_pass_sqlite.py").write_text(
-                "import argparse\\n"
-                "import dis\\n"
-                "import sys\\n"
-                "import worker_helper\\n"
-                "assert 'work/scratch/dis.py' not in str(dis.__file__)\\n"
-                "assert sys.argv[1] == 'run'\\n"
-                "print('worker-safe', worker_helper.VALUE)\\n",
+                "import argparse\n"
+                "import dis\n"
+                "import sys\n"
+                "import worker_helper\n"
+                "assert 'work/scratch/dis.py' not in str(dis.__file__)\n"
+                "assert sys.argv[1] == 'run'\n"
+                "print('worker-safe', worker_helper.VALUE)\n",
                 encoding="utf-8",
             )
             result = subprocess.run(
