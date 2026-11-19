@@ -4,8 +4,8 @@ import {Drawer,ErrorText} from './Panel';
 import PreviewResultModal from './PreviewResultModal';
 import type {AllowList,Claimants,Plan,Snapshot} from '../types';
 
-type Launch={module:string;workers:number;max_inflight:number;passes:number;minutes:number;budget:number;claim_user:string};
-const START:Launch={module:'SPGonzago',workers:16,max_inflight:16,passes:3,minutes:20,budget:20,claim_user:''};
+type Launch={module:string;workers:number;max_inflight:number;passes:number;minutes:number;budget:number;claim_user:string;provider:'openrouter'|'deepinfra';model_policy:'fixed'|'cheapest'};
+const START:Launch={module:'SPGonzago',workers:16,max_inflight:16,passes:3,minutes:20,budget:20,claim_user:'',provider:'openrouter',model_policy:'fixed'};
 
 function AllowListEditor({onClose}:{onClose:()=>void}){
  const [doc,setDoc]=useState<AllowList|null>(null),[content,setContent]=useState('');
@@ -54,7 +54,8 @@ export default function AgentDock({snapshot,onUpdated}:{snapshot:Snapshot|null;o
     if(form.module==='__claimed__'&&!form.claim_user)throw Error('Choose a claimant before launching');
     await post('/api/control/start',{module:form.module,workers:form.workers,
       max_inflight:form.max_inflight,passes:form.passes,minutes:form.minutes,
-      budget:form.budget,claim_user:form.claim_user||undefined});
+      budget:form.budget,provider:form.provider,model_policy:form.model_policy,
+      claim_user:form.claim_user||undefined});
     setNotice('Decompilation launched.');
    }
    onUpdated();
@@ -74,6 +75,14 @@ export default function AgentDock({snapshot,onUpdated}:{snapshot:Snapshot|null;o
  };
  return <><div className="control-dock" aria-label="Agent controls">
   <div className="control-fields">
+   <label>Provider<select value={form.provider} onChange={e=>setForm(old=>({...old,provider:e.target.value as Launch['provider'],model_policy:'fixed'}))}>
+    <option value="openrouter">OpenRouter</option>
+    <option value="deepinfra">DeepInfra direct</option>
+   </select></label>
+   <label>Model policy<select value={form.model_policy} onChange={e=>update('model_policy',e.target.value as Launch['model_policy'])}>
+    <option value="fixed">Fixed baseline</option>
+    {form.provider==='openrouter'&&<option value="cheapest">Cheapest eligible (top 10)</option>}
+   </select></label>
    <label>Module<select value={form.module} onChange={e=>update('module',e.target.value)}>
     <option value="SPGonzago">SPGonzago</option>
     {snapshot?.modules?.filter(x=>x!=='SPGonzago').map(x=><option key={x} value={x}>{x}</option>)}
