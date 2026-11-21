@@ -14,6 +14,99 @@ import json
 import os
 import re
 import sqlite3
+import threading
+import time
+from urllib.request import Request, urlopen
+from urllib.error import URLError, HTTPError
+
+# Live llama.cpp counters are sampled by the existing localhost dashboard.
+# Slot IDs are NOT necessarily worker IDs; never attach a slot to an agent
+# without explicit request attribution.
+_LOCAL_INFERENCE_LOCK = threading.Lock()
+_LOCAL_INFERENCE_PREVIOUS = {}
+_LOCAL_INFERENCE_WINDOW = 3.0
+
+
+def local_inference():
+    """Read current model slot decode speeds, no inference and no billable calls.
+
+    A separate poll endpoint keeps frequent llama.cpp checks out of the heavier
+    SQLite /api/snapshot. Returned rates are generated tokens per wall second,
+    sampled per actual llama.cpp slot. A missing decoded counter yields null
+    rather than inventing a throughput number.
+    """
+    base = os.environ.get('SPORE_LOCAL_BASE_URL', 'http://127.0.0.1:8080/v1').rstrip('/')
+    if base.endswith('/v1'):
+        base = base[:-3]
+    # Only probe the local inference service from this read-only dashboard.
+    if base not in ('http://127.0.0.1:8080', 'http://localhost:8080'):
+        return {'available':False, 'aggregate_tps':None, 'slots':[],
+                'error':'Local inference endpoint not configured for loopback'}
+    request = Request(base + '/slots', headers={'Accept':'application/json'})
+    try:
+        with urlopen(request, timeout=1.5) as reply:
+            rows = json.load(reply)
+    except (OSError, URLError, HTTPError, TimeoutError, ValueError):
+        with _LOCAL_INFERENCE_LOCK:
+            _LOCAL_INFERENCE_PREVIOUS.clear()
+        return {'available':False,'aggregate_tps':None,'slots':[]}
+    if not isinstance(rows, list):
+        return {'available':False,'aggregate_tps':None,'slots':[]}
+    now = time.monotonic()
+    active_ids = set()
+    output = []
+    with _LOCAL_INFERENCE_LOCK:
+        for fallback, row in enumerate(rows):
+            if not isinstance(row, dict):
+                continue
+            sid = row.get('id',fallback)
+            if type(sid) is not int:
+                sid = fallback
+            active_ids.add(sid)
+            busy = bool(row.get('is_processing'))
+            task = row.get('id_task')
+            next_token = row.get('next_token')
+            n = (next_token.get('n_decoded') if isinstance(next_token, dict)
+                 else row.get('n_decoded'))
+            if type(n) is not int or n < 0:
+                n = None
+            old = _LOCAL_INFERENCE_PREVIOUS.get(sid)
+            # New task, prompt prefill and counter resets cannot count as
+            # generated tokens from the preceding request.
+            reset = (old is None or not busy or not old['busy'] or
+                     task != old['task'] or n is None or old['n'] is None or
+                     n < old['n'] or now < old['time'])
+            if reset:
+                start, samples = now, []
+            else:
+                start, samples = old['start'], old['samples']
+                if n > old['n']:
+                    samples.append((now, n - old['n']))
+            samples = [(ts,delta) for ts,delta in samples
+                       if now - ts <= _LOCAL_INFERENCE_WINDOW]
+            elapsed = min(_LOCAL_INFERENCE_WINDOW,now-start)
+            speed = (sum(delta for _,delta in samples)/elapsed
+                     if busy and n is not None and elapsed > 0 else None)
+            state = ('IDLE' if not busy else
+                     'GENERATING' if speed and speed > 0 else
+                     'PREFILL' if n == 0 else 'WAITING')
+            _LOCAL_INFERENCE_PREVIOUS[sid] = {
+                'busy':busy,'task':task,'n':n,'time':now,
+                'start':start,'samples':samples}
+            context = row.get('n_ctx')
+            output.append({
+                'id':sid,'state':state,
+                'tps':round(speed,2) if speed is not None else None,
+                'decoded_tokens':n,
+                'context':context if type(context) is int else None})
+        for sid in list(_LOCAL_INFERENCE_PREVIOUS):
+            if sid not in active_ids:
+                del _LOCAL_INFERENCE_PREVIOUS[sid]
+    output.sort(key=lambda slot:slot['id'])
+    rates = [x['tps'] for x in output if x['tps'] is not None]
+    return {'available':True,'aggregate_tps':round(sum(rates),2) if rates else None,
+            'slots':output,'sample_window_seconds':_LOCAL_INFERENCE_WINDOW}
+
 
 VA_RE = re.compile(r'0x[0-9a-fA-F]{8}\Z')
 SECRET = re.compile(r'(?i)(sk-or-[A-Za-z0-9_\-]{6,}|(?:OPENROUTER_API_KEY|authorization|api[_-]?key)\s*[=:]\s*[^\s,;]+|Bearer\s+[^\s]+)')

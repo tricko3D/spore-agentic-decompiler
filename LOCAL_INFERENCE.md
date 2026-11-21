@@ -28,27 +28,22 @@ layers at the best concurrency.
 
 The winner is saved to `~/inkling-runtime/sad-parallel-profile.json`.
 
-### Live Inkling dashboard (second WSL terminal)
+### Live throughput in the existing SAD web dashboard
 
-While the benchmark is running, open a second WSL terminal and execute:
+Open the existing SAD dashboard in a second terminal while benchmarking:
 
 ```bash
 cd ~/spore-agentic-decompiler
-python3 scripts/local_model_dashboard.py
+python3 spore_agentic.py dashboard --repo ~/spore-decomp
 ```
 
-It displays a live text grid of **every llama.cpp slot**, one box per
-active or idle inference slot. Each box shows **decoded tokens/sec**,
-completed tokens for the current request and context size. Across the top,
-**AGGREGATE tok/s** is the sum of all active slot rates.
-It reads the real `/slots` `next_token.n_decoded` counters twice per
-second and computes a rolling three-second sample, excluding prompt
-prefill. If the server is restarting between benchmark configurations,
-the dashboard waits without exiting. It also displays benchmark stages
-(loading, warmup, measuring round, cooling) and the best completed score.
-
-This is read-only: it cannot disrupt model generation and works equally
-during the later 24-hour agent run. Stop it with Ctrl+C.
+Browse to `http://127.0.0.1:8765`, **Agents**. Its existing
+Operations page shows aggregate local generated tokens/sec in the top metric
+rail, with a per-slot tokens/sec grid within the existing Agent fleet panel.
+No extra dashboard or separate terminal UI was created. The backend polls
+llama.cpp's local `/slots` counters and never sends inference requests.
+The numbers are a short live decode-rate window, not the completed benchmark
+result. The existing worker cards remain available.
 
 Run the 24-hour experiment from the measured profile:
 

@@ -19,7 +19,7 @@ import re
 import secrets
 import sqlite3
 
-from spore_dashboard_data import snapshot, functions, function_detail, agent_detail
+from spore_dashboard_data import snapshot, functions, function_detail, agent_detail, local_inference
 from spore_dashboard_control import Controller
 from . import knowledge, consolidation
 
@@ -113,6 +113,8 @@ def serve(repo:Path,port:int=8765,control:bool=False):
                 if route=="/legacy":return self.respond(page(True),media="text/html; charset=utf-8")
                 if route.startswith("/assets/"):return self.asset(route)
                 if route=="/wallpaper":return self.wallpaper()
+                if route=="/api/local-inference":
+                    return self.respond(local_inference())
                 if route=="/api/snapshot":
                     data=snapshot(repo)
                     if control:data["controller"]=controller.state()

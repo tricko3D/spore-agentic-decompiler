@@ -952,3 +952,18 @@ body>.overlay>.detail-drawer{height:100dvh;max-height:100dvh;overflow:hidden}
 .knowledge-view .error-record:hover{background:var(--sad-card-hover)}
 .knowledge-view .graph-launcher{background:var(--sad-card-surface)}
 .knowledge-view .graph-launcher:hover{background:var(--sad-card-hover)}
+
+/* Live local Inkling throughput in the existing Operations / Agent fleet. */
+.model-throughput{margin-bottom:11px;display:grid;gap:7px}
+.model-throughput>.row-between{gap:12px}
+.model-throughput>.row-between strong{font-size:12px;white-space:nowrap}
+.model-slot-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:5px}
+.model-slot{min-width:0;display:grid;gap:2px;padding:9px 10px;border:1px solid #476985;
+ background:#10273f;border-radius:10px;color:var(--ink)}
+.model-slot.generating{border-color:#649a90;background:#143942}
+.model-slot .row-between{gap:5px;align-items:baseline}
+.model-slot strong{font-size:11px}
+.model-slot small{font-size:10px;color:#a6bece;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+.model-slot-speed{font-size:21px;line-height:1.25;font-weight:750;font-variant-numeric:tabular-nums}
+.model-slot-speed span{font-size:11px;font-weight:500;color:#a6bece}
+@media(max-width:850px){.model-slot-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}

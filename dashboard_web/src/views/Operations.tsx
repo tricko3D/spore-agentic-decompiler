@@ -2,7 +2,7 @@ import {useEffect,useState} from 'react';
 import {bytes,money,pretty,query} from '../api';
 import {usePoll} from '../hooks';
 import {Drawer,ErrorText,Metric,Panel,Tag} from '../components/Panel';
-import type {AgentDetail,FunctionDetail,FunctionRow,Paginated,Snapshot,Status} from '../types';
+import type {AgentDetail,FunctionDetail,FunctionRow,Paginated,Snapshot,Status,LocalInference} from '../types';
 
 type Detail={kind:'function'|'agent';id:string};
 const STATUS:Status[]=['MATCH','FAIL','DEFER','SKIP','PENDING'];
@@ -45,6 +45,7 @@ export default function Operations({active,snapshot,snapshotError}:{active:boole
  useEffect(()=>{const t=window.setTimeout(()=>{setSearch(typed);setOffset(0)},250);return ()=>clearTimeout(t)},[typed]);
  const url='/api/functions?'+query({status,search,offset,limit:75});
  const {value:table,error:tableError}=usePoll<Paginated<FunctionRow>>(url,15000,active);
+ const {value:inference}=usePoll<LocalInference>('/api/local-inference',1000,active);
  const run=d?.run||{},counts=d?.counters||{},budget=d?.budget||{},sizes=d?.bytes||{},effort=d?.effort||{};
  const key=(x:Status)=>x==='MATCH'?'matches':x==='FAIL'?'fails':x==='DEFER'?'deferred':x==='SKIP'?'skips':'pending';
  const statusTotal=STATUS.reduce((a,x)=>a+number(counts[key(x)]),0);
@@ -56,6 +57,8 @@ export default function Operations({active,snapshot,snapshotError}:{active:boole
    <Metric label="Deferred" value={pretty(counts.deferred)} tone="tone-defer" detail={bytes(sizes.DEFER)}/>
    <Metric label="Pending" value={pretty(counts.pending)} detail={bytes(sizes.PENDING)}/>
    <Metric label="Inference capacity" value={pretty(d?.adaptive?.concurrency)} detail={d?.adaptive?.cooldown_seconds?'Cooldown '+d.adaptive.cooldown_seconds+'s':'Adaptive'}/>
+   <Metric label="Aggregate tok/s" value={inference?.aggregate_tps==null?'—':inference.aggregate_tps.toFixed(1)}
+    detail={inference?.available?inference.slots.length+' local model slots · decoded output':'Local model unavailable'}/>
    <Metric label="Run spend" value={money(budget.run_spend)} detail={'Limit '+money(budget.run_limit)}/>
   </div>
   <ErrorText error={error}/>
@@ -111,6 +114,20 @@ export default function Operations({active,snapshot,snapshotError}:{active:boole
     </Panel>
    </div>
    <Panel title="Agent fleet" subtitle="Live workers, current functions and newest recorded events" className="fleet">
+    {inference?.available&&<div className="model-throughput">
+      <div className="row-between"><h3>Local inference slots</h3>
+        <strong className="mono">{inference.aggregate_tps==null?'—':inference.aggregate_tps.toFixed(1)} tok/s aggregate</strong>
+      </div>
+      <div className="model-slot-grid">
+        {inference.slots.map(slot=><div className={'model-slot '+slot.state.toLowerCase()} key={slot.id}>
+          <div className="row-between"><strong>Slot {String(slot.id+1).padStart(2,'0')}</strong>
+            <small>{slot.state}</small></div>
+          <div className="model-slot-speed">{slot.tps==null?'—':slot.tps.toFixed(1)}
+            <span> tok/s</span></div>
+          <small>{slot.decoded_tokens??'—'} decoded · {slot.context??'—'} ctx</small>
+        </div>)}
+      </div>
+    </div>}
     <div className="agent-grid">{d?.workers?.map(w=>{
       const phase=!w.alive?'offline':w.phase==='VERIFIED'?'verified':w.phase==='NO SLOT'?'no-slot':w.phase==='PROBING'?'probing':'idle';
       return <button className={'agent '+phase} key={w.worker} onClick={()=>setDetail({kind:'agent',id:String(w.worker)})}>
