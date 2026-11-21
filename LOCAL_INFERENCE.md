@@ -93,34 +93,24 @@ If SAD logs `compaction.failed` / `Compaction summary reached the output token l
 the model's tool calls may already be working: OpenCode failed while summarizing
 its conversation, not because of a compiler failure or a wall-clock timeout.
 
-The initial local provider config incorrectly reserved 65% of a 16K window for
-compaction and advertised 8,192 output tokens. This branch now uses a 30% buffer,
-1,200 retained tokens and 4,096 output tokens, and allows the declared context
-to match the actual llama.cpp server context.
+The original local provider advertised an 8K output allowance and reserved
+65% of a 16K window for compaction. This branch uses context-scaled output
+and a 15% buffer at 64K+, or 20% for smaller contexts, with up to 15K retained
+recent tokens. The high-effort launcher automatically configures those values
+from the real llama.cpp server.
 
-Prefer starting the server with **32768 total context** if it fits. Keep the
-existing working GPU/CPU MoE offload arguments and change only `-c 32768`;
-if memory is too tight, return to `-c 16384` and leave the default
-`SPORE_LOCAL_CONTEXT` unchanged.
+On `compaction.failed`, SAD restarts the model in a fresh session while
+preserving existing C++ source, checker results, SQLite attempt history and
+investigation evidence. By default, it retries the same attempt up to three
+times (the launcher allows four). If repeated compaction still fails, only
+that function is deferred, rather than shutting down the whole worker.
 
-With a 32K server, export:
+No compaction strategy is lossless. The agent periodically writes concise,
+verified hypotheses to persistent investigation files, so new sessions do not
+depend on a perfect summary.
 
-```bash
-export SPORE_LOCAL_CONTEXT=32768
-export SPORE_LOCAL_OUTPUT=4096
-export SPORE_LOCAL_FRESH_SESSION=1
-```
-
-The fresh-session option skips resuming an OpenCode session stuck in failed
-compaction while retaining original attempts, source edits, and investigation
-evidence. It has no effect on paid backends. Once the initial recovery works,
-you can `unset SPORE_LOCAL_FRESH_SESSION` to resume local sessions normally.
-`doctor --provider local --live` verifies the advertised context against
-llama.cpp's `/v1/models` `meta.n_ctx` when provided.
-
-A 32K context is not a guarantee that Inkling will successfully compact every
-very long conversation. This is an experimental local backend, so start with
-one inference slot and one function.
+`doctor --provider local --live` verifies the configured context against
+llama.cpp's actual `/v1/models` `meta.n_ctx`.
 
 ## High-effort local profile
 

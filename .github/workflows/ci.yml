@@ -6,6 +6,21 @@ on:
   pull_request:
 
 jobs:
+  local-inference-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Compile local backend and launcher
+        run: python -m compileall -q spore_agentic.py engine scripts tests
+      - name: Verify high-effort local backend and existing checker verdict rules
+        run: |
+          python -m unittest discover -s tests -p 'test_local*.py' -v
+          python -m unittest discover -s tests -p 'test_agent_verdict.py' -v
+
   offline-tests:
     runs-on: ubuntu-latest
     timeout-minutes: 10
