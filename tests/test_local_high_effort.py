@@ -78,7 +78,9 @@ class HighEffortTests(unittest.TestCase):
 
     def test_parallel_24_hour_run_settings(self):
         source = LAUNCHER.read_text()
-        self.assertIn('default=2)', source)
+        self.assertIn('default="auto"', source)
+        self.assertIn('selected["workers"]', source)
+        self.assertIn('scripts/benchmark_local_parallel.py', source)
         self.assertIn('default=30,', source)
         self.assertIn('default=24,', source)
         self.assertIn('query_slots(base)', source)
@@ -101,6 +103,15 @@ class HighEffortTests(unittest.TestCase):
         source = (ROOT / 'engine/spore_provider_fix/work/scratch/spore_sqlite_store.py').read_text()
         self.assertIn("'MATCH','FAIL','DEFER','SKIP','EQUIV'", source)
         self.assertIn("('MATCH','SKIP','EQUIV')", source)
+
+    def test_offload_strategy_keeps_existing_baseline(self):
+        tree = ast.parse(LAUNCHER.read_text())
+        scope = {"__name__": "sad_local_test", "__file__": str(LAUNCHER)}
+        exec(compile(tree, str(LAUNCHER), "exec"), scope)
+        self.assertEqual(scope["expert_override"](12), scope["OVERRIDE"])
+        self.assertEqual(scope["expert_override"](10).count("|"), 9)
+        with self.assertRaises(ValueError):
+            scope["expert_override"](3)
 
     def test_context_fallback_order_and_offload(self):
         tree = ast.parse(LAUNCHER.read_text())

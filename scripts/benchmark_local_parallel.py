@@ -336,6 +336,7 @@ def main(argv=None):
     cached_model()
     rows = []
     failures = 0
+    interrupted = False
     try:
         for i, slots in enumerate(args.candidates):
             row = measure_candidate(slots, args.threads, args.cpu_experts, args,
@@ -371,8 +372,9 @@ def main(argv=None):
                 rows.append(row)
                 save_results(rows, args)
     except KeyboardInterrupt:
+        interrupted = True
         print("\nBenchmark interrupted. Saving successful measurements.", flush=True)
-    winner = save_results(rows, args, status="complete")
+    winner = save_results(rows, args, status="interrupted" if interrupted else "complete")
     print("\nMEASURED INKLING THROUGHPUT (generated tokens/sec, model load excluded)")
     print("slots threads CPU-experts ctx/slot  agg tok/s  tok/s/request latency  result")
     for row in rows:

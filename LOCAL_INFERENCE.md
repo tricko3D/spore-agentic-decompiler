@@ -5,15 +5,38 @@ OpenCode. It does **not** send requests through OpenRouter or DeepInfra, check
 their paid balances, or reserve a USD inference budget. Existing paid backends
 remain unchanged.
 
-## One-command high-effort run
+## Measure throughput first, then run at the selected concurrency
 
-In WSL, from the `dev-local-inkling` branch, run:
+On the `dev-local-inkling` branch, first stop the previous SAD process and
+the prior llama.cpp server. Then:
 
 ```bash
 cd ~/spore-agentic-decompiler
 git pull --ff-only origin dev-local-inkling
-python3 scripts/run_local_high_effort.py
+python3 scripts/benchmark_local_parallel.py
 ```
+
+The benchmark tests 1,2,3,4,6,8,12,16 true parallel llama.cpp slots, using
+a **32K context per slot**, identical prompt workload at each setting, and
+two measured rounds after an unscored warmup. It compares aggregate generated
+tokens per wall-clock second, per-request generation rate, latency and RAM/VRAM
+headroom. Startup and model-load times do not affect scores. Configurations
+that fail to start, time out or leave insufficient memory are rejected.
+If two successive configurations fail to fit, the benchmark stops increasing
+parallelism. It also tests 4/6/8 CPU threads and 10/12/14 MoE CPU expert
+layers at the best concurrency.
+
+The winner is saved to `~/inkling-runtime/sad-parallel-profile.json`.
+Run the 24-hour experiment from that profile:
+
+```bash
+python3 scripts/run_local_high_effort.py --workers auto --max-tools 30 --hours 24
+```
+
+The launcher starts the exact measured configuration and uses its **actual
+per-slot** context, not total context. It records per-run MATCH and EQUIV
+separately. You may still use `--workers 4` or another explicit number
+to bypass the profile, but that is not benchmark-selected.
 
 This launcher uses the existing llama.cpp server when it is already running;
 otherwise it uses the locally installed Unsloth binary and cached Q4_K_M
@@ -24,10 +47,11 @@ manual environment exports. The optimized 12GB-GPU settings use full core
 offload, CPU experts on physical layers 0-5 and 18-23, quantized Q4 KV cache,
 flash attention, a reduced microbatch, and Unsloth's recommended sampling.
 
-The runner installs/updates SAD's backed-up engine, checks local connectivity
-and starts one worker with one inference slot, high-effort local reasoning,
-32 compiler-check iterations per function, and a 60-minute **inactivity**
-watchdog. It runs the eligible queue rather than stopping after one function.
+The launcher installs/updates SAD's backed-up engine, checks local connectivity
+and starts the measured number of concurrent agents, high-effort local reasoning,
+12 compiler-check cycles as a soft prompt budget, a strict 30 model tool calls
+per function, and a 60-minute **inactivity** watchdog. It runs the full queued
+scope, with a common 24-hour deadline.
 No paid provider calls are made. Other worker options are available through
 `python3 scripts/run_local_high_effort.py --help`.
 
@@ -143,9 +167,9 @@ final byte-exact check, not self-reported success, determine MATCH.
 
 ## Full-queue 24-hour experiment
 
-The default launcher now runs a **24-hour experiment** across the existing
-SQLite queue (including unclassified module functions), with two simultaneous
-OpenCode workers and two llama.cpp model slots. Each function receives at most
+The launcher runs a **24-hour experiment** across the existing SQLite
+queue (including unclassified module functions), using the benchmark-selected
+number of simultaneous OpenCode workers and llama.cpp model slots. Each function receives at most
 **30 model tool calls**, counting calls across compaction recovery sessions
 and repeated passes in this run. After the limit, the independent checker and
 bounded proof mechanism record verified MATCH/EQUIV or a deferred candidate.
@@ -153,15 +177,15 @@ bounded proof mechanism record verified MATCH/EQUIV or a deferred candidate.
 ```bash
 cd ~/spore-agentic-decompiler
 git pull --ff-only origin dev-local-inkling
-python3 scripts/run_local_high_effort.py --workers 2 --max-tools 30 --hours 24
+python3 scripts/run_local_high_effort.py --workers auto --max-tools 30 --hours 24
 ```
 
 Stop an existing SAD coordinator before launching this. Stop a pre-existing
-single-slot llama.cpp server so the launcher can start the two-slot version.
-It reads actual per-slot context from `/slots`, not total model context.
-With 128K total context and two slots, each agent has roughly 64K.
-Parallel throughput may be lower per worker than the prior 31 tok/s single
-worker. The 24-hour deadline stops inference, allows bounded independent
+single-slot llama.cpp server so the launcher can start the measured
+multi-slot configuration. It reads actual per-slot context from `/slots`,
+not total model context. The benchmark fixes **32K per slot**, so a measured
+8-slot configuration uses 256K total context. Per-worker throughput may
+decrease even when aggregate throughput improves. The 24-hour deadline stops inference, allows bounded independent
 verification, and preserves SQLite history and candidate files.
 
 At any point, view results for the latest parallel run:
