@@ -57,6 +57,41 @@ References:
 - https://unsloth.ai/docs/models/inkling-2-mini#run-inkling-2-mini-in-llama-cpp
 - https://huggingface.co/unsloth/Inkling-2-Mini-GGUF/blob/main/Mainline_Support/README.md
 
+## Recover from OpenCode compaction failures
+
+If SAD logs `compaction.failed` / `Compaction summary reached the output token limit`,
+the model's tool calls may already be working: OpenCode failed while summarizing
+its conversation, not because of a compiler failure or a wall-clock timeout.
+
+The initial local provider config incorrectly reserved 65% of a 16K window for
+compaction and advertised 8,192 output tokens. This branch now uses a 30% buffer,
+1,200 retained tokens and 4,096 output tokens, and allows the declared context
+to match the actual llama.cpp server context.
+
+Prefer starting the server with **32768 total context** if it fits. Keep the
+existing working GPU/CPU MoE offload arguments and change only `-c 32768`;
+if memory is too tight, return to `-c 16384` and leave the default
+`SPORE_LOCAL_CONTEXT` unchanged.
+
+With a 32K server, export:
+
+```bash
+export SPORE_LOCAL_CONTEXT=32768
+export SPORE_LOCAL_OUTPUT=4096
+export SPORE_LOCAL_FRESH_SESSION=1
+```
+
+The fresh-session option skips resuming an OpenCode session stuck in failed
+compaction while retaining original attempts, source edits, and investigation
+evidence. It has no effect on paid backends. Once the initial recovery works,
+you can `unset SPORE_LOCAL_FRESH_SESSION` to resume local sessions normally.
+`doctor --provider local --live` verifies the advertised context against
+llama.cpp's `/v1/models` `meta.n_ctx` when provided.
+
+A 32K context is not a guarantee that Inkling will successfully compact every
+very long conversation. This is an experimental local backend, so start with
+one inference slot and one function.
+
 ## Configure and test SAD from WSL2
 
 Stop existing workers. From the SAD checkout:

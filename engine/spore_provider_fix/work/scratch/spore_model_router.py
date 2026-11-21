@@ -348,29 +348,52 @@ def local_settings():
     return endpoint, model
 
 
+def local_limits():
+    """Match the actual llama.cpp context window; leave room for tool replies."""
+    try:
+        context = int(os.environ.get("SPORE_LOCAL_CONTEXT", "16384"))
+        output = int(os.environ.get("SPORE_LOCAL_OUTPUT", "4096"))
+    except ValueError:
+        raise ValueError("SPORE_LOCAL_CONTEXT and SPORE_LOCAL_OUTPUT must be integers") from None
+    if not 8192 <= context <= 1048576 or not 512 <= output <= min(16384, context // 2):
+        raise ValueError("Invalid local context/output limits (output must fit within context)")
+    return context, output
+
+
 def probe_local():
     """Unpaid discovery preflight; no inference or OpenRouter calls."""
     endpoint, model = local_settings()
+    context, _ = local_limits()
     try:
         with urlopen(Request(endpoint + "/models", headers={"Accept": "application/json"}), timeout=5) as reply:
             payload = json.load(reply)
     except (OSError, ValueError) as exc:
         raise RuntimeError("Local model endpoint is unavailable: " + type(exc).__name__) from None
     models = payload.get("data") if isinstance(payload, dict) else None
-    if not isinstance(models, list) or model not in [
-        entry.get("id") for entry in models if isinstance(entry, dict)
-    ]:
+    match = next((entry for entry in models if isinstance(entry, dict)
+                  and entry.get("id") == model), None) if isinstance(models, list) else None
+    if match is None:
         raise RuntimeError("SPORE_LOCAL_MODEL was not found in the server's /v1/models response")
+    meta = match.get("meta") or {}
+    server_ctx = meta.get("n_ctx") if isinstance(meta, dict) else None
+    if isinstance(server_ctx, int) and not isinstance(server_ctx, bool) and context > server_ctx:
+        raise RuntimeError(
+            f"SPORE_LOCAL_CONTEXT={context} exceeds the server's active context {server_ctx}; "
+            "restart llama.cpp with a larger -c or lower SPORE_LOCAL_CONTEXT"
+        )
     return endpoint, model
 
 
 def local_opencode_config():
     """Direct OpenAI-compatible model provider; no paid routing or API key."""
     endpoint, model = local_settings()
+    context, output = local_limits()
     return {
         "$schema": "https://opencode.ai/config.json",
         "share": "disabled",
-        "compaction": {"auto": True, "keep": {"tokens": 2000}, "buffer": "65%"},
+        # A 65% buffer caused premature compaction of Inkling's short 16K window.
+        # Retain a smaller, realistic summary reserve while lowering output headroom.
+        "compaction": {"auto": True, "keep": {"tokens": 1200}, "buffer": "30%"},
         "model": "spore_local/inkling",
         "providers": {
             "spore_local": {
@@ -380,7 +403,7 @@ def local_opencode_config():
                 "models": {
                     "inkling": {
                         "modelID": model, "name": model,
-                        "limit": {"context": 16384, "output": 8192},
+                        "limit": {"context": context, "output": output},
                         "capabilities": {"tools": True, "input": ["text"], "output": ["text"]},
                     },
                 },

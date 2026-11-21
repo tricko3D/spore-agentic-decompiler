@@ -27,6 +27,29 @@ class LocalInferenceTests(unittest.TestCase):
                          "Inkling-2-Mini-UD-Q4_K_M.gguf")
         self.assertNotIn("openrouter", json.dumps(config).lower())
 
+    def test_context_and_output_limits(self):
+        with self.local_env(), mock.patch.dict(os.environ, {
+            "SPORE_LOCAL_CONTEXT": "32768",
+            "SPORE_LOCAL_OUTPUT": "4096",
+        }):
+            config = router.local_opencode_config()
+            self.assertEqual(config["providers"]["spore_local"]["models"]["inkling"]["limit"],
+                             {"context": 32768, "output": 4096})
+            self.assertEqual(config["compaction"]["buffer"], "30%")
+        with self.local_env(), mock.patch.dict(os.environ, {
+            "SPORE_LOCAL_CONTEXT": "16384",
+            "SPORE_LOCAL_OUTPUT": "30000",
+        }):
+            with self.assertRaises(ValueError):
+                router.local_opencode_config()
+
+    def test_rejects_context_larger_than_server(self):
+        with self.local_env(), mock.patch.dict(os.environ, {"SPORE_LOCAL_CONTEXT": "32768"}):
+            with mock.patch.object(router, "urlopen", return_value=io.BytesIO(
+                    b'{"data":[{"id":"Inkling-2-Mini-UD-Q4_K_M.gguf","meta":{"n_ctx":16384}}]}')):
+                with self.assertRaises(RuntimeError):
+                    router.probe_local()
+
     def test_rejects_remote_endpoint_and_missing_model(self):
         with mock.patch.dict(os.environ, {
             "SPORE_LOCAL_BASE_URL": "https://example.com/v1",

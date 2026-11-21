@@ -787,6 +787,10 @@ fix requires changing a shared header, report SKIP instead.
         stored = store.session_for(va)
         sid = (investigation.session_for_pass(ROOT, va, pass_number, stored)
                if evidence else stored)
+        # Recover a poisoned OpenCode compaction session without altering SQLite
+        # attempts, prior JSONL logs, or retained per-function investigation.
+        if backend == 'local' and os.environ.get('SPORE_LOCAL_FRESH_SESSION') == '1':
+            sid = None
         if sid:
             cmd += ['--session', sid]
         else:
