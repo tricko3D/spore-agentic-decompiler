@@ -466,7 +466,8 @@ def status():
     equivalent = EquivalentIndex().refresh()
     modules = ModuleIndex()
     allowed = [row for row in queue if modules.eligible(row['va'])]
-    eligible_pending = sum(row['va'] not in manifested and row['va'] not in done for row in allowed)
+    eligible_pending = sum(row['va'] not in manifested and row['va'] not in equivalent
+                           and row['va'] not in done for row in allowed)
     manifested_in_scope = sum(row['va'] in manifested for row in allowed)
     print(f'{module_scope()} classified queue: {len(allowed):,} | '
           f'Already in manifest: {manifested_in_scope:,} | '

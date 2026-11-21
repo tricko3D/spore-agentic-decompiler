@@ -85,6 +85,7 @@ class HighEffortTests(unittest.TestCase):
         self.assertIn('"SPORE_ALL_QUEUED": "1"', source)
         self.assertIn('"--max-inflight", str(args.workers)', source)
         self.assertIn('"--all-modules"', source)
+        self.assertIn('report_local_experiment.py', source)
         engine = RUNNER.read_text()
         self.assertIn("local_deadline_reached()", engine)
         self.assertIn("return 'DEADLINE'", engine)

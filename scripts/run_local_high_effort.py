@@ -224,7 +224,12 @@ def main(argv=None):
         if args.max_functions_per_worker:
             run += ["--max-functions-per-worker", str(args.max_functions_per_worker)]
         print("Running all eligible SQLite queue functions for the experiment.", flush=True)
-        return subprocess.run(run, cwd=ROOT, env=env).returncode
+        rc = subprocess.run(run, cwd=ROOT, env=env).returncode
+        print("\nVerified experiment outcomes:", flush=True)
+        subprocess.run([sys.executable, str(ROOT / "scripts/report_local_experiment.py"),
+                        "--repo", str(Path(args.repo).expanduser())],
+                       cwd=ROOT, env=env, check=False)
+        return rc
     except KeyboardInterrupt:
         print("\nStopping local SAD launcher.", flush=True)
         return 130
