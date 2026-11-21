@@ -28,6 +28,25 @@ from run_local_high_effort import (PROFILE, SERVER, cached_model, query_server,
 
 BASE = "http://127.0.0.1:8080/v1"
 OUTPUT = Path.home() / "inkling-runtime" / "sad-parallel-benchmark.json"
+LIVE = Path.home() / "inkling-runtime" / "sad-parallel-live.json"
+
+
+def publish_live(stage: str, **details):
+    """Atomic heartbeat that the separate terminal UI can display.
+
+    Does not send requests to llama.cpp. All live tok/s is sampled by the
+    monitor directly from real /slots decoding counters.
+    """
+    LIVE.parent.mkdir(parents=True, exist_ok=True)
+    state = {
+        "stage": stage,
+        "updated_epoch": time.time(),
+        "benchmark_pid": os.getpid(),
+        **details,
+    }
+    tmp = LIVE.with_name(f".{LIVE.name}.{os.getpid()}.tmp")
+    tmp.write_text(json.dumps(state, indent=2) + "\n", encoding="utf-8")
+    os.replace(tmp, LIVE)
 
 
 def numbers(value: str, upper: int = 32):
@@ -219,6 +238,11 @@ def measure_candidate(slots: int, threads: int, cpu_expert_layers: int,
     proc = None
     print(f"\nTEST slots={slots}, ctx/slot={args.per_slot_context:,}, "
           f"CPU threads={threads}, CPU experts={cpu_expert_layers}", flush=True)
+    meta = {"workers": slots, "threads": threads,
+            "cpu_expert_layers": cpu_expert_layers,
+            "total_context": context_total,
+            "slot_context": args.per_slot_context}
+    publish_live("loading", **meta)
     try:
         # An exact context is essential: silently using less context is not a
         # fair, usable throughput comparison.
@@ -246,16 +270,21 @@ def measure_candidate(slots: int, threads: int, cpu_expert_layers: int,
             raise RuntimeError(f"VRAM headroom {vram:.2f} GiB below {args.min_vram_gib:.2f} GiB")
 
         # Warm up the production model before timing. Never score model load.
+        publish_live("warming", **meta)
         request_completion(model["id"],
                            reverse_engineering_prompt(seed - 1, 1),
                            64, args.timeout, seed - 1)
 
-        rounds = [
-            round_concurrency(model["id"], slots, args.prompt_kib,
-                              args.output_tokens, args.timeout,
-                              seed + 10000 * i)
-            for i in range(args.rounds)
-        ]
+        rounds = []
+        for i in range(args.rounds):
+            publish_live("measuring", round=i + 1,
+                         rounds=args.rounds, **meta)
+            rounds.append(round_concurrency(
+                model["id"], slots, args.prompt_kib, args.output_tokens,
+                args.timeout, seed + 10000 * i,
+            ))
+            publish_live("round_finished", round=i + 1,
+                         rounds=args.rounds, **meta)
         generated = sum(r["generated_tokens"] for r in rounds)
         prompt = sum(r["prompt_tokens"] for r in rounds)
         duration = sum(r["elapsed_seconds"] for r in rounds)
@@ -289,6 +318,7 @@ def measure_candidate(slots: int, threads: int, cpu_expert_layers: int,
         row["error"] = f"{type(exc).__name__}: {str(exc)[:500]}"
         print(f"  SKIPPED: {row['error']}", flush=True)
     finally:
+        publish_live("cooling", **meta)
         stop_server(proc)
         # Allow GPU allocations and the CPU model mapping to be released.
         time.sleep(args.release_pause)
@@ -337,6 +367,9 @@ def main(argv=None):
     if not SERVER.is_file():
         parser.error("Unsloth llama-server not installed at " + str(SERVER))
     cached_model()
+    print("Live terminal dashboard: python3 scripts/local_model_dashboard.py",
+          flush=True)
+    publish_live("starting", workers=0)
     rows = []
     failures = 0
     interrupted = False
@@ -378,6 +411,8 @@ def main(argv=None):
         interrupted = True
         print("\nBenchmark interrupted. Saving successful measurements.", flush=True)
     winner = save_results(rows, args, status="interrupted" if interrupted else "complete")
+    publish_live("interrupted" if interrupted else "complete",
+                 workers=winner["workers"] if winner else 0)
     print("\nMEASURED INKLING THROUGHPUT (generated tokens/sec, model load excluded)")
     print("slots threads CPU-experts ctx/slot  agg tok/s  tok/s/request latency  result")
     for row in rows:
