@@ -38,13 +38,13 @@ cd ~/spore-agentic-decompiler
 python3 spore_agentic.py dashboard --repo ~/spore-decomp --control
 ```
 
-Select **Local** and click **Launch**. Each Agent card displays the
-most recent output tokens/sec measured from that worker's OpenCode step log.
-The aggregate is the sum of recent agent measurements. Until a step finishes,
-the rate is unavailable (a dash), rather than a fabricated zero or the rate
-of an unrelated llama.cpp slot. A model slot is not a worker, so the separate
-slot grid has been removed. These completed-step rates include any time
-spent using tools, so they are not identical to raw GPU decoding speed.
+Select **Local** and click **Launch**. Each existing Agent card shows live generated tokens/sec when
+llama.cpp's active request contains that agent's current function address.
+The aggregate is the sum of attributed live decoding rates. During prompt
+processing the rate is zero, and if the model cannot identify which worker
+owns a request, the rate stays unknown rather than being assigned by slot
+number. The separate slot grid has been removed; there is no additional
+dashboard or launcher.
 
 Run the 24-hour experiment from the measured profile:
 

@@ -14,71 +14,115 @@ import json
 import os
 import re
 import sqlite3
+import threading
 import time
+from urllib.parse import urlsplit
+from urllib.request import Request, urlopen
 
-# Rates belong to OpenCode agent logs, not llama.cpp server slots.
-# A completed model step gives an attributed output-token count and elapsed
-# time. The dashboard never assigns an arbitrary model slot to a worker.
-def _event_seconds(raw):
-    if isinstance(raw,(int,float)) and not isinstance(raw,bool):
-        return float(raw)/1000 if raw>100_000_000_000 else float(raw)
-    if isinstance(raw,str):
-        try:
-            return datetime.fromisoformat(raw.replace('Z','+00:00')).timestamp()
-        except ValueError:
-            pass
-    return None
+# Slot decode counters are sampled read-only and attributed by the target VA
+# embedded in the active prompt. Slot IDs are not worker IDs.
+_LOCAL_SLOT_LOCK = threading.Lock()
+_LOCAL_SLOT_SAMPLES = {}
 
 
-@lru_cache(maxsize=1024)
-def _last_worker_rate(path,size,mtime_ns):
-    started=None
-    last=None
-    # Bounded existing JSONL, no new service or inference requests.
-    for line in _read_tail(Path(path),400_000):
-        try:
-            event=json.loads(line)
-        except (ValueError,TypeError):
-            continue
-        if not isinstance(event,dict):
-            continue
-        timestamp=_event_seconds(event.get('timestamp'))
-        if timestamp is None:
-            continue
-        kind=event.get('type')
-        if kind=='step_start':
-            started=timestamp
-        elif kind=='step_finish':
-            part=event.get('part') or {}
-            tokens=part.get('tokens') if isinstance(part,dict) else None
-            output=tokens.get('output') if isinstance(tokens,dict) else None
-            if (started is not None and isinstance(output,(int,float))
-                    and not isinstance(output,bool) and output>0
-                    and 0.01<timestamp-started<7200):
-                last=(round(float(output)/(timestamp-started),1), timestamp)
-            started=None
-    return last
+def _slot_decoded(row):
+    """llama.cpp versions return next_token as either an object or an array."""
+    part = row.get('next_token')
+    if isinstance(part, list):
+        part = next((p for p in part if isinstance(p, dict)), None)
+    n = part.get('n_decoded') if isinstance(part, dict) else None
+    if type(n) is not int:
+        n = row.get('n_decoded')
+    return n if type(n) is int and n >= 0 else None
 
 
-def worker_token_rate(logfile,now=None,max_age=60):
-    """Latest attributed output tokens per second for a finished agent step.
+def _slot_target(prompt, current):
+    """Attribute only an explicitly identifiable function, never slot order."""
+    if not isinstance(prompt, str) or not prompt or not current:
+        return None
+    names = {va.lower() for va in current}
+    # The local runner injects these markers in every first/continuation pass.
+    marked = re.findall(
+        r'(?:DECOMPILATION,\s*TARGET|LOCAL CONTINUATION PASS\s+\d+\s+'
+        r'OF\s+\d+\s+FOR)\s*(0x[0-9a-f]{8})', prompt, re.I)
+    for va in reversed(marked):
+        if va.lower() in names:
+            return va.lower()
+    present = {va.lower() for va in
+               re.findall(r'0x[0-9a-f]{8}\b', prompt, re.I)}
+    matching = present & names
+    return next(iter(matching)) if len(matching) == 1 else None
 
-    This measures full OpenCode step time, including tool activity, not GPU
-    decoding alone. No rate is shown while a first step is still running.
+
+def live_agent_throughput(repo,run_id,workers):
+    """Update existing Agent cards from live llama.cpp decode counters.
+
+    A model slot is assigned to a SAD worker only if its active prompt
+    identifies that worker's current VA. No prompt or slot ID is sent to
+    browsers. Missing attribution/counters remain unknown, not invented.
     """
-    if not logfile:
-        return None
+    if not run_id or not any(w['alive'] and w.get('current') for w in workers):
+        return
+    run_file=repo/'work/scratch/codex-pass1/parallel'/run_id/'run.json'
     try:
-        stat=logfile.stat()
-        measured=_last_worker_rate(str(logfile),stat.st_size,stat.st_mtime_ns)
-    except (OSError,ValueError):
-        return None
-    if not measured:
-        return None
-    if now is None:
-        now=time.time()
-    tps,finished=measured
-    return tps if 0<=now-finished<=max_age else None
+        backend=json.loads(run_file.read_text()).get('backend')
+    except (OSError,ValueError,AttributeError):
+        return
+    if backend!='local':
+        return
+
+    endpoint=os.environ.get('SPORE_LOCAL_BASE_URL','http://127.0.0.1:8080/v1').rstrip('/')
+    url=urlsplit(endpoint)
+    if (url.scheme!='http' or url.hostname not in ('localhost','127.0.0.1','::1')
+            or url.path!='/v1' or url.username or url.password
+            or url.query or url.fragment):
+        return
+    try:
+        with urlopen(Request(endpoint[:-3]+'/slots',
+                             headers={'Accept':'application/json'}),timeout=1.5) as reply:
+            slots=json.load(reply)
+    except (OSError,ValueError,TimeoutError):
+        with _LOCAL_SLOT_LOCK:
+            _LOCAL_SLOT_SAMPLES.clear()
+        return
+    if not isinstance(slots,list):
+        return
+
+    by_va={w['current'].lower():w for w in workers
+           if w['alive'] and isinstance(w.get('current'),str)}
+    now=time.monotonic()
+    active=set()
+    with _LOCAL_SLOT_LOCK:
+        for index,slot in enumerate(slots):
+            if not isinstance(slot,dict) or not slot.get('is_processing'):
+                continue
+            sid=slot.get('id',index)
+            if type(sid) is not int:
+                sid=index
+            task=slot.get('id_task')
+            key=(run_id,sid)
+            active.add(key)
+            n=_slot_decoded(slot)
+            va=_slot_target(slot.get('prompt'),by_va)
+            previous=_LOCAL_SLOT_SAMPLES.get(key)
+            rate=None
+            if n is not None:
+                if (previous and previous['task']==task
+                        and previous['va']==va and previous['n'] is not None
+                        and n>=previous['n'] and now>previous['time']):
+                    rate=round((n-previous['n'])/(now-previous['time']),1)
+                elif n==0:
+                    rate=0.0
+            _LOCAL_SLOT_SAMPLES[key]={'task':task,'va':va,'n':n,'time':now}
+            worker=by_va.get(va)
+            if worker is None:
+                continue
+            worker['phase']='PREFILL' if n==0 else 'GENERATING' if n is not None else 'INFERENCE'
+            if rate is not None:
+                worker['tps']=round((worker.get('tps') or 0)+rate,1)
+        for key in list(_LOCAL_SLOT_SAMPLES):
+            if key not in active:
+                del _LOCAL_SLOT_SAMPLES[key]
 
 
 VA_RE = re.compile(r'0x[0-9a-fA-F]{8}\Z')
@@ -277,11 +321,10 @@ def worker_info(repo,run_id,claimed,last_attempts=None,byte_sizes=None,active_sl
         logfile=_log_for_va(repo,last_va)
         view=stream(repo,logfile,limit=4) if logfile and phase in ('VERIFIED','PROBING') else []
         alive=proc_running(pid)
-        tps=worker_token_rate(logfile) if alive and va and phase in ('VERIFIED','PROBING') else None
         workers.append({'worker':i+1,'pid':pid,'alive':alive,
                         'current':va,'last_function':last_va,'phase':phase,
                         'bytes':(byte_sizes or {}).get(last_va), 'stream':view,
-                        'tps':tps})
+                        'tps':None})
     return workers
 
 
@@ -492,6 +535,7 @@ def snapshot(repo):
         from spore_dashboard_control import modules as known_modules
         module_names=known_modules(repo)
     workers=worker_info(repo,rid,claims,last_by_worker,byte_sizes,active_slots=active_slots)
+    live_agent_throughput(repo,rid,workers)
     run['live_workers']=sum(w['alive'] for w in workers)
     recent=[w['tps'] for w in workers if w['tps'] is not None]
     run['aggregate_tps']=round(sum(recent),1) if recent else None

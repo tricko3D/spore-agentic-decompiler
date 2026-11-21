@@ -57,7 +57,7 @@ export default function Operations({active,snapshot,snapshotError}:{active:boole
    <Metric label="Pending" value={pretty(counts.pending)} detail={bytes(sizes.PENDING)}/>
    <Metric label="Inference capacity" value={pretty(d?.adaptive?.concurrency)} detail={d?.adaptive?.cooldown_seconds?'Cooldown '+d.adaptive.cooldown_seconds+'s':'Adaptive'}/>
    <Metric label="Aggregate tok/s" value={run.aggregate_tps==null?'—':run.aggregate_tps.toFixed(1)}
-    detail="Recent per-agent step throughput"/>
+    detail="Live local model decoding"/>
    <Metric label="Run spend" value={money(budget.run_spend)} detail={'Limit '+money(budget.run_limit)}/>
   </div>
   <ErrorText error={error}/>
@@ -114,13 +114,13 @@ export default function Operations({active,snapshot,snapshotError}:{active:boole
    </div>
    <Panel title="Agent fleet" subtitle="Live workers, current functions and newest recorded events" className="fleet">
     <div className="agent-grid">{d?.workers?.map(w=>{
-      const phase=!w.alive?'offline':w.phase==='VERIFIED'?'verified':w.phase==='NO SLOT'?'no-slot':w.phase==='PROBING'?'probing':'idle';
+      const phase=!w.alive?'offline':w.phase==='VERIFIED'?'verified':w.phase==='NO SLOT'?'no-slot':['PROBING','PREFILL','GENERATING','INFERENCE'].includes(w.phase||'')?'probing':'idle';
       return <button className={'agent '+phase} key={w.worker} onClick={()=>setDetail({kind:'agent',id:String(w.worker)})}>
        <div className="row-between"><strong>Agent {String(w.worker).padStart(2,'0')}</strong><Tag value={!w.alive?'OFFLINE':w.phase||'IDLE'} tone={phase}/></div>
        <span className="mono accent">{w.current||w.last_function||'Idle / waiting'}</span>
        <small>{bytes(w.bytes)} · PID {w.pid||'—'}</small>
        <div className="agent-tps"><strong>{w.tps==null?'—':w.tps.toFixed(1)}</strong>
-         <span>tok/s · last step</span></div>
+         <span>tok/s · live</span></div>
        <div className="agent-events">{w.stream?.slice(-3).map((x,i)=><p key={i}><b>{x.kind}</b> {x.message?.slice(0,130)}</p>)}</div>
       </button>;
      })}
