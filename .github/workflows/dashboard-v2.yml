@@ -11,6 +11,8 @@ on:
       - "dashboard_web/vite.config.ts"
       - "dashboard/**"
       - "spore_dashboard.py"
+      - "spore_dashboard_data.py"
+      - "tests/test_local_inference_web.py"
       - "engine/spore_provider_fix/work/scratch/spore_technique_consolidator.py"
       - "tests/test_dashboard_v2.py"
       - "tests/test_dashboard_compact.py"
