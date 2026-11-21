@@ -141,6 +141,29 @@ worker to continue.
 The model may loop or hallucinate; repeated compiler checks and an independent
 final byte-exact check, not self-reported success, determine MATCH.
 
+## Full-queue 24-hour experiment
+
+The default launcher now runs a **24-hour experiment** across the existing
+SQLite queue (including unclassified module functions), with two simultaneous
+OpenCode workers and two llama.cpp model slots. Each function receives at most
+**30 model tool calls**, counting calls across compaction recovery sessions
+and repeated passes in this run. After the limit, the independent checker and
+bounded proof mechanism record verified MATCH/EQUIV or a deferred candidate.
+
+```bash
+cd ~/spore-agentic-decompiler
+git pull --ff-only origin dev-local-inkling
+python3 scripts/run_local_high_effort.py --workers 2 --max-tools 30 --hours 24
+```
+
+Stop an existing SAD coordinator before launching this. Stop a pre-existing
+single-slot llama.cpp server so the launcher can start the two-slot version.
+It reads actual per-slot context from `/slots`, not total model context.
+With 128K total context and two slots, each agent has roughly 64K.
+Parallel throughput may be lower per worker than the prior 31 tok/s single
+worker. The 24-hour deadline stops inference, allows bounded independent
+verification, and preserves SQLite history and candidate files.
+
 ## Configure and test SAD from WSL2
 
 Stop existing workers. From the SAD checkout:

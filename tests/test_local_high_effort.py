@@ -16,7 +16,8 @@ def extract(*functions):
     selected = [n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name in functions]
     if len(selected) != len(functions):
         raise AssertionError("Runner function missing")
-    scope = {"json": json}
+    import os
+    scope = {"json": json, "os": os, "Path": Path}
     exec(compile(ast.Module(body=selected, type_ignores=[]), str(RUNNER), "exec"), scope)
     return scope
 
@@ -74,6 +75,24 @@ class HighEffortTests(unittest.TestCase):
         self.assertIn("checked_equivalence(va, seconds=proof_seconds)", source)
         self.assertIn("('EQUIV', '',", source)
         self.assertIn("remaining_tool_calls=", source)
+
+    def test_parallel_24_hour_run_settings(self):
+        source = LAUNCHER.read_text()
+        self.assertIn('default=2)', source)
+        self.assertIn('default=30,', source)
+        self.assertIn('default=24,', source)
+        self.assertIn('query_slots(base)', source)
+        self.assertIn('"SPORE_ALL_QUEUED": "1"', source)
+        self.assertIn('"--max-inflight", str(args.workers)', source)
+        self.assertIn('"--all-modules"', source)
+        engine = RUNNER.read_text()
+        self.assertIn("local_deadline_reached()", engine)
+        self.assertIn("return 'DEADLINE'", engine)
+
+    def test_equivalent_terminal_in_store(self):
+        source = (ROOT / 'engine/spore_provider_fix/work/scratch/spore_sqlite_store.py').read_text()
+        self.assertIn("'MATCH','FAIL','DEFER','SKIP','EQUIV'", source)
+        self.assertIn("('MATCH','SKIP','EQUIV')", source)
 
     def test_context_fallback_order_and_offload(self):
         tree = ast.parse(LAUNCHER.read_text())

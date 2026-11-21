@@ -79,6 +79,19 @@ time.sleep(float(sys.argv[3]))
             finally:
                 watch.stop_process_group(proc)
 
+    def test_24_hour_deadline_stops_active_process(self):
+        with tempfile.TemporaryDirectory() as t:
+            import time
+            log = Path(t) / 'agent.jsonl'
+            proc = self.spawn(log, [], pause=10)
+            try:
+                state, _ = watch.watch(proc, log, 3, poll_seconds=0.02,
+                                      deadline_epoch=time.time() - 1)
+                self.assertEqual(state, 'deadline')
+                self.assertIsNotNone(proc.poll())
+            finally:
+                watch.stop_process_group(proc)
+
     def test_confirmed_429_aborts_only_failing_inference(self):
         with tempfile.TemporaryDirectory() as t:
             log=Path(t)/'agent.jsonl'
