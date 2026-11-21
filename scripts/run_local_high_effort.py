@@ -48,8 +48,8 @@ def cached_model() -> Path:
 
 
 def contexts(maximum: int):
-    return [c for c in (maximum,) + CONTEXT_STEPS if c <= maximum and
-            c not in (maximum,) + CONTEXT_STEPS[:((maximum,) + CONTEXT_STEPS).index(c)]]
+    """Attempt the user's requested context once, then decreasing known sizes."""
+    return list(dict.fromkeys([maximum] + [c for c in CONTEXT_STEPS if c < maximum]))
 
 
 def start_server(max_context: int, base: str):
