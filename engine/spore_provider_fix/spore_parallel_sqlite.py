@@ -130,7 +130,7 @@ def make_assignments(queue, workers, mod, passes=None):
             attempted[va] += 1
     allowed = [va for va in classified
                if va not in manifested
-               and latest.get(va) not in ('MATCH', 'SKIP')]
+               and latest.get(va) not in ('MATCH', 'SKIP', 'EQUIV')]
     # An optional retry allowlist limits paid work to explicitly reserved VAs.
     # Invalid or empty lists fail closed rather than silently running all modules.
     retry_file = os.environ.get('SPORE_RETRY_ALLOWLIST')

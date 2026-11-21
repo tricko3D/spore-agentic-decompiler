@@ -201,7 +201,7 @@ def migrate_legacy():
         if va not in keys:
             raise RuntimeError(f'Historical result VA not in queue: {va}')
         status = row['status']
-        if status not in ('MATCH','FAIL','DEFER','SKIP'):
+        if status not in ('MATCH','FAIL','DEFER','SKIP','EQUIV'):
             raise RuntimeError(f'Unrecognized historical status {status!r} at {va}')
         next_pass = counts.get(va,0)+1
         attempts.append((va,next_pass,status,row.get('effort',''),row.get('note',''),row.get('utc','')))
@@ -262,7 +262,7 @@ def latest():
 
 
 def record(va,status,effort='',note='',run_id=None,worker_idx=None,log_path=None):
-    if status not in ('MATCH','FAIL','DEFER','SKIP'):
+    if status not in ('MATCH','FAIL','DEFER','SKIP','EQUIV'):
         raise ValueError('Invalid result')
     with connect() as db:
         db.execute('BEGIN IMMEDIATE')
@@ -373,7 +373,7 @@ def claim(va,run_id,worker_idx,passes):
                 WHERE a.va=? AND v.attempt_id IS NULL ORDER BY a.id DESC LIMIT 1''',(va,)).fetchone()
             n=db.execute("""SELECT COUNT(*) FROM attempts a LEFT JOIN attempt_reviews v ON v.attempt_id=a.id
                 WHERE a.va=? AND a.status IN ('FAIL','DEFER') AND v.attempt_id IS NULL""",(va,)).fetchone()[0]
-            if (latest and latest['status'] in ('MATCH','SKIP')) or n>=passes:
+            if (latest and latest['status'] in ('MATCH','SKIP','EQUIV')) or n>=passes:
                 db.execute('COMMIT'); return False
             db.execute('INSERT INTO claims(va,run_id,worker_idx,pid,started_utc) VALUES(?,?,?,?,?)',
                        (va,run_id or 'serial',worker_idx,os.getpid(),utc()))
@@ -457,7 +457,7 @@ def claim_next(run_id, worker_idx, passes):
                     WHERE t.va=q.va AND r.attempt_id IS NULL)
                 WHERE a.run_id=? AND held.va IS NULL AND excluded.va IS NULL
                   AND (delayed.retry_after IS NULL OR delayed.retry_after <= ?)
-                  AND (last.status IS NULL OR last.status NOT IN ('MATCH','SKIP'))
+                  AND (last.status IS NULL OR last.status NOT IN ('MATCH','SKIP','EQUIV'))
                   AND (SELECT COUNT(*) FROM attempts t
                        LEFT JOIN attempt_reviews r ON r.attempt_id=t.id
                        WHERE t.va=q.va AND t.status IN ('FAIL','DEFER')

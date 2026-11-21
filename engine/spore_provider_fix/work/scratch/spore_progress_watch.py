@@ -56,7 +56,7 @@ def stop_process_group(proc):
 
 
 def watch(proc, log, idle_seconds, on_output=None, poll_seconds=0.5, on_event=None,
-          max_tools=None):
+          max_tools=None, deadline_epoch=None):
     """Return (state, exit_code), including tool_limit on observed completed calls.
 
     The cap counts distinct OpenCode tool_use events, which are emitted when
@@ -119,6 +119,9 @@ def watch(proc, log, idle_seconds, on_output=None, poll_seconds=0.5, on_event=No
                     if on_output:
                         on_output()
         code = proc.poll()
+        if deadline_epoch is not None and time.time() >= deadline_epoch:
+            stop_process_group(proc)
+            return 'deadline', proc.returncode
         if code is not None:
             return 'complete', code
         if time.monotonic() - last_progress >= idle_seconds:

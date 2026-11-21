@@ -62,6 +62,8 @@ MIN_MODULE_CONFIDENCE = float(os.environ.get('SPORE_MIN_MODULE_CONFIDENCE', '0.7
 
 
 def module_scope():
+    if os.environ.get('SPORE_ALL_QUEUED') == '1' and '*' in TARGET_MODULES:
+        return 'all queued functions (including unknown module classifications)'
     return 'all confidently classified modules' if '*' in TARGET_MODULES else ', '.join(TARGET_MODULES)
 
 PARALLEL_RUNNER_VERSION = 'SPGONZAGO_SQLITE_V1'
@@ -355,6 +357,10 @@ class ModuleIndex:
         return answer
 
     def eligible(self, va):
+        # Only existing SQLite queue addresses reach this runner. In full-queue
+        # experiment mode, unclassified functions are intentionally eligible.
+        if os.environ.get('SPORE_ALL_QUEUED') == '1' and '*' in TARGET_MODULES:
+            return True
         module, confidence = self.classification(va)
         if not module or confidence is None or confidence < self.minimum:
             return False
@@ -698,6 +704,11 @@ def local_check_budget():
     return value
 
 
+def local_deadline_reached():
+    deadline = os.environ.get('SPORE_RUN_DEADLINE_AT', '')
+    return bool(deadline) and time.time() >= float(deadline)
+
+
 def local_tool_budget():
     try:
         value = int(os.environ.get('SPORE_LOCAL_MAX_TOOLS', '30'))
@@ -926,13 +937,18 @@ fix requires changing a shared header, report SKIP instead.
             watch_state, code = progress_watch.watch(
                 proc, log, idle_minutes * 60, on_output=tokens_confirmed,
                 on_event=evidence_event if evidence else None,
-                max_tools=remaining_tool_calls if backend == 'local' else None)
+                max_tools=remaining_tool_calls if backend == 'local' else None,
+                deadline_epoch=(float(os.environ['SPORE_RUN_DEADLINE_AT'])
+                                if backend == 'local' and os.environ.get('SPORE_RUN_DEADLINE_AT')
+                                else None))
             if watch_state != 'complete':
                 save_session_from_log()
                 if watch_state == 'provider_429':
                     return 'PROVIDER', 'Confirmed upstream HTTP 429 during inference', log
                 if watch_state == 'tool_limit':
                     return 'TOOL_LIMIT', 'Reached the configured local tool-call limit', log
+                if watch_state == 'deadline':
+                    return 'DEADLINE', '24-hour experiment deadline reached', log
                 return 'IDLE', f'No meaningful progress for {idle_minutes} minutes', log
         except KeyboardInterrupt:
             progress_watch.stop_process_group(proc)
@@ -1310,6 +1326,9 @@ def process(minutes, unsafe, backend, quota_wait, max_functions,
             return
         yielded = 0
         while not max_functions or yielded < max_functions:
+            if backend == 'local' and local_deadline_reached():
+                print('Experiment deadline reached; no new function claimed.', flush=True)
+                return
             va, busy = store.claim_next(rid, worker_idx, passes)
             if va is not None:
                 yielded += 1
@@ -1430,6 +1449,9 @@ def process(minutes, unsafe, backend, quota_wait, max_functions,
                         if backend in ('openrouter','deepinfra','local') and max_inflight:
                             # Waiting for the slot never consumes the model's 5-minute budget.
                             while slot is None:
+                                if backend == 'local' and local_deadline_reached():
+                                    print('Experiment deadline reached waiting for inference.', flush=True)
+                                    return
                                 slot = store.reserve_inference_slot(va, rid, max_inflight)
                                 if slot is None:
                                     time.sleep(2)
@@ -1499,6 +1521,9 @@ def process(minutes, unsafe, backend, quota_wait, max_functions,
                     if backend == 'local' and kind == 'COMPACTION' and function_tool_total >= function_tool_cap:
                         kind = 'TOOL_LIMIT'
                         answer = f'Function tool budget exhausted during compaction ({function_tool_total} calls)'
+                    if backend == 'local' and kind == 'COMPACTION' and local_deadline_reached():
+                        kind = 'DEADLINE'
+                        answer = 'Experiment deadline reached during compaction'
                     if backend == 'local' and kind == 'COMPACTION':
                         store.record_incident(va, answer, pass_number, log,
                                               run_id=rid, worker_idx=worker_idx)
@@ -1545,7 +1570,7 @@ def process(minutes, unsafe, backend, quota_wait, max_functions,
                 is_match, check_note = checked_result(va, log)
                 if is_match:
                     outcome = ('MATCH', '', f'Pass {pass_number}: independently byte-exact ({check_note})')
-                elif kind in ('TIMEOUT', 'TOOL_LIMIT'):
+                elif kind in ('TIMEOUT', 'TOOL_LIMIT', 'DEADLINE'):
                     outcome = ('DEFER', '',
                                f'Pass {pass_number}: {answer}; '
                                f'{function_tool_total}/{function_tool_cap} local tool calls | checker: {check_note}')
@@ -1560,7 +1585,7 @@ def process(minutes, unsafe, backend, quota_wait, max_functions,
                         # was created; count the inference, not a false success.
                         outcome = ('FAIL', '+3',
                                    f'Pass {pass_number}: unverified model response: {answer[:95]} | checker: {check_note}')
-                if backend == 'local' and outcome[0] != 'MATCH':
+                if backend == 'local' and outcome[0] in ('FAIL', 'DEFER'):
                     try:
                         proof_seconds = int(os.environ.get('SPORE_LOCAL_PROOF_TIMEOUT', '90'))
                         proof_seconds = max(10, min(proof_seconds, 600))
@@ -1609,6 +1634,9 @@ def process(minutes, unsafe, backend, quota_wait, max_functions,
                 if under_budget is not True:
                     print('Run budget or provider billing guard reached/unavailable after recording pass; stopped.', flush=True)
                     status()
+                    return
+                if kind == 'DEADLINE':
+                    print('Experiment deadline reached, final function recorded.', flush=True)
                     return
                 if outcome[0] in ('MATCH', 'SKIP', 'EQUIV'):
                     break
