@@ -47,6 +47,7 @@ def reverse_engineering_prompt(index: int, size_kib: int):
         "This is a hypothetical isolated function and does not modify files. "
         "Explain the calling convention, object layout, register schedule, "
         "specific compiler levers and testable hypotheses. "
+        "Produce at least 20 numbered hypotheses, each with four complete sentences. "
         "Continue with numbered hypotheses until you exhaust the output budget.\n"
         f"Experiment id {index}. Retail constructor length 57 bytes. "
         "Source allocates an inline fixed_string, copies begin and end pointers, "
@@ -184,6 +185,7 @@ def save_results(rows, arguments, status: str = "partial"):
     if winner:
         report["recommended"] = {
             "workers": winner["workers"],
+            "model_id": winner.get("model_id"),
             "slot_context": winner["slot_context"],
             "total_context": winner["total_context"],
             "threads": winner["threads"],
@@ -227,6 +229,7 @@ def measure_candidate(slots: int, threads: int, cpu_expert_layers: int,
             startup_seconds=args.startup_seconds,
         )
         active_slots, ctx = query_slots(BASE)
+        row["model_id"] = model["id"]
         row["slot_context"] = ctx
         if active_slots != slots or ctx < args.per_slot_context:
             raise RuntimeError(
@@ -263,7 +266,7 @@ def measure_candidate(slots: int, threads: int, cpu_expert_layers: int,
             "prompt_tokens": prompt,
             "measurement_seconds": duration,
             "aggregate_output_tps": round(generated / duration, 3),
-            "aggregate_input_tps": round(prompt / duration, 3),
+            "prompt_tokens_per_wall_second": round(prompt / duration, 3),
             "per_request_output_tps": round(generated / sum(latencies), 3),
             "mean_latency_seconds": round(statistics.mean(latencies), 2),
             "max_latency_seconds": round(max(latencies), 2),
@@ -295,7 +298,7 @@ def measure_candidate(slots: int, threads: int, cpu_expert_layers: int,
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--candidates", type=lambda s: numbers(s),
-                        default=[1, 2, 3, 4, 6, 8, 12, 16],
+                        default=[1, 2, 3, 4, 6, 8, 12, 16, 24, 32],
                         help="Parallel slot counts to benchmark, e.g. 1,2,4,6,8,12,16")
     parser.add_argument("--per-slot-context", type=int, default=32768,
                         help="Minimum usable context of each worker")
@@ -355,7 +358,7 @@ def main(argv=None):
         winner = best_profile(rows)
         if winner and args.tune:
             n = winner["workers"]
-            for index, threads in enumerate((4, 8)):
+            for index, threads in enumerate((4, 8, 10, 12, 16)):
                 if threads == args.threads:
                     continue
                 row = measure_candidate(n, threads, args.cpu_experts, args,
@@ -386,11 +389,12 @@ def main(argv=None):
     if not winner:
         print("No usable benchmark configuration. Check model server logs.")
         return 1
-    print(f"\nFASTEST SUSTAINABLE: {winner['workers']} workers, "
+    print(f"\nFASTEST MEASURED: {winner['workers']} workers, "
           f"{winner['aggregate_output_tps']:.2f} aggregate tokens/sec, "
           f"{winner['slot_context']} tokens/slot, "
           f"{winner['threads']} CPU threads, "
           f"{winner['cpu_expert_layers']} CPU expert layers.")
+    print("This is a short throughput benchmark, not yet a 24-hour stability result.")
     print("Saved raw results: ", OUTPUT)
     print("Saved tuned profile:", PROFILE)
     print("NEXT: python3 scripts/run_local_high_effort.py --workers auto --hours 24 --max-tools 30")

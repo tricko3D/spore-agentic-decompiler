@@ -222,6 +222,9 @@ def main(argv=None):
         else:
             print("Reusing the already-running Inkling server.", flush=True)
         model_id = served["id"]
+        if auto and selected.get("model_id") and selected["model_id"] != model_id:
+            raise RuntimeError("The model ID differs from the benchmark profile. "
+                               "Re-run scripts/benchmark_local_parallel.py.")
         available_slots, context = query_slots(base)
         if available_slots < args.workers:
             raise RuntimeError(

@@ -16,14 +16,14 @@ git pull --ff-only origin dev-local-inkling
 python3 scripts/benchmark_local_parallel.py
 ```
 
-The benchmark tests 1,2,3,4,6,8,12,16 true parallel llama.cpp slots, using
+The benchmark tests 1,2,3,4,6,8,12,16,24,32 true parallel llama.cpp slots (as memory permits), using
 a **32K context per slot**, identical prompt workload at each setting, and
 two measured rounds after an unscored warmup. It compares aggregate generated
 tokens per wall-clock second, per-request generation rate, latency and RAM/VRAM
 headroom. Startup and model-load times do not affect scores. Configurations
 that fail to start, time out or leave insufficient memory are rejected.
 If two successive configurations fail to fit, the benchmark stops increasing
-parallelism. It also tests 4/6/8 CPU threads and 10/12/14 MoE CPU expert
+parallelism. It also tests 4/6/8/10/12/16 CPU threads and 10/12/14 MoE CPU expert
 layers at the best concurrency.
 
 The winner is saved to `~/inkling-runtime/sad-parallel-profile.json`.

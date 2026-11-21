@@ -75,6 +75,23 @@ class ParallelBenchmarkTests(unittest.TestCase):
                 self.assertEqual(selected["slot_context"], 32768)
                 self.assertEqual(selected["total_context"], 131072)
 
+    def test_saved_model_identity_is_preserved(self):
+        with tempfile.TemporaryDirectory() as d:
+            output = Path(d) / "measurements.json"
+            profile = Path(d) / "profile.json"
+            args = SimpleNamespace(per_slot_context=32768,
+                                   candidates=[2, 4], output_tokens=320,
+                                   prompt_kib=8, rounds=2)
+            rows = [{"status": "ok", "workers": 4, "threads": 6,
+                     "model_id": "Inkling-2-Mini-UD-Q4_K_M.gguf",
+                     "cpu_expert_layers": 12, "slot_context": 32768,
+                     "total_context": 131072, "aggregate_output_tps": 80,
+                     "mean_latency_seconds": 10}]
+            with patch.object(benchmark, "OUTPUT", output), patch.object(benchmark, "PROFILE", profile):
+                benchmark.save_results(rows, args)
+                self.assertEqual(json.loads(profile.read_text())["recommended"]["model_id"],
+                                 "Inkling-2-Mini-UD-Q4_K_M.gguf")
+
     def test_no_valid_results_never_invents_profile(self):
         self.assertIsNone(benchmark.best_profile([{
             "status": "error", "workers": 16, "aggregate_output_tps": 0
