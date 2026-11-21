@@ -115,7 +115,7 @@ export default function Operations({active,snapshot,snapshotError}:{active:boole
    </div>
    <Panel title="Agent fleet" subtitle="Live workers, current functions and newest recorded events" className="fleet">
     {inference?.available&&<div className="model-throughput">
-      <div className="row-between"><h3>Local inference slots</h3>
+      <div className="row-between"><h3>Local inference slots{inference.benchmark?.name?' · '+inference.benchmark.name:''}</h3>
         <strong className="mono">{inference.aggregate_tps==null?'—':inference.aggregate_tps.toFixed(1)} tok/s aggregate</strong>
       </div>
       <div className="model-slot-grid">

@@ -32,7 +32,7 @@ LIVE = Path.home() / "inkling-runtime" / "sad-parallel-live.json"
 
 
 def publish_live(stage: str, **details):
-    """Atomic heartbeat that the separate terminal UI can display.
+    """Atomic heartbeat that the existing SAD web dashboard can display.
 
     Does not send requests to llama.cpp. All live tok/s is sampled by the
     monitor directly from real /slots decoding counters.
@@ -367,8 +367,8 @@ def main(argv=None):
     if not SERVER.is_file():
         parser.error("Unsloth llama-server not installed at " + str(SERVER))
     cached_model()
-    print("Live terminal dashboard: python3 scripts/local_model_dashboard.py",
-          flush=True)
+    print("Live throughput: open the existing SAD web dashboard at "
+          "http://127.0.0.1:8765 (Agents view).", flush=True)
     publish_live("starting", workers=0)
     rows = []
     failures = 0

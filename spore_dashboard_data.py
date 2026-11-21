@@ -104,8 +104,20 @@ def local_inference():
                 del _LOCAL_INFERENCE_PREVIOUS[sid]
     output.sort(key=lambda slot:slot['id'])
     rates = [x['tps'] for x in output if x['tps'] is not None]
+    stage = None
+    try:
+        state = json.loads((Path.home()/'inkling-runtime/sad-parallel-live.json').read_text())
+        if 0 <= time.time()-state.get('updated_epoch',0) < 30:
+            stage = {
+                'name':str(state.get('stage',''))[:40],
+                'round':state.get('round'),
+                'workers':state.get('workers'),
+            }
+    except (OSError, ValueError, TypeError, AttributeError):
+        pass
     return {'available':True,'aggregate_tps':round(sum(rates),2) if rates else None,
-            'slots':output,'sample_window_seconds':_LOCAL_INFERENCE_WINDOW}
+            'slots':output,'sample_window_seconds':_LOCAL_INFERENCE_WINDOW,
+            'benchmark':stage}
 
 
 VA_RE = re.compile(r'0x[0-9a-fA-F]{8}\Z')

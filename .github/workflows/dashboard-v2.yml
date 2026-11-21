@@ -1,7 +1,7 @@
 name: Dashboard V2 (React/TS + Python)
 on:
   push:
-    branches: ['feature/dashboard-*', dev, main]
+    branches: ['feature/dashboard-*', dev, main, dev-local-inkling]
     paths:
       - "dashboard_web/src/**"
       - "dashboard_web/package.json"
@@ -55,6 +55,7 @@ jobs:
           python -m compileall -q dashboard spore_dashboard.py
           python -m unittest discover -s tests -p 'test_dashboard_v2.py' -v
           python -m unittest discover -s tests -p 'test_dashboard_compact.py' -v
+          python -m unittest discover -s tests -p 'test_local_inference_web.py' -v
           python -m unittest discover -s tests -p 'test_technique_consolidator.py' -v
           python -m unittest discover -s tests -p 'test_brain_ablation.py' -v
           python -m unittest discover -s tests -p 'test_brain_ablation_suite.py' -v
