@@ -5,6 +5,36 @@ OpenCode. It does **not** send requests through OpenRouter or DeepInfra, check
 their paid balances, or reserve a USD inference budget. Existing paid backends
 remain unchanged.
 
+## One-command high-effort run
+
+In WSL, from the `dev-local-inkling` branch, run:
+
+```bash
+cd ~/spore-agentic-decompiler
+git pull --ff-only origin dev-local-inkling
+python3 scripts/run_local_high_effort.py
+```
+
+This launcher uses the existing llama.cpp server when it is already running;
+otherwise it uses the locally installed Unsloth binary and cached Q4_K_M
+GGUF with the **measured 31 tok/s MoE expert offload strategy**. It attempts
+128K context, then 64K / 32K / 16K if the runtime cannot allocate it. Model ID,
+actual context and output capacity are discovered automatically, with no
+manual environment exports. The optimized 12GB-GPU settings use full core
+offload, CPU experts on physical layers 0-5 and 18-23, quantized Q4 KV cache,
+flash attention, a reduced microbatch, and Unsloth's recommended sampling.
+
+The runner installs/updates SAD's backed-up engine, checks local connectivity
+and starts one worker with one inference slot, high-effort local reasoning,
+32 compiler-check iterations per function, and a 60-minute **inactivity**
+watchdog. It runs the eligible queue rather than stopping after one function.
+No paid provider calls are made. Other worker options are available through
+`python3 scripts/run_local_high_effort.py --help`.
+
+If the server is already running at 16K, the launcher will reuse its actual
+16K limit rather than silently pretending it is 128K. Stop the old server to
+let the launcher start the optimized 128K configuration.
+
 ## Start an inference server
 
 **Important, model-format compatibility:** The root GGUF files from

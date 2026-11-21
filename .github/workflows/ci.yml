@@ -2,7 +2,7 @@ name: Standalone decompiler checks
 
 on:
   push:
-    branches: [main]
+    branches: [main, dev-local-inkling]
   pull_request:
 
 jobs:

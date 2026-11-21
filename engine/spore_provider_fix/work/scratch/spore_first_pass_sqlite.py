@@ -665,6 +665,13 @@ def parse_opencode_log(log_path):
     return last_text, problems, text_events
 
 
+def local_compaction_failure(problems):
+    """Recognize compaction errors without confusing them with model/tool failures."""
+    return any('compaction.failed' in str(problem).lower() or
+               'compaction summary reached the output token limit' in str(problem).lower()
+               for problem in problems)
+
+
 def classify_failure(log, code, backend, message=''):
     tail = log_tail(log)
     if infrastructure_error(message + '\n' + tail):
@@ -905,9 +912,7 @@ fix requires changing a shared header, report SKIP instead.
     else:
         message, problems, text_count = parse_opencode_log(log)
         if problems or code != 0:
-            if backend == 'local' and any('compaction.failed' in problem.lower()
-                                         or 'compaction summary reached the output token limit' in problem.lower()
-                                         for problem in problems):
+            if backend == 'local' and local_compaction_failure(problems):
                 return 'COMPACTION', 'OpenCode compaction failed; session requires a fresh context', log
             return classify_failure(log, code, backend, '\n'.join(problems))
         if not text_count:
