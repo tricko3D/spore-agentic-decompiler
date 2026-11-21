@@ -153,7 +153,7 @@ def main(argv=None):
     parser.add_argument("--minutes", type=int, default=60,
                         help="Inactivity watchdog, not a total agent timeout")
     parser.add_argument("--workers", default="auto",
-                        help="auto uses measured benchmark profile; alternatively 1..32")
+                        help="auto uses measured benchmark profile; alternatively any positive integer")
     parser.add_argument("--benchmark-profile", default=str(PROFILE),
                         help="Saved results from scripts/benchmark_local_parallel.py")
     parser.add_argument("--threads", type=int, default=6,
