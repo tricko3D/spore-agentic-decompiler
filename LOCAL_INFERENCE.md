@@ -164,6 +164,17 @@ Parallel throughput may be lower per worker than the prior 31 tok/s single
 worker. The 24-hour deadline stops inference, allows bounded independent
 verification, and preserves SQLite history and candidate files.
 
+At any point, view results for the latest parallel run:
+
+```bash
+cd ~/spore-agentic-decompiler
+python3 scripts/report_local_experiment.py
+```
+
+The report counts new byte-exact MATCH and independently proven EQUIV
+separately. Previously recorded equivalence proofs are excluded from the
+agent queue without being relabelled as byte-exact matches.
+
 ## Configure and test SAD from WSL2
 
 Stop existing workers. From the SAD checkout:

@@ -121,6 +121,7 @@ def make_assignments(queue, workers, mod, passes=None):
     # Passes now mean fresh attempts granted to every eligible function in this run.
     # Historic FAIL/DEFER attempts do not exhaust a future run.
     manifested = mod.ManifestIndex().refresh()
+    equivalent = mod.EquivalentIndex().refresh()
     latest = {}
     attempted = Counter()
     for row in store.read_attempts():
@@ -129,7 +130,7 @@ def make_assignments(queue, workers, mod, passes=None):
         if state in ('FAIL', 'DEFER'):
             attempted[va] += 1
     allowed = [va for va in classified
-               if va not in manifested
+               if va not in manifested and va not in equivalent
                and latest.get(va) not in ('MATCH', 'SKIP', 'EQUIV')]
     # An optional retry allowlist limits paid work to explicitly reserved VAs.
     # Invalid or empty lists fail closed rather than silently running all modules.

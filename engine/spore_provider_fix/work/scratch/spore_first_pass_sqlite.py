@@ -169,6 +169,35 @@ class ManifestIndex:
         return self.addresses
 
 
+class EquivalentIndex:
+    """Independently proved equivalents, distinct from byte-exact manifests."""
+    def __init__(self):
+        self._files = {}
+        self.addresses = set()
+
+    def refresh(self):
+        files = {p for p in ROOT.glob('match/**/equivalent.txt') if p.is_file()}
+        for obsolete in set(self._files) - files:
+            del self._files[obsolete]
+        for path in files:
+            stat = path.stat()
+            signature = (stat.st_mtime_ns, stat.st_size)
+            if path in self._files and self._files[path][0] == signature:
+                continue
+            values = set()
+            with path.open(encoding='utf-8', errors='replace') as source:
+                for line in source:
+                    cols = line.split('#', 1)[0].split()
+                    if len(cols) >= 3:
+                        try:
+                            values.add(f'0x{int(cols[2], 16):08x}')
+                        except ValueError:
+                            continue
+            self._files[path] = signature, values
+        self.addresses = set().union(*(r[1] for r in self._files.values()))
+        return self.addresses
+
+
 class ModuleIndex:
     """Fail-closed classifier for selected upstream modules.
 
@@ -434,12 +463,15 @@ def status():
           f'across {incidents["invalid_functions"]:,} functions | '
           f'New provider incidents: {incidents["provider_incidents"]:,}')
     manifested = ManifestIndex().refresh()
+    equivalent = EquivalentIndex().refresh()
     modules = ModuleIndex()
     allowed = [row for row in queue if modules.eligible(row['va'])]
     eligible_pending = sum(row['va'] not in manifested and row['va'] not in done for row in allowed)
     manifested_in_scope = sum(row['va'] in manifested for row in allowed)
     print(f'{module_scope()} classified queue: {len(allowed):,} | '
-          f'Already in manifest: {manifested_in_scope:,} | Eligible pending: {eligible_pending:,}')
+          f'Already in manifest: {manifested_in_scope:,} | '
+          f'Proven equivalents: {len(equivalent & {row["va"] for row in allowed}):,} | '
+          f'Eligible pending: {eligible_pending:,}')
     print(f'Other modules or uncertain classifications excluded: {len(queue)-len(allowed):,} '
           f'(confidence threshold {modules.minimum:.2f})')
     # Parallel launches grant fresh passes; historical FAIL/DEFER counts
@@ -448,7 +480,7 @@ def status():
     for r in attempt_rows:
         histories.setdefault(r['va'], []).append(r)
     eligible_retry = sum(
-        row['va'] not in manifested and
+        row['va'] not in manifested and row['va'] not in equivalent and
         (row['va'] not in histories or
          histories[row['va']][-1]['status'] in ('FAIL', 'DEFER'))
         for row in allowed
@@ -1282,16 +1314,25 @@ def process(minutes, unsafe, backend, quota_wait, max_functions,
     allowed = {row['va'] for row in queue if modules.eligible(row['va'])}
     t = task_module()
     manifests = ManifestIndex()
+    equivalents = EquivalentIndex()
     already_matched = manifests.refresh()
     queued_manifested = sum(row['va'] in already_matched for row in queue if row['va'] in allowed)
     print(f'Scope: {module_scope()}, via {modules.mode}, confidence >= {modules.minimum:.2f}. '
           f'{len(allowed)} / {len(queue)} queued functions in scope.', flush=True)
     print(f'Manifest guard: {queued_manifested} scoped queued function(s) already manifested; '
           f'will not call the agent for them.', flush=True)
+    print(f'Equivalent guard: {len(equivalents.refresh() & allowed)} scoped queued function(s) '
+          f'already proven equivalent; will not call the agent.', flush=True)
     if os.environ.get('SPORE_SQLITE_RUN_ID'):
         print(f'Parallel SQLite worker {os.environ.get("SPORE_SQLITE_WORKER_IDX")}', flush=True)
-    print(f'Pass policy: at most {passes} total paid attempts per function, '
-          f'including existing first-pass history. No wall-clock deadline; inactivity watchdog after {max(15, minutes)} min.', flush=True)
+    if backend == 'local':
+        print(f'Local pass policy: {passes} additional attempt(s) this run, '
+              f'hard limit {local_tool_budget()} tool calls per function; '
+              f'inactivity watchdog {max(15,minutes)} minutes; '
+              f'run deadline {os.environ.get("SPORE_RUN_DEADLINE_AT", "unbounded")}.', flush=True)
+    else:
+        print(f'Pass policy: {passes} passes, inactivity watchdog after '
+              f'{max(15,minutes)} minutes.', flush=True)
     if only_va and only_va not in {r['va'] for r in queue}:
         sys.exit(f'{only_va} is not in the queue')
     if only_va and only_va not in allowed:
@@ -1350,9 +1391,9 @@ def process(minutes, unsafe, backend, quota_wait, max_functions,
                 store.ignore_run_target(rid,va,'out of scope')
                 store.release_claim(va,rid,worker_idx)
             continue
-        if va in manifests.refresh():
+        if va in manifests.refresh() or va in equivalents.refresh():
             if dynamic:
-                store.ignore_run_target(rid,va,'already in upstream manifest')
+                store.ignore_run_target(rid,va,'already verified in upstream manifest or equivalent')
                 store.release_claim(va,rid,worker_idx)
             if only_va:
                 print(f'{va} is already manifested; skipped.', flush=True)
@@ -1395,7 +1436,7 @@ def process(minutes, unsafe, backend, quota_wait, max_functions,
                     print(f'  Tool cap {function_tool_cap} reached for {va}; '
                           'moving to next function.', flush=True)
                     break
-                if va in manifests.refresh() or not modules.eligible(va):
+                if va in manifests.refresh() or va in equivalents.refresh() or not modules.eligible(va):
                     print(f'  {va} became manifested or out-of-scope; skipped.', flush=True)
                     break
                 if backend in ('openrouter', 'deepinfra'):

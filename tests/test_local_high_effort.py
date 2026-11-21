@@ -89,6 +89,13 @@ class HighEffortTests(unittest.TestCase):
         self.assertIn("local_deadline_reached()", engine)
         self.assertIn("return 'DEADLINE'", engine)
 
+    def test_equivalent_guard(self):
+        engine = RUNNER.read_text()
+        coordinator = (ROOT / 'engine/spore_provider_fix/spore_parallel_sqlite.py').read_text()
+        self.assertIn('class EquivalentIndex:', engine)
+        self.assertIn('or va in equivalents.refresh()', engine)
+        self.assertIn('mod.EquivalentIndex().refresh()', coordinator)
+
     def test_equivalent_terminal_in_store(self):
         source = (ROOT / 'engine/spore_provider_fix/work/scratch/spore_sqlite_store.py').read_text()
         self.assertIn("'MATCH','FAIL','DEFER','SKIP','EQUIV'", source)
