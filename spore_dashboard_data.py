@@ -86,7 +86,8 @@ def local_inference():
                        if now - ts <= _LOCAL_INFERENCE_WINDOW]
             elapsed = min(_LOCAL_INFERENCE_WINDOW,now-start)
             speed = (sum(delta for _,delta in samples)/elapsed
-                     if busy and n is not None and elapsed > 0 else None)
+                     if busy and n is not None and elapsed > 0 else
+                     0.0 if busy and n is not None else None)
             state = ('IDLE' if not busy else
                      'GENERATING' if speed and speed > 0 else
                      'PREFILL' if n == 0 else 'WAITING')
