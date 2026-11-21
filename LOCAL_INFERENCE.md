@@ -7,24 +7,55 @@ remain unchanged.
 
 ## Start an inference server
 
-Inkling 2 Mini's official vLLM implementation currently targets NVIDIA Hopper,
-Blackwell and DGX Spark. The RTX 4070 Ti (Ada, 12 GB VRAM) is **not a verified
-vLLM configuration**. Start with the CUDA-enabled current llama.cpp runtime and
-Unsloth's GGUF, loading the rest of the weights into system RAM:
+**Important, model-format compatibility:** The root GGUF files from
+`unsloth/Inkling-2-Mini-GGUF` use Unsloth's physical-layer layout.
+Current upstream llama.cpp can fail to load these files with
+`check_tensor_dims: tensor 'blk.24.attn_q.weight' not found`.
+Unsloth's looped-model build supports this format. Do not redownload
+the ~16.6 GB Q4_K_M model, and do not simply rebuild upstream llama.cpp.
+
+For your WSL2 RTX 4070 Ti with CUDA 12.8, install Unsloth's verified
+CUDA 12 portable prebuilt into a **separate** directory:
 
 ```bash
-llama serve -hf unsloth/Inkling-2-Mini-GGUF:UD-Q4_K_M \
-  --host 127.0.0.1 --port 8080 -c 16384 -ngl 8 --parallel 1 --jinja
+mkdir -p ~/inkling-runtime && cd ~/inkling-runtime
+curl -fL --retry 3 -o llama.tar.gz \
+  https://github.com/unslothai/llama.cpp/releases/download/b12588-mix-c0c3de8/app-b12588-mix-c0c3de8-linux-x64-cuda12-portable.tar.gz
+mkdir -p llama.cpp
+tar -xzf llama.tar.gz -C llama.cpp
+./llama.cpp/llama-server --version
 ```
 
-Install CUDA llama.cpp from https://github.com/ggml-org/llama.cpp if needed.
-Start with one inference slot so the full 16K context is available to it.
-When increasing to two simultaneous server slots, increase `-c` to 32768
-(or lower the per-request context limits) and check KV cache memory.
-Increase GPU offloading only after measuring VRAM, RAM and throughput. Q4_K_M
-weights are about 16.6 GB, more than 4070 Ti's 12 GB VRAM. Test tool calling,
-not just text generation, before dispatching decompilation workers. If a compatible
-vLLM server works on your hardware, its API can be used instead.
+Reuse the already downloaded GGUF from the Hugging Face cache (the
+exact path may differ between machines):
+
+```bash
+MODEL="$(find "$HOME/.cache/huggingface/hub/models--unsloth--Inkling-2-Mini-GGUF/snapshots" \
+  -name 'Inkling-2-Mini-UD-Q4_K_M.gguf' -print -quit)"
+test -n "$MODEL" && test -s "$MODEL" || { echo 'Model not found'; exit 1; }
+
+./llama.cpp/llama-server \
+  --model "$MODEL" \
+  --host 127.0.0.1 --port 8080 \
+  --jinja --ctx-size 16384 --n-gpu-layers 8 --parallel 1 \
+  --temp 1.0 --top-p 1.0 --top-k 0 --min-p 0.0
+```
+
+This uses CPU RAM for layers not fitting in 12 GB VRAM. The optional
+vision projector and DSpark drafter are omitted for the first text-only,
+single-worker diagnostic. Increase GPU offload only after checking RAM,
+VRAM, KV cache, and actual throughput. For two server slots, make sure
+each has sufficient context and memory, for example with 32768 total
+context and `--parallel 2` after the single-slot test succeeds.
+
+Alternatively, use the `Mainline_Support` GGUF variant and the
+`ggml-org/llama.cpp` fix in PR #32704. This requires downloading another
+GGUF with different metadata and tensor layout, so the Unsloth prebuilt
+is less disruptive when the root GGUF is already cached.
+
+References:
+- https://unsloth.ai/docs/models/inkling-2-mini#run-inkling-2-mini-in-llama-cpp
+- https://huggingface.co/unsloth/Inkling-2-Mini-GGUF/blob/main/Mainline_Support/README.md
 
 ## Configure and test SAD from WSL2
 
