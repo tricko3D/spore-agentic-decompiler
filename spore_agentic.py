@@ -244,7 +244,8 @@ def command_setup(args):
     if not shutil.which('opencode'):
         fail('OpenCode CLI not found. Install OpenCode and ensure `opencode` works in WSL before setup.')
     # Preserve an existing key without prompting, unless the user explicitly rotates it.
-    get_key(prompt=args.change_key or not (os.environ.get('OPENROUTER_API_KEY') or KEY_FILE.is_file()))
+    if args.change_key or (args.provider or previous.get('provider', 'openrouter')) == 'openrouter':
+        get_key(prompt=args.change_key or not (os.environ.get('OPENROUTER_API_KEY') or KEY_FILE.is_file()))
     settings = {
         'repo': str(repo),
         'workers': args.workers if args.workers is not None else int(previous.get('workers', 5)),
@@ -255,6 +256,7 @@ def command_setup(args):
         'quota_wait': int(previous.get('quota_wait', 1)),
         'provider_retries': int(previous.get('provider_retries', 2)),
         'reasoning': previous.get('reasoning', 'high'),
+        'provider': args.provider or previous.get('provider', 'openrouter'),
         **scope_settings(args, previous),
     }
     validate_settings(settings)
@@ -272,7 +274,9 @@ def command_setup(args):
     atomic_private_file(CONFIG_FILE, json.dumps(settings, indent=2)+'\n')
     # Never echo the API key or persist it in the spore-decomp checkout.
     print('Setup complete. Config:', CONFIG_FILE)
-    print('OpenRouter key:', 'environment' if os.environ.get('OPENROUTER_API_KEY') else KEY_FILE)
+    print('Inference backend:', settings['provider'])
+    if settings['provider'] == 'openrouter':
+        print('OpenRouter key:', 'environment' if os.environ.get('OPENROUTER_API_KEY') else KEY_FILE)
     print('Run `python3 spore_agentic.py recover` to inspect historic provider-only failures.')
     print('Run `python3 spore_agentic.py plan` before your first paid batch.')
 
@@ -394,6 +398,8 @@ def validate_settings(s):
         fail('minutes must be 1..120')
     if not 0 < float(s['budget']) <= 100000:
         fail('budget must be positive')
+    if s.get('provider', 'openrouter') not in ('openrouter', 'deepinfra', 'local'):
+        fail('unsupported inference backend')
 
 
 def command_run(args, mode):
@@ -424,13 +430,18 @@ def command_run(args, mode):
         settings.update(scope_settings(args, saved))
         validate_settings(settings)
         env = with_scope(os.environ.copy(), settings)
-        provider = getattr(args, 'provider', None) or env.get('SPORE_INFERENCE_PROVIDER') or 'openrouter'
+        provider = getattr(args, 'provider', None) or env.get('SPORE_INFERENCE_PROVIDER') or saved.get('provider') or 'openrouter'
         policy = getattr(args, 'model_policy', None) or env.get('SPORE_MODEL_POLICY') or 'fixed'
         if provider == 'deepinfra':
             if not env.get('DEEPINFRA_API_KEY', '').strip():
                 fail('DEEPINFRA_API_KEY must be set in the launching shell.')
             if policy != 'fixed':
                 fail('Direct DeepInfra currently supports fixed-model routing only.')
+        elif provider == 'local':
+            if policy != 'fixed':
+                fail('Local inference uses fixed-model routing only.')
+            if not env.get('SPORE_LOCAL_MODEL', '').strip():
+                fail('Set SPORE_LOCAL_MODEL to the model ID returned by your local /v1/models endpoint.')
         else:
             env['OPENROUTER_API_KEY'] = get_key()
             expected_key_fingerprint = hashlib.sha256(env['OPENROUTER_API_KEY'].encode()).hexdigest()[:20]
@@ -490,6 +501,11 @@ def command_run(args, mode):
         print('SQLite:', 'present' if (repo/'work/scratch/codex-pass1/spore.sqlite3').is_file() else 'missing')
         print('Module scope:', ', '.join(scope_settings(args, saved)['modules']))
         print('Checker lock:', 'installed' if 'SPGONZAGO_SQLITE_CHECK_LOCK_V1' in (repo/'tools/contrib/check.py').read_text() else 'missing')
+        provider = args.provider or os.environ.get('SPORE_INFERENCE_PROVIDER') or saved.get('provider', 'openrouter')
+        print('Backend:', provider)
+        if provider == 'local':
+            return execute(repo, 'spore_worker_entry.py', 'doctor', '--backend', 'local',
+                           *(['--live'] if args.live else []), check=False)
         print('Credential:', 'configured' if os.environ.get('OPENROUTER_API_KEY') or KEY_FILE.is_file() else 'missing')
         if args.live:
             env = os.environ.copy()
@@ -536,6 +552,7 @@ def main(argv=None):
     setup = sub.add_parser('setup', help='Configure key, install engine, and initialize or reuse SQLite state')
     setup.add_argument('--repo', help='Existing spore-decomp checkout path')
     setup.add_argument('--change-key', action='store_true', help='Prompt to replace the stored API key')
+    setup.add_argument('--provider', choices=['openrouter', 'deepinfra', 'local'], default=None)
     for name, type_ in [('workers', int), ('max-inflight', int), ('passes', int), ('minutes', int), ('budget', float)]:
         setup.add_argument('--'+name, type=type_)
     add_scope_arguments(setup)
@@ -552,7 +569,7 @@ def main(argv=None):
     add_scope_arguments(r)
     r.add_argument('--max-functions-per-worker', type=int, default=0)
     r.add_argument('--fixed-inflight', action='store_true', help='Disable adaptive OpenRouter congestion control')
-    r.add_argument('--provider', choices=['openrouter', 'deepinfra'], default=None)
+    r.add_argument('--provider', choices=['openrouter', 'deepinfra', 'local'], default=None)
     r.add_argument('--model-policy', choices=['fixed', 'cheapest'], default=None)
     models = sub.add_parser('models', help='Show ten cheapest eligible OpenRouter models, no paid inference')
     models.add_argument('--repo')
@@ -564,7 +581,8 @@ def main(argv=None):
         p = sub.add_parser(action)
         p.add_argument('--repo')
         if action == 'doctor':
-            p.add_argument('--live', action='store_true', help='Validate OpenRouter key over network; no inference')
+            p.add_argument('--provider', choices=['openrouter', 'deepinfra', 'local'], default=None)
+            p.add_argument('--live', action='store_true', help='Check selected provider without model inference')
     scope = sub.add_parser('scope', help='Preview or append functions for selected modules without removing existing history')
     scope.add_argument('--repo')
     scope.add_argument('--apply', action='store_true', help='Back up DB, append new targets and save module selection')

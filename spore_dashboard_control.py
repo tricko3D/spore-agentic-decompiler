@@ -496,18 +496,28 @@ print(json.dumps({
         values['budget']=float(budget)
         provider=data.get('provider','openrouter')
         policy=data.get('model_policy','fixed')
-        if provider not in ('openrouter','deepinfra'):
+        if provider not in ('openrouter','deepinfra','local'):
             raise ValueError('Unsupported inference provider')
         if policy not in ('fixed','cheapest'):
             raise ValueError('Unsupported model policy')
-        if provider == 'deepinfra' and policy != 'fixed':
+        if provider in ('deepinfra','local') and policy != 'fixed':
             raise ValueError('Direct DeepInfra uses fixed model until prices are independently verified')
         with self.lock:
             self._confirm_idle()
             self.process=None  # Do not replay a previous launch failure after a new attempt.
             selected=(self._claim_scope(data.get('claim_user'),force=True) if module=='__claimed__'
                       else self._retry_allowlist(module))
-            if provider == 'deepinfra':
+            if provider == 'local':
+                launch_env=os.environ.copy()
+                scratch=self.repo/'work/scratch'
+                if str(scratch) not in sys.path:
+                    sys.path.append(str(scratch))
+                import spore_model_router
+                try:
+                    spore_model_router.probe_local()
+                except (ValueError, RuntimeError) as exc:
+                    raise ValueError(str(exc)) from None
+            elif provider == 'deepinfra':
                 launch_env=os.environ.copy()
                 key=launch_env.get('DEEPINFRA_API_KEY','').strip()
                 if not key:

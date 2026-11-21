@@ -4,7 +4,7 @@ import {Drawer,ErrorText} from './Panel';
 import PreviewResultModal from './PreviewResultModal';
 import type {AllowList,Claimants,Plan,Snapshot} from '../types';
 
-type Launch={module:string;workers:number;max_inflight:number;passes:number;minutes:number;budget:number;claim_user:string;provider:'openrouter'|'deepinfra';model_policy:'fixed'|'cheapest'};
+type Launch={module:string;workers:number;max_inflight:number;passes:number;minutes:number;budget:number;claim_user:string;provider:'openrouter'|'deepinfra'|'local';model_policy:'fixed'|'cheapest'};
 const START:Launch={module:'SPGonzago',workers:16,max_inflight:16,passes:3,minutes:20,budget:20,claim_user:'',provider:'openrouter',model_policy:'fixed'};
 
 function AllowListEditor({onClose}:{onClose:()=>void}){
@@ -78,6 +78,7 @@ export default function AgentDock({snapshot,onUpdated}:{snapshot:Snapshot|null;o
    <label>Provider<select value={form.provider} onChange={e=>setForm(old=>({...old,provider:e.target.value as Launch['provider'],model_policy:'fixed',max_inflight:e.target.value==='deepinfra'?Math.min(old.max_inflight,4):old.max_inflight}))}>
     <option value="openrouter">OpenRouter</option>
     <option value="deepinfra">DeepInfra direct</option>
+    <option value="local">Local (vLLM / llama.cpp)</option>
    </select></label>
    <label>Model policy<select value={form.model_policy} onChange={e=>update('model_policy',e.target.value as Launch['model_policy'])}>
     <option value="fixed">Fixed baseline</option>

@@ -20,6 +20,7 @@ import sys
 sys.path.append(str(Path(__file__).resolve().parent / "work" / "scratch"))
 import spore_sqlite_store as store
 import spore_adaptive as adaptive_ctl
+import spore_model_router as model_router
 import time
 
 ROOT = Path(__file__).resolve().parent
@@ -237,7 +238,7 @@ def status():
 def run(a):
     if Path.cwd().resolve() != ROOT:
         sys.exit(f'Run from {ROOT}')
-    if a.backend == 'deepinfra' and a.model_policy != 'fixed':
+    if a.backend in ('deepinfra', 'local') and a.model_policy != 'fixed':
         sys.exit('DeepInfra currently supports fixed-model routing; use --model-policy fixed')
     if not (1 <= a.workers <= 32):
         sys.exit('--workers must be between 1 and 32')
@@ -251,9 +252,15 @@ def run(a):
         sys.exit('OPENROUTER_API_KEY not set in this shell')
     if a.backend == 'deepinfra' and not os.environ.get('DEEPINFRA_API_KEY', '').strip():
         sys.exit('DEEPINFRA_API_KEY not set (requires billing:read permission)')
-    if a.backend == 'deepinfra':
-        # Independent provider: no OpenRouter-specific adaptive backoff.
+    if a.backend in ('deepinfra', 'local'):
+        # These backends do not use OpenRouter adaptive backoff.
         a.adaptive = False
+    if a.backend == 'local':
+        try:
+            endpoint, model = model_router.probe_local()
+        except (ValueError, RuntimeError) as exc:
+            sys.exit(str(exc))
+        print(f'Local inference: {model} on {endpoint}; no OpenRouter billing checks.', flush=True)
     mod = load_runner()
     verify_checker()
     RUN_LOGS.mkdir(parents=True, exist_ok=True)
@@ -364,7 +371,7 @@ def main():
     sub = p.add_subparsers(dest='command', required=True)
     r = sub.add_parser('run', help='Start N workers using SQLite WAL')
     r.add_argument('--workers', type=int, default=5, help='Number of concurrent agents (default: 5)')
-    r.add_argument('--backend', choices=['openrouter', 'deepinfra'], default='openrouter')
+    r.add_argument('--backend', choices=['openrouter', 'deepinfra', 'local'], default='openrouter')
     r.add_argument('--model-policy', choices=['fixed', 'cheapest'], default='fixed')
     r.add_argument('--passes', type=int, default=3, help='Additional valid attempts per eligible function in this run (1-24)')
     r.add_argument('--reasoning', choices=['low', 'medium', 'high'], default='medium')

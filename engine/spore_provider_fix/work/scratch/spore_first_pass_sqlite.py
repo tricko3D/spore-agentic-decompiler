@@ -676,7 +676,7 @@ def run_one(va, minutes, unsafe, backend, model='mistral4', reasoning='medium',
             pass_number=1, prompt_override=None, slot=None, evidence=None,
             model_choice=None):
     LOGS.mkdir(parents=True, exist_ok=True)
-    suffix = model if backend == 'nvidia' else ('deepinfra' if backend == 'deepinfra' else ('deepseek-openrouter' if backend == 'openrouter' else 'codex'))
+    suffix = model if backend == 'nvidia' else ('deepinfra' if backend == 'deepinfra' else ('local-inkling' if backend == 'local' else ('deepseek-openrouter' if backend == 'openrouter' else 'codex')))
     pass_suffix = f'.pass{pass_number}' if pass_number > 1 else ''
     # Unique immutable logs: retrying a recovered pass must not overwrite the
     # original evidence referenced by an archived SQLite attempt.
@@ -768,6 +768,9 @@ fix requires changing a shared header, report SKIP instead.
             routed_id = (model_choice or {}).get('model') or OPENROUTER_MODEL
             env['OPENCODE_CONFIG_CONTENT'] = json.dumps(openrouter_config(reasoning, routed_id))
             selected_model = 'openrouter/' + routed_id
+        elif backend == 'local':
+            env['OPENCODE_CONFIG_CONTENT'] = json.dumps(model_router.local_opencode_config())
+            selected_model = 'spore_local/inkling'
         elif backend == 'deepinfra':
             routed_id = (model_choice or {}).get('model') or model_router.DEEPINFRA_MODEL
             env['OPENCODE_CONFIG_CONTENT'] = json.dumps(model_router.direct_opencode_config(routed_id, reasoning))
@@ -791,7 +794,7 @@ fix requires changing a shared header, report SKIP instead.
             cmd += ['--title', f'Spore {va}']
         cmd += [prompt]
     def save_session_from_log():
-        if backend not in ('openrouter', 'deepinfra', 'nvidia') or not log.exists():
+        if backend not in ('openrouter', 'deepinfra', 'local', 'nvidia') or not log.exists():
             return
         try:
             for line in log.read_text(encoding='utf-8', errors='replace').splitlines():
@@ -842,7 +845,7 @@ fix requires changing a shared header, report SKIP instead.
             raise
 
     save_session_from_log()
-    if backend in ('openrouter', 'deepinfra'):
+    if backend in ('openrouter', 'deepinfra', 'local'):
         only, reason = provider_only(log)
         if only:
             return 'PROVIDER', reason, log
@@ -887,7 +890,7 @@ def history_by_va():
 
 
 def previous_log(va, backend, model, previous_pass):
-    suffix = model if backend == 'nvidia' else ('deepinfra' if backend == 'deepinfra' else ('deepseek-openrouter' if backend == 'openrouter' else 'codex'))
+    suffix = model if backend == 'nvidia' else ('deepinfra' if backend == 'deepinfra' else ('local-inkling' if backend == 'local' else ('deepseek-openrouter' if backend == 'openrouter' else 'codex')))
     pass_suffix = f'.pass{previous_pass}' if previous_pass > 1 else ''
     return LOGS / f'{va[2:]}.{suffix}{pass_suffix}.jsonl'
 
@@ -1168,6 +1171,8 @@ def process(minutes, unsafe, backend, quota_wait, max_functions,
         print(f'Backend: OpenRouter ({reasoning} reasoning). OpenCode shell tools run WITHOUT a sandbox.', flush=True)
     elif backend == 'deepinfra':
         print(f'Backend: direct DeepInfra ({reasoning} reasoning); soft run cap, use provider account limits too.',flush=True)
+    elif backend == 'local':
+        print('Backend: local OpenAI-compatible inference; no token charges or external billing guard.',flush=True)
     if backend in ('openrouter','deepinfra'):
         try:
             if not budget_check_or_wait(budget, adaptive=adaptive, backend=backend):
@@ -1275,7 +1280,7 @@ def process(minutes, unsafe, backend, quota_wait, max_functions,
                 except (OSError, ValueError, RuntimeError) as exc:
                     print(f'  Evidence snapshot unavailable ({exc}); continuing safely.', flush=True)
                 choice = None
-                if backend in ('openrouter','deepinfra'):
+                if backend in ('openrouter','deepinfra','local'):
                     try:
                         with store.connect() as model_db:
                             choice = model_router.choose(
@@ -1295,7 +1300,7 @@ def process(minutes, unsafe, backend, quota_wait, max_functions,
                     reservation = None
                     slot = None
                     try:
-                        if backend in ('openrouter','deepinfra') and max_inflight:
+                        if backend in ('openrouter','deepinfra','local') and max_inflight:
                             # Waiting for the slot never consumes the model's 5-minute budget.
                             while slot is None:
                                 slot = store.reserve_inference_slot(va, rid, max_inflight)
@@ -1448,7 +1453,14 @@ def doctor(backend, model='mistral4', reasoning='high', live=False, budget=5.0):
     print('Prompt:', 'present' if PROMPT_FILE.exists() else 'MISSING')
     exe = 'codex' if backend == 'codex' else 'opencode'
     print('Agent executable:', shutil.which(exe) or f'MISSING ({exe})')
-    if backend == 'nvidia':
+    if backend == 'local':
+        print('Provider: local OpenAI-compatible runtime')
+        if live:
+            print('Verified endpoint/model:', *model_router.probe_local())
+        else:
+            print('Endpoint/model:', *model_router.local_settings())
+        print('No OpenRouter key required; OpenCode must receive working tool-call responses.')
+    elif backend == 'nvidia':
         print('API key:', 'set' if os.environ.get('NVIDIA_API_KEY', '').strip() else 'MISSING')
         print('API URL:', NVIDIA_BASE_URL)
         print('Model:', NVIDIA_MODELS[model]['id'])
@@ -1481,7 +1493,7 @@ def main():
     run = sub.add_parser('run', help='Run unmanifested functions in selected modules with confident mapping')
     run.add_argument('--minutes', type=int, default=20, help='Time budget per function (default 5)')
     run.add_argument('--unsafe', action='store_true', help='Disable Codex sandbox; for OpenRouter/NVIDIA, accepted for backwards compatibility only')
-    run.add_argument('--backend', choices=['openrouter', 'deepinfra', 'nvidia', 'codex'], default='openrouter', help='Agent backend (default OpenRouter DeepSeek/OpenCode)')
+    run.add_argument('--backend', choices=['openrouter', 'deepinfra', 'local', 'nvidia', 'codex'], default='openrouter', help='Agent backend (default OpenRouter DeepSeek/OpenCode)')
     run.add_argument('--quota-wait', type=int, default=5, help='Wait this many minutes on 429/quota; 0 = stop with queue unchanged')
     run.add_argument('--max-inflight', type=int, default=8, help='Maximum active OpenRouter inferences across all SQLite workers; 0 disables cap')
     run.add_argument('--provider-retries', type=int, default=2, help='Additional retries for provider-only failures; never counts as an attempt')
@@ -1495,7 +1507,7 @@ def main():
     run.add_argument('--run-id', help=argparse.SUPPRESS)
     run.add_argument('--worker-idx', type=int, help=argparse.SUPPRESS)
     check = sub.add_parser('doctor', help='Check local prerequisites without calling an API')
-    check.add_argument('--backend', choices=['openrouter', 'nvidia', 'codex'], default='openrouter')
+    check.add_argument('--backend', choices=['openrouter', 'deepinfra', 'local', 'nvidia', 'codex'], default='openrouter')
     check.add_argument('--model', choices=NVIDIA_MODELS, default='mistral4')
     check.add_argument('--reasoning', choices=['low', 'medium', 'high'], default='high')
     check.add_argument('--live', action='store_true', help='Check OpenRouter API key and usage (no inference purchased)')

@@ -14,6 +14,7 @@ from pathlib import Path
 import sqlite3
 import time
 from urllib.request import Request, urlopen
+from urllib.parse import urlsplit
 
 CATALOG_URL = "https://openrouter.ai/api/v1/models?supported_parameters=tools"
 DEEPINFRA_URL = "https://api.deepinfra.com/v1/openai"
@@ -203,7 +204,7 @@ def score(candidate, db):
 def choose(db, *, run_id, va, pass_number, provider="openrouter",
            policy="fixed", cache_path=None, fixed_openrouter="deepseek/deepseek-v4.1-flash-1017"):
     """Atomically pin one model for this function/pass across retries."""
-    if provider not in ("openrouter", "deepinfra") or policy not in ("fixed", "cheapest"):
+    if provider not in ("openrouter", "deepinfra", "local") or policy not in ("fixed", "cheapest"):
         raise ValueError("Unsupported provider/model policy")
     ensure_schema(db)
     existing = db.execute("""SELECT provider,model,policy,estimated_cost FROM model_passes
@@ -214,7 +215,12 @@ def choose(db, *, run_id, va, pass_number, provider="openrouter",
             raise RuntimeError("Provider changed during an already-started pass")
         return {"provider": existing[0], "model": existing[1], "policy": existing[2],
                 "estimate_usd": existing[3]}
-    if provider == "deepinfra":
+    if provider == "local":
+        if policy != "fixed":
+            raise ValueError("Local inference uses fixed-model routing only")
+        _, local_id = local_settings()
+        selected = {"provider": provider, "model": local_id, "estimate_usd": 0.0}
+    elif provider == "deepinfra":
         if policy != "fixed":
             raise ValueError("DeepInfra prices are not in the OpenRouter catalog; use fixed policy")
         selected = {"provider": provider, "model": DEEPINFRA_MODEL, "estimate_usd": None}
@@ -316,6 +322,65 @@ def direct_opencode_config(model, reasoning):
                     model: {
                         "modelID": model, "name": model,
                         "limit": {"context": 131072, "output": 32768},
+                        "capabilities": {"tools": True, "input": ["text"], "output": ["text"]},
+                    },
+                },
+            },
+        },
+        "permissions": [
+            {"action": "shell", "resource": "git commit *", "effect": "deny"},
+            {"action": "shell", "resource": "git push *", "effect": "deny"},
+            {"action": "shell", "resource": "git reset --hard *", "effect": "deny"},
+        ],
+    }
+
+
+def local_settings():
+    """Resolve loopback-only local endpoint and its exact served model ID."""
+    endpoint = os.environ.get("SPORE_LOCAL_BASE_URL", "http://127.0.0.1:8080/v1").rstrip("/")
+    model = os.environ.get("SPORE_LOCAL_MODEL", "").strip()
+    url = urlsplit(endpoint)
+    if (url.scheme != "http" or url.hostname not in ("127.0.0.1", "localhost", "::1")
+            or url.path != "/v1" or url.query or url.fragment or url.username or url.password):
+        raise ValueError("SPORE_LOCAL_BASE_URL must be an HTTP loopback /v1 endpoint")
+    if not model or any(ord(ch) < 32 for ch in model):
+        raise ValueError("SPORE_LOCAL_MODEL must be the exact ID from GET /v1/models")
+    return endpoint, model
+
+
+def probe_local():
+    """Unpaid discovery preflight; no inference or OpenRouter calls."""
+    endpoint, model = local_settings()
+    try:
+        with urlopen(Request(endpoint + "/models", headers={"Accept": "application/json"}), timeout=5) as reply:
+            payload = json.load(reply)
+    except (OSError, ValueError) as exc:
+        raise RuntimeError("Local model endpoint is unavailable: " + type(exc).__name__) from None
+    models = payload.get("data") if isinstance(payload, dict) else None
+    if not isinstance(models, list) or model not in [
+        entry.get("id") for entry in models if isinstance(entry, dict)
+    ]:
+        raise RuntimeError("SPORE_LOCAL_MODEL was not found in the server's /v1/models response")
+    return endpoint, model
+
+
+def local_opencode_config():
+    """Direct OpenAI-compatible model provider; no paid routing or API key."""
+    endpoint, model = local_settings()
+    return {
+        "$schema": "https://opencode.ai/config.json",
+        "share": "disabled",
+        "compaction": {"auto": True, "keep": {"tokens": 2000}, "buffer": "65%"},
+        "model": "spore_local/inkling",
+        "providers": {
+            "spore_local": {
+                "name": "Local inference (SAD)",
+                "package": "@opencode/ai/providers/openai-compatible",
+                "settings": {"baseURL": endpoint, "apiKey": "local"},
+                "models": {
+                    "inkling": {
+                        "modelID": model, "name": model,
+                        "limit": {"context": 16384, "output": 8192},
                         "capabilities": {"tools": True, "input": ["text"], "output": ["text"]},
                     },
                 },
