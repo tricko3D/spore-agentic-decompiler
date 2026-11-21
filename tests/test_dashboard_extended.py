@@ -150,11 +150,14 @@ s.create_run('run1',2,3,{'0x00000001':0,'0x00000002':1,'0x00000003':0})
         with self.assertRaises(ValueError):control.start(data)
         data['workers']=200
         data['max_inflight']=200
-        with patch('spore_dashboard_control.subprocess.run') as run,patch('spore_dashboard_control.subprocess.Popen') as popen:
+        with patch('spore_dashboard_control.subprocess.run') as run, \
+             patch('spore_dashboard_control.subprocess.Popen') as popen, \
+             patch.object(control,'_launch_environment',return_value={}), \
+             patch.object(control,'_provider_key_preflight'), \
+             patch.object(control,'_confirm_idle'):
             run.return_value.returncode=0
             popen.return_value.pid=12345
-            with patch.object(control,'_confirm_idle'):
-                result=control.start(data)
+            result=control.start(data)
             self.assertEqual(result['controller_pid'],12345)
             self.assertTrue(run.called)
             self.assertTrue(popen.called)
