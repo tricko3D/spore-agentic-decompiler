@@ -23,6 +23,9 @@ ITERATE: edit the real C++ implementation and run
 checker/assembly differences, form a concrete hypothesis, change only what the
 evidence suggests, and check again. You have up to {CHECK_BUDGET} meaningful
 compiler-check cycles in this investigation, not a one-check or three-check cap.
+The runner also enforces a separate, absolute per-function TOOL CALL cap,
+including failed tool calls. The session can be stopped immediately at that
+cap. Prioritize editing and compiler checks over exploratory shell calls.
 Use the cycles when the feedback suggests real progress; do not burn them
 repeating the same failing source or in endless speculative loops. Record the
 resulting technique and next hypothesis in investigation keep.md after notable

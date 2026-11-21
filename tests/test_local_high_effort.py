@@ -55,6 +55,26 @@ class HighEffortTests(unittest.TestCase):
         self.assertIn("if kind in ('IDLE', 'COMPACTION'):", source)
         self.assertIn("local_compaction_restarts += 1", source)
 
+    def test_tool_budget_and_proof_hooks(self):
+        scope = extract("local_tool_budget", "count_completed_tools")
+        import os
+        from unittest import mock
+        with mock.patch.dict(os.environ, {"SPORE_LOCAL_MAX_TOOLS": "30"}):
+            self.assertEqual(scope["local_tool_budget"](), 30)
+        with tempfile.TemporaryDirectory() as d:
+            log = Path(d) / "events.jsonl"
+            events = [
+                {"type": "tool_use", "part": {"callID": "a"}},
+                {"type": "tool_use", "part": {"callID": "a"}},
+                {"type": "tool_use", "part": {"callID": "b"}},
+            ]
+            log.write_text("\n".join(json.dumps(e) for e in events))
+            self.assertEqual(scope["count_completed_tools"](log), 2)
+        source = RUNNER.read_text()
+        self.assertIn("checked_equivalence(va, seconds=proof_seconds)", source)
+        self.assertIn("('EQUIV', '',", source)
+        self.assertIn("remaining_tool_calls=", source)
+
     def test_context_fallback_order_and_offload(self):
         tree = ast.parse(LAUNCHER.read_text())
         needed = {"query_server", "contexts", "cached_model", "start_server", "main"}

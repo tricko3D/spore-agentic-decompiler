@@ -55,15 +55,21 @@ def stop_process_group(proc):
         proc.wait()
 
 
-def watch(proc, log, idle_seconds, on_output=None, poll_seconds=0.5, on_event=None):
-    """Return (result, exit_code). Result is complete, provider_429 or idle.
+def watch(proc, log, idle_seconds, on_output=None, poll_seconds=0.5, on_event=None,
+          max_tools=None):
+    """Return (state, exit_code), including tool_limit on observed completed calls.
 
-    Parsing is incremental and leaves JSONL source and session state intact.
-    Only the first positive token sample triggers the on_output callback.
+    The cap counts distinct OpenCode tool_use events, which are emitted when
+    tools complete. Stop the entire OpenCode process group immediately at the
+    limit, leaving source, checker artifacts and JSONL intact.
     """
+    if max_tools is not None and max_tools < 1:
+        raise ValueError('max_tools must be positive')
     position = 0
     fragment = b''
     confirmed = False
+    tools_seen = set()
+    tool_count = 0
     last_progress = time.monotonic()
     while True:
         try:
@@ -96,6 +102,16 @@ def watch(proc, log, idle_seconds, on_output=None, poll_seconds=0.5, on_event=No
                     stop_process_group(proc)
                     return 'provider_429', proc.returncode
                 kind = event.get('type')
+                if kind == 'tool_use' and max_tools is not None:
+                    part = event.get('part') or {}
+                    identity = (part.get('callID') or part.get('id')) if isinstance(part, dict) else None
+                    if not identity or identity not in tools_seen:
+                        if identity:
+                            tools_seen.add(identity)
+                        tool_count += 1
+                        if tool_count >= max_tools:
+                            stop_process_group(proc)
+                            return 'tool_limit', proc.returncode
                 if kind in ('step_start', 'step_finish', 'text', 'reasoning', 'tool_use'):
                     last_progress = time.monotonic()
                 if not confirmed and output_tokens(event):

@@ -415,14 +415,14 @@ def record(va, status, effort='', note='', log_path=None):
 def status():
     queue = read_csv(QUEUE)
     done = completed()
-    counts = {s: sum(r['status'] == s for r in done.values()) for s in ['MATCH', 'FAIL', 'SKIP', 'DEFER']}
+    counts = {s: sum(r['status'] == s for r in done.values()) for s in ['MATCH', 'FAIL', 'SKIP', 'DEFER', 'EQUIV']}
     print(f"Queue {len(queue):,} | MATCH {counts['MATCH']:,} | FAIL {counts['FAIL']:,} | "
-          f"SKIP {counts['SKIP']:,} | DEFER {counts['DEFER']:,} | Pending {len(queue) - len(done):,}")
+          f"SKIP {counts['SKIP']:,} | DEFER {counts['DEFER']:,} | EQUIV {counts['EQUIV']:,} | Pending {len(queue) - len(done):,}")
     levels = {f'+{i}': sum(r['status'] == 'FAIL' and r['effort'] == f'+{i}' for r in done.values())
               for i in range(1, 6)}
     print('FAIL effort levels:', ', '.join(f'{k}: {v}' for k, v in levels.items()))
     attempt_rows = read_csv(RESULTS)
-    print(f'Logged inference outcomes: {sum(r["status"] in ("FAIL", "DEFER", "MATCH", "SKIP") for r in attempt_rows):,} across {len(done):,} functions')
+    print(f'Logged inference outcomes: {sum(r["status"] in ("FAIL", "DEFER", "MATCH", "SKIP", "EQUIV") for r in attempt_rows):,} across {len(done):,} functions')
     incidents = store.incident_summary()
     print(f'VOID_PROVIDER (excluded from pass limits): {incidents["invalid_passes"]:,} archived passes '
           f'across {incidents["invalid_functions"]:,} functions | '
@@ -698,6 +698,40 @@ def local_check_budget():
     return value
 
 
+def local_tool_budget():
+    try:
+        value = int(os.environ.get('SPORE_LOCAL_MAX_TOOLS', '30'))
+    except ValueError:
+        raise ValueError('SPORE_LOCAL_MAX_TOOLS must be an integer') from None
+    if not 1 <= value <= 10000:
+        raise ValueError('SPORE_LOCAL_MAX_TOOLS must be 1..10000')
+    return value
+
+
+def count_completed_tools(log):
+    """Read actual completed OpenCode tool calls once per inference session."""
+    unique = set()
+    anonymous = 0
+    try:
+        with Path(log).open(encoding='utf-8', errors='replace') as source:
+            for line in source:
+                try:
+                    event = json.loads(line)
+                except (ValueError, TypeError):
+                    continue
+                if not isinstance(event, dict) or event.get('type') != 'tool_use':
+                    continue
+                part = event.get('part') or {}
+                identity = (part.get('callID') or part.get('id')) if isinstance(part, dict) else None
+                if identity:
+                    unique.add(identity)
+                else:
+                    anonymous += 1
+    except OSError:
+        pass
+    return len(unique) + anonymous
+
+
 def local_continuation_prompt(va, pass_number, prior_row, prior_log, total_passes):
     """Reuse the last verified evidence; no paid-provider three-check constraint."""
     previous = (prior_row.get('note') or '(No previous explanation.)')[:1000]
@@ -716,7 +750,7 @@ Never reset a previous candidate without a specific reason.
 
 def run_one(va, minutes, unsafe, backend, model='mistral4', reasoning='medium',
             pass_number=1, prompt_override=None, slot=None, evidence=None,
-            model_choice=None, fresh_session=False):
+            model_choice=None, fresh_session=False, remaining_tool_calls=None):
     LOGS.mkdir(parents=True, exist_ok=True)
     suffix = model if backend == 'nvidia' else ('deepinfra' if backend == 'deepinfra' else ('local-inkling' if backend == 'local' else ('deepseek-openrouter' if backend == 'openrouter' else 'codex')))
     pass_suffix = f'.pass{pass_number}' if pass_number > 1 else ''
@@ -732,6 +766,13 @@ def run_one(va, minutes, unsafe, backend, model='mistral4', reasoning='medium',
                 PROMPT_FILE.read_text(encoding='utf-8'))
     prompt = template.replace('{VA}', va).replace(
         '{CHECK_BUDGET}', str(local_check_budget()) if backend == 'local' else '3')
+    if backend == 'local' and remaining_tool_calls is not None:
+        prompt += (
+            f'\nHARD TOOL BUDGET: at most {remaining_tool_calls} additional '
+            f'tool calls in this agent session. Keep work focused; perform '
+            f'the most promising checker experiments first. Before running '
+            f'out of calls, preserve your best C++ and evidence in keep.md. '
+            f'If not matched, report FAIL +N with the verified blocker.\n')
     if evidence:
         prompt += f"""
 
@@ -884,11 +925,14 @@ fix requires changing a shared header, report SKIP instead.
                     investigation.record_checker_event(ROOT, va, event, evidence_seen)
             watch_state, code = progress_watch.watch(
                 proc, log, idle_minutes * 60, on_output=tokens_confirmed,
-                on_event=evidence_event if evidence else None)
+                on_event=evidence_event if evidence else None,
+                max_tools=remaining_tool_calls if backend == 'local' else None)
             if watch_state != 'complete':
                 save_session_from_log()
                 if watch_state == 'provider_429':
                     return 'PROVIDER', 'Confirmed upstream HTTP 429 during inference', log
+                if watch_state == 'tool_limit':
+                    return 'TOOL_LIMIT', 'Reached the configured local tool-call limit', log
                 return 'IDLE', f'No meaningful progress for {idle_minutes} minutes', log
         except KeyboardInterrupt:
             progress_watch.stop_process_group(proc)
@@ -1152,6 +1196,28 @@ def checked_result(va, log_path=None, minutes=2):
     return False, last_failure
 
 
+def checked_equivalence(va, seconds=90):
+    """Independently prove and record equivalence without calling it byte-exact.
+
+    The proof runs against the current candidate, only after a failed MATCH
+    check. A timeout or inconclusive proof never counts as a success.
+    """
+    cmd = [sys.executable, str(ROOT / 'tools/contrib/prove.py'), va, '--record']
+    try:
+        result = subprocess.run(
+            cmd, cwd=ROOT, text=True, capture_output=True,
+            timeout=seconds, env={**os.environ, 'PWD': str(ROOT)})
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return False, f'Equivalence proof unavailable: {type(exc).__name__}'
+    output = result.stdout + '\n' + result.stderr
+    proved = (result.returncode == 0 and
+              re.search(r'(?m)^EQUIVALENT\s+' + re.escape(va) + r'\b', output) and
+              re.search(r'(?m)^recorded:\s+', output))
+    return bool(proved), ('Independently recorded equivalent proof' if proved else
+                          'Equivalence not proven: ' + output.strip().splitlines()[-1][:180]
+                          if output.strip() else 'Equivalence not proven')
+
+
 def budget_check_or_wait(budget, adaptive=False, backend='openrouter'):
     """Wait out transient billing API outages, but never bypass the spend guard."""
     delay = 10
@@ -1274,7 +1340,7 @@ def process(minutes, unsafe, backend, quota_wait, max_functions,
             continue
         previous = store.history_for(va) if dynamic else history.get(va, [])
         if dynamic: history[va] = previous
-        if previous and previous[-1]['status'] in ('MATCH', 'SKIP'):
+        if previous and previous[-1]['status'] in ('MATCH', 'SKIP', 'EQUIV'):
             if dynamic:
                 store.ignore_run_target(rid,va,'already terminal')
                 store.release_claim(va,rid,worker_idx)
@@ -1303,7 +1369,13 @@ def process(minutes, unsafe, backend, quota_wait, max_functions,
             print(f'  {va} is already claimed or completed; skipped.',flush=True)
             continue
         try:
+            function_tool_total = 0
+            function_tool_cap = local_tool_budget() if backend == 'local' else 0
             for pass_number in range(attempted + 1, pass_ceiling + 1):
+                if backend == 'local' and function_tool_total >= function_tool_cap:
+                    print(f'  Tool cap {function_tool_cap} reached for {va}; '
+                          'moving to next function.', flush=True)
+                    break
                 if va in manifests.refresh() or not modules.eligible(va):
                     print(f'  {va} became manifested or out-of-scope; skipped.', flush=True)
                     break
@@ -1369,7 +1441,13 @@ def process(minutes, unsafe, backend, quota_wait, max_functions,
                         kind, answer, log = run_one(va, minutes, unsafe, backend,
                                                     model, reasoning, pass_number, prompt, slot=slot,
                                                     evidence=evidence, model_choice=choice,
-                                                    fresh_session=local_compaction_restarts > 0)
+                                                    fresh_session=local_compaction_restarts > 0,
+                                                    remaining_tool_calls=(
+                                                        function_tool_cap - function_tool_total
+                                                        if backend == 'local' else None))
+                        if backend == 'local':
+                            function_tool_total += count_completed_tools(log)
+                            print(f'    Local tools: {function_tool_total}/{function_tool_cap}', flush=True)
                     except KeyboardInterrupt:
                         print('\nStopped. Completed passes remain recorded; unfinished pass can be retried.')
                         return
@@ -1418,6 +1496,9 @@ def process(minutes, unsafe, backend, quota_wait, max_functions,
                             print('\nStopped; valid attempts preserved.')
                             return
                         continue
+                    if backend == 'local' and kind == 'COMPACTION' and function_tool_total >= function_tool_cap:
+                        kind = 'TOOL_LIMIT'
+                        answer = f'Function tool budget exhausted during compaction ({function_tool_total} calls)'
                     if backend == 'local' and kind == 'COMPACTION':
                         store.record_incident(va, answer, pass_number, log,
                                               run_id=rid, worker_idx=worker_idx)
@@ -1464,8 +1545,10 @@ def process(minutes, unsafe, backend, quota_wait, max_functions,
                 is_match, check_note = checked_result(va, log)
                 if is_match:
                     outcome = ('MATCH', '', f'Pass {pass_number}: independently byte-exact ({check_note})')
-                elif kind == 'TIMEOUT':
-                    outcome = ('DEFER', '', f'Pass {pass_number}: time limit ({minutes} min) | checker: {check_note}')
+                elif kind in ('TIMEOUT', 'TOOL_LIMIT'):
+                    outcome = ('DEFER', '',
+                               f'Pass {pass_number}: {answer}; '
+                               f'{function_tool_total}/{function_tool_cap} local tool calls | checker: {check_note}')
                 else:
                     verdict = parse_agent_verdict(answer)
                     if verdict:
@@ -1477,6 +1560,19 @@ def process(minutes, unsafe, backend, quota_wait, max_functions,
                         # was created; count the inference, not a false success.
                         outcome = ('FAIL', '+3',
                                    f'Pass {pass_number}: unverified model response: {answer[:95]} | checker: {check_note}')
+                if backend == 'local' and outcome[0] != 'MATCH':
+                    try:
+                        proof_seconds = int(os.environ.get('SPORE_LOCAL_PROOF_TIMEOUT', '90'))
+                        proof_seconds = max(10, min(proof_seconds, 600))
+                        is_equiv, proof_note = checked_equivalence(va, seconds=proof_seconds)
+                    except (OSError, ValueError, RuntimeError) as exc:
+                        is_equiv, proof_note = False, f'Equivalence check unavailable: {exc}'
+                    if is_equiv:
+                        outcome = ('EQUIV', '', f'Pass {pass_number}: {proof_note} '
+                                   f'(not byte-exact); tools {function_tool_total}/{function_tool_cap}'
+                                   f' | checker: {check_note}')
+                    else:
+                        print(f'    {proof_note}', flush=True)
                 if evidence:
                     try:
                         source, _ = t.locate(int(va, 16))
@@ -1514,7 +1610,11 @@ def process(minutes, unsafe, backend, quota_wait, max_functions,
                     print('Run budget or provider billing guard reached/unavailable after recording pass; stopped.', flush=True)
                     status()
                     return
-                if outcome[0] in ('MATCH', 'SKIP'):
+                if outcome[0] in ('MATCH', 'SKIP', 'EQUIV'):
+                    break
+                if backend == 'local' and function_tool_total >= function_tool_cap:
+                    print(f'  Hard local tool cap reached ({function_tool_total}/{function_tool_cap}); '
+                          f'skipping remaining passes for {va}.', flush=True)
                     break
             else:
                 print(f'  {va}: exhausted {pass_ceiling} cumulative attempts for this run.', flush=True)

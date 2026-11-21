@@ -50,6 +50,35 @@ time.sleep(float(sys.argv[3]))
             finally:
                 watch.stop_process_group(proc)
 
+    def test_hard_tool_limit_stops_agent_on_thirtieth_completed_call(self):
+        with tempfile.TemporaryDirectory() as t:
+            log = Path(t) / 'agent.jsonl'
+            lines = [
+                {'type': 'tool_use', 'part': {'callID': f'call{i}', 'tool': 'shell'}}
+                for i in range(35)
+            ]
+            proc = self.spawn(log, lines, pause=10)
+            try:
+                state, _ = watch.watch(proc, log, 5, poll_seconds=0.02, max_tools=30)
+                self.assertEqual(state, 'tool_limit')
+                self.assertIsNotNone(proc.poll())
+            finally:
+                watch.stop_process_group(proc)
+
+    def test_duplicate_tool_event_does_not_count_twice(self):
+        with tempfile.TemporaryDirectory() as t:
+            log = Path(t) / 'agent.jsonl'
+            lines = [
+                {'type': 'tool_use', 'part': {'callID': 'same'}},
+                {'type': 'tool_use', 'part': {'callID': 'same'}},
+            ]
+            proc = self.spawn(log, lines, pause=0.1)
+            try:
+                state, _ = watch.watch(proc, log, 2, poll_seconds=0.02, max_tools=2)
+                self.assertEqual(state, 'complete')
+            finally:
+                watch.stop_process_group(proc)
+
     def test_confirmed_429_aborts_only_failing_inference(self):
         with tempfile.TemporaryDirectory() as t:
             log=Path(t)/'agent.jsonl'
