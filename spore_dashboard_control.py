@@ -533,8 +533,8 @@ print(json.dumps({
                 if not entries:
                     raise ValueError('Running local server has no model in /v1/models')
                 requested=launch_env.get('SPORE_LOCAL_MODEL','').strip()
-                selected=next((row for row in entries if row['id']==requested),entries[0])
-                launch_env['SPORE_LOCAL_MODEL']=selected['id']
+                served_model=next((row for row in entries if row['id']==requested),entries[0])
+                launch_env['SPORE_LOCAL_MODEL']=served_model['id']
                 # llama.cpp reports the *per-agent* context in /slots.
                 context=None
                 try:
@@ -550,7 +550,7 @@ print(json.dumps({
                 except (OSError, ValueError):
                     pass  # vLLM does not expose llama.cpp's /slots endpoint.
                 if context is None:
-                    meta=selected.get('meta')
+                    meta=served_model.get('meta')
                     context=meta.get('n_ctx') if isinstance(meta,dict) else None
                 if type(context) is int and 8192<=context<=1048576:
                     launch_env['SPORE_LOCAL_CONTEXT']=str(context)
