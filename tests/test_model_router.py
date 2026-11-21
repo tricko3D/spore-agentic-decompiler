@@ -37,6 +37,17 @@ def entry(name, price="0.0000001", output="0.0000004", *, tools=True,
 
 
 class ModelRouterTests(unittest.TestCase):
+    def test_manual_local_settings_accept_explicit_launch_environment(self):
+        cfg={'SPORE_LOCAL_BASE_URL':'http://127.0.0.1:8080/v1',
+             'SPORE_LOCAL_MODEL':'running-model',
+             'SPORE_LOCAL_CONTEXT':'32768'}
+        self.assertEqual(router.local_endpoint(cfg),cfg['SPORE_LOCAL_BASE_URL'])
+        self.assertEqual(router.local_settings(cfg),(cfg['SPORE_LOCAL_BASE_URL'],'running-model'))
+        self.assertEqual(router.local_limits(cfg),(32768,8192))
+        with self.assertRaises(ValueError):
+            router.local_endpoint({'SPORE_LOCAL_BASE_URL':'http://example.org/v1'})
+
+
     def test_price_weighting_and_cache(self):
         p = {
             "prompt": "0.000001", "completion": "0.000002",

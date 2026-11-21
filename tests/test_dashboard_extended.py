@@ -165,6 +165,40 @@ s.create_run('run1',2,3,{'0x00000001':0,'0x00000002':1,'0x00000003':0})
             self.assertEqual(argv[argv.index('--workers')+1], '200')
             self.assertEqual(argv[argv.index('--max-inflight')+1], '200')
 
+    def test_local_dashboard_launch_uses_already_running_model(self):
+        from unittest.mock import Mock
+        control=Controller(self.repo,enabled=True)
+        data={'module':'SPGonzago','workers':64,'max_inflight':64,
+              'passes':1,'minutes':20,'budget':20,
+              'provider':'local','model_policy':'fixed'}
+        import sys
+        fake_router=Mock()
+        fake_router.local_endpoint.return_value='http://127.0.0.1:8080/v1'
+        fake_router.probe_local.return_value=('http://127.0.0.1:8080/v1','local-model')
+        class Reply:
+            def __init__(self,payload):self.payload=json.dumps(payload).encode()
+            def __enter__(self):return self
+            def __exit__(self,*args):return False
+            def read(self):return self.payload
+        model=Reply({'data':[{'id':'local-model','meta':{'n_ctx':262144}}]})
+        slots=Reply([{'n_ctx':32768},{'n_ctx':32768}])
+        with patch.dict(sys.modules,{'spore_model_router':fake_router}), \
+             patch('spore_dashboard_control.urllib.request.urlopen',side_effect=[model,slots]), \
+             patch('spore_dashboard_control.subprocess.run') as run, \
+             patch('spore_dashboard_control.subprocess.Popen') as popen, \
+             patch.object(control,'_confirm_idle'):
+            run.return_value.returncode=0
+            popen.return_value.pid=8123
+            result=control.start(data)
+        self.assertTrue(result['started'])
+        env=popen.call_args.kwargs['env']
+        self.assertEqual(env['SPORE_LOCAL_MODEL'],'local-model')
+        self.assertEqual(env['SPORE_LOCAL_CONTEXT'],'32768')
+        self.assertEqual(env['SPORE_LOCAL_BASE_URL'] if 'SPORE_LOCAL_BASE_URL' in env else 'http://127.0.0.1:8080/v1',
+                         'http://127.0.0.1:8080/v1')
+        self.assertEqual(env['SPORE_LOCAL_MODEL'],fake_router.probe_local.call_args.args[0]['SPORE_LOCAL_MODEL'])
+        self.assertEqual(popen.call_args.args[0][popen.call_args.args[0].index('--workers')+1],'64')
+
     def test_dashboard_uses_rotated_saved_key_instead_of_stale_environment(self):
         import hashlib
         with sqlite3.connect(self.work/'spore.sqlite3') as db:

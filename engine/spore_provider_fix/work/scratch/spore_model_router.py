@@ -335,24 +335,33 @@ def direct_opencode_config(model, reasoning):
     }
 
 
-def local_settings():
-    """Resolve loopback-only local endpoint and its exact served model ID."""
-    endpoint = os.environ.get("SPORE_LOCAL_BASE_URL", "http://127.0.0.1:8080/v1").rstrip("/")
-    model = os.environ.get("SPORE_LOCAL_MODEL", "").strip()
+def local_endpoint(settings=None):
+    """Validate the configured local server before making any HTTP request."""
+    env = os.environ if settings is None else settings
+    endpoint = env.get("SPORE_LOCAL_BASE_URL", "http://127.0.0.1:8080/v1").rstrip("/")
     url = urlsplit(endpoint)
     if (url.scheme != "http" or url.hostname not in ("127.0.0.1", "localhost", "::1")
             or url.path != "/v1" or url.query or url.fragment or url.username or url.password):
         raise ValueError("SPORE_LOCAL_BASE_URL must be an HTTP loopback /v1 endpoint")
+    return endpoint
+
+
+def local_settings(settings=None):
+    """Resolve the loopback-only endpoint and exact running model ID."""
+    env = os.environ if settings is None else settings
+    endpoint = local_endpoint(env)
+    model = env.get("SPORE_LOCAL_MODEL", "").strip()
     if not model or any(ord(ch) < 32 for ch in model):
         raise ValueError("SPORE_LOCAL_MODEL must be the exact ID from GET /v1/models")
     return endpoint, model
 
 
-def local_limits():
+def local_limits(settings=None):
     """Match the actual llama.cpp context window; leave room for tool replies."""
+    env = os.environ if settings is None else settings
     try:
-        context = int(os.environ.get("SPORE_LOCAL_CONTEXT", "16384"))
-        raw_output = os.environ.get("SPORE_LOCAL_OUTPUT", "").strip()
+        context = int(env.get("SPORE_LOCAL_CONTEXT", "16384"))
+        raw_output = env.get("SPORE_LOCAL_OUTPUT", "").strip()
         output = int(raw_output) if raw_output else min(65536, max(4096, context // 4))
     except ValueError:
         raise ValueError("SPORE_LOCAL_CONTEXT and SPORE_LOCAL_OUTPUT must be integers") from None
@@ -361,10 +370,10 @@ def local_limits():
     return context, output
 
 
-def probe_local():
+def probe_local(settings=None):
     """Unpaid discovery preflight; no inference or OpenRouter calls."""
-    endpoint, model = local_settings()
-    context, _ = local_limits()
+    endpoint, model = local_settings(settings)
+    context, _ = local_limits(settings)
     try:
         with urlopen(Request(endpoint + "/models", headers={"Accept": "application/json"}), timeout=5) as reply:
             payload = json.load(reply)

@@ -515,8 +515,47 @@ print(json.dumps({
                 if str(scratch) not in sys.path:
                     sys.path.append(str(scratch))
                 import spore_model_router
+                # The model is already running: discover its ID and context.
+                # This dashboard does not start, manage or tune llama.cpp.
+                endpoint=spore_model_router.local_endpoint(launch_env)
                 try:
-                    spore_model_router.probe_local()
+                    with urllib.request.urlopen(
+                        urllib.request.Request(endpoint+'/models',
+                                               headers={'Accept':'application/json'}),
+                        timeout=5) as response:
+                        payload=json.load(response)
+                except (OSError, ValueError) as exc:
+                    raise ValueError('Local LLM is not running at '+endpoint+
+                                     ' ('+type(exc).__name__+')') from None
+                entries=payload.get('data') if isinstance(payload,dict) else None
+                entries=[row for row in entries if isinstance(row,dict)
+                         and isinstance(row.get('id'),str) and row['id']] if isinstance(entries,list) else []
+                if not entries:
+                    raise ValueError('Running local server has no model in /v1/models')
+                requested=launch_env.get('SPORE_LOCAL_MODEL','').strip()
+                selected=next((row for row in entries if row['id']==requested),entries[0])
+                launch_env['SPORE_LOCAL_MODEL']=selected['id']
+                # llama.cpp reports the *per-agent* context in /slots.
+                context=None
+                try:
+                    with urllib.request.urlopen(
+                        urllib.request.Request(endpoint.removesuffix('/v1')+'/slots',
+                                               headers={'Accept':'application/json'}),
+                        timeout=3) as response:
+                        slots=json.load(response)
+                    if isinstance(slots,list) and slots:
+                        sizes=[row.get('n_ctx') for row in slots if isinstance(row,dict)]
+                        if len(sizes)==len(slots) and all(type(n) is int and n>=8192 for n in sizes):
+                            context=min(sizes)
+                except (OSError, ValueError):
+                    pass  # vLLM does not expose llama.cpp's /slots endpoint.
+                if context is None:
+                    meta=selected.get('meta')
+                    context=meta.get('n_ctx') if isinstance(meta,dict) else None
+                if type(context) is int and 8192<=context<=1048576:
+                    launch_env['SPORE_LOCAL_CONTEXT']=str(context)
+                try:
+                    spore_model_router.probe_local(launch_env)
                 except (ValueError, RuntimeError) as exc:
                     raise ValueError(str(exc)) from None
             elif provider == 'deepinfra':
