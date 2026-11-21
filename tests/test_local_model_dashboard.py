@@ -62,8 +62,8 @@ class LocalModelDashboardTests(unittest.TestCase):
         screen = "\n".join(lines)
         for i in range(32):
             self.assertIn(f"#{i+1:02d}", screen)
-        self.assertEqual(len(lines), 8)
-        self.assertIn("tok/s", screen)
+        self.assertEqual(len(lines), 12)  # 6 columns x 6 rows, 2 lines per card
+        self.assertEqual(screen.count("tok/s"), 32)
 
     def test_read_only_dashboard_does_not_require_benchmark_active(self):
         with tempfile.TemporaryDirectory() as d:

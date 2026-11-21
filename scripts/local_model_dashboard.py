@@ -152,9 +152,9 @@ def cell(row, width, compact=True):
     index = f"#{row['id']+1:02d}"
     rate = f"{row['rate']:>5.1f} tok/s"
     state = row["status"]
-    top = f" {index} {state:<7} {rate} "
+    top = f" {index} {state[:3]:<3} {rate} "
     if len(top) > inside:
-        top = f" {index} {state[:3]} {row['rate']:.1f} t/s "
+        top = f" {index} {row['rate']:.1f} tok/s "
     tokens = compact_number(row["decoded"])
     context = compact_number(row["context"])
     details = f" {tokens} decoded  {context} ctx "
@@ -232,7 +232,7 @@ def render_dashboard(rows, width: int = 120, status: str = "",
     ]
     if details:
         top.append(details)
-    top.extend(["", "SLOTS  ·  Each cell shows live decoded tokens/sec  ·  Ctrl+C to close", ""])
+    top.extend(["", "SLOTS  ·  GEN generating · PRE prefill · WAI waiting · IDL idle", ""])
     if rows:
         top.extend(grid(rows, width))
     elif error:
