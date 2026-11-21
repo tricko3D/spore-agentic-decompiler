@@ -1,10 +1,8 @@
 export type Status='MATCH'|'FAIL'|'DEFER'|'SKIP'|'PENDING';
 export type View='operations'|'knowledge'|'infra';
-export interface LocalInferenceSlot {id:number;state:string;tps:number|null;decoded_tokens:number|null;context:number|null}
-export interface LocalInference {available:boolean;aggregate_tps:number|null;slots:LocalInferenceSlot[];sample_window_seconds?:number;error?:string;benchmark?:{name:string;round?:number;workers?:number}|null}
 export interface AgentEvent {kind:string;message:string}
-export interface Worker {worker:number;alive:boolean;phase?:string;current?:string;last_function?:string;pid?:number;bytes?:number|null;stream?:AgentEvent[]}
-export interface RunInfo {id?:string;state?:string;finished_at?:string;workers?:number;live_workers?:number;targets?:number;completed?:number;bytes_completed?:number;bytes_target?:number;valid_attempts?:number;outcomes?:Record<string,number>;outcome_bytes?:Record<string,number>}
+export interface Worker {worker:number;alive:boolean;phase?:string;current?:string;last_function?:string;pid?:number;bytes?:number|null;stream?:AgentEvent[];tps?:number|null}
+export interface RunInfo {id?:string;state?:string;finished_at?:string;workers?:number;live_workers?:number;targets?:number;completed?:number;bytes_completed?:number;bytes_target?:number;valid_attempts?:number;outcomes?:Record<string,number>;outcome_bytes?:Record<string,number>;aggregate_tps?:number|null}
 export interface ControllerInfo {running:boolean;pid?:number|null;external?:boolean;returncode?:number|null;error?:string;exit_reason?:string;settings?:Record<string,unknown>}
 export interface Snapshot {
  generated_utc:string;counters:Record<string,number>;run:RunInfo;
