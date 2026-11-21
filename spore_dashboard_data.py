@@ -14,10 +14,7 @@ import json
 import os
 import re
 import sqlite3
-import threading
 import time
-from urllib.request import Request, urlopen
-from urllib.error import URLError, HTTPError
 
 # Rates belong to OpenCode agent logs, not llama.cpp server slots.
 # A completed model step gives an attributed output-token count and elapsed
