@@ -653,7 +653,15 @@ def parse_opencode_log(log_path):
                 data = error.get('data', {}) if isinstance(error, dict) else {}
                 if not isinstance(data, dict):
                     data = {}
-                problems.append(f"{data.get('statusCode', '')} {data.get('message', '')} {error.get('name', '')}" if isinstance(error, dict) else str(error))
+                if isinstance(error, dict):
+                    problems.append(' '.join(str(s) for s in (
+                        error.get('type') or error.get('name') or '',
+                        error.get('message') or '',
+                        data.get('statusCode') or '',
+                        data.get('message') or '',
+                    ) if s))
+                else:
+                    problems.append(str(error))
     return last_text, problems, text_events
 
 
@@ -672,9 +680,36 @@ def classify_failure(log, code, backend, message=''):
     return 'ERROR', f'{backend} exit {code}: {message[:160]}', log
 
 
+def local_check_budget():
+    """High-effort local budget is generous but finite to avoid model loops."""
+    try:
+        value = int(os.environ.get('SPORE_LOCAL_CHECK_BUDGET', '24'))
+    except ValueError:
+        raise ValueError('SPORE_LOCAL_CHECK_BUDGET must be an integer') from None
+    if not 1 <= value <= 128:
+        raise ValueError('SPORE_LOCAL_CHECK_BUDGET must be between 1 and 128')
+    return value
+
+
+def local_continuation_prompt(va, pass_number, prior_row, prior_log, total_passes):
+    """Reuse the last verified evidence; no paid-provider three-check constraint."""
+    previous = (prior_row.get('note') or '(No previous explanation.)')[:1000]
+    feedback = prior_checker_feedback(prior_log)
+    return f"""LOCAL CONTINUATION PASS {pass_number} OF {total_passes} FOR {va}.
+Previous result: {prior_row.get('status','?')} {prior_row.get('effort','')} {previous}
+Previous log: {prior_log.relative_to(ROOT) if prior_log.is_relative_to(ROOT) else prior_log}
+Previous checker feedback:
+{feedback}
+The source and investigation artifacts on disk already contain previous work.
+Continue from the verified candidate and test a new evidence-based hypothesis.
+Never reset a previous candidate without a specific reason.
+
+""" + (ROOT / 'work/scratch/spore_local_high_effort_prompt.txt').read_text(encoding='utf-8')
+
+
 def run_one(va, minutes, unsafe, backend, model='mistral4', reasoning='medium',
             pass_number=1, prompt_override=None, slot=None, evidence=None,
-            model_choice=None):
+            model_choice=None, fresh_session=False):
     LOGS.mkdir(parents=True, exist_ok=True)
     suffix = model if backend == 'nvidia' else ('deepinfra' if backend == 'deepinfra' else ('local-inkling' if backend == 'local' else ('deepseek-openrouter' if backend == 'openrouter' else 'codex')))
     pass_suffix = f'.pass{pass_number}' if pass_number > 1 else ''
@@ -684,8 +719,12 @@ def run_one(va, minutes, unsafe, backend, model='mistral4', reasoning='medium',
     serial = f'{stamp}.{os.getpid()}'
     log = LOGS / f'{va[2:]}.{suffix}{pass_suffix}.{serial}.jsonl'
     last = LOGS / f'{va[2:]}.{suffix}{pass_suffix}.{serial}.last.txt'
-    prompt = (prompt_override if prompt_override is not None else
-              PROMPT_FILE.read_text(encoding='utf-8')).replace('{VA}', va)
+    local_prompt = ROOT / 'work/scratch/spore_local_high_effort_prompt.txt'
+    template = (prompt_override if prompt_override is not None else
+                local_prompt.read_text(encoding='utf-8') if backend == 'local' else
+                PROMPT_FILE.read_text(encoding='utf-8'))
+    prompt = template.replace('{VA}', va).replace(
+        '{CHECK_BUDGET}', str(local_check_budget()) if backend == 'local' else '3')
     if evidence:
         prompt += f"""
 
@@ -789,7 +828,7 @@ fix requires changing a shared header, report SKIP instead.
                if evidence else stored)
         # Recover a poisoned OpenCode compaction session without altering SQLite
         # attempts, prior JSONL logs, or retained per-function investigation.
-        if backend == 'local' and os.environ.get('SPORE_LOCAL_FRESH_SESSION') == '1':
+        if backend == 'local' and (fresh_session or os.environ.get('SPORE_LOCAL_FRESH_SESSION') == '1'):
             sid = None
         if sid:
             cmd += ['--session', sid]
@@ -866,6 +905,10 @@ fix requires changing a shared header, report SKIP instead.
     else:
         message, problems, text_count = parse_opencode_log(log)
         if problems or code != 0:
+            if backend == 'local' and any('compaction.failed' in problem.lower()
+                                         or 'compaction summary reached the output token limit' in problem.lower()
+                                         for problem in problems):
+                return 'COMPACTION', 'OpenCode compaction failed; session requires a fresh context', log
             return classify_failure(log, code, backend, '\n'.join(problems))
         if not text_count:
             return 'ERROR', 'OpenCode exited without a text answer (possible truncated JSON events)', log
@@ -1274,7 +1317,9 @@ def process(minutes, unsafe, backend, quota_wait, max_functions,
                 old_log = prior_row.get('log_path') if prior_row else None
                 prior_log = (Path(old_log) if old_log else
                              previous_log(va, backend, model, pass_number - 1))
-                prompt = (continuation_prompt(va, pass_number, prior_row, prior_log, pass_ceiling)
+                prompt = ((local_continuation_prompt(va, pass_number, prior_row, prior_log, pass_ceiling)
+                           if backend == 'local' else
+                           continuation_prompt(va, pass_number, prior_row, prior_log, pass_ceiling))
                           if pass_number > 1 else None)
                 evidence = None
                 try:
@@ -1300,6 +1345,7 @@ def process(minutes, unsafe, backend, quota_wait, max_functions,
                         return
                 print(f'  Pass {pass_number}/{pass_ceiling}...', flush=True)
                 provider_failures = 0
+                local_compaction_restarts = 0
                 while True:
                     reservation = None
                     slot = None
@@ -1317,7 +1363,8 @@ def process(minutes, unsafe, backend, quota_wait, max_functions,
                                 return
                         kind, answer, log = run_one(va, minutes, unsafe, backend,
                                                     model, reasoning, pass_number, prompt, slot=slot,
-                                                    evidence=evidence, model_choice=choice)
+                                                    evidence=evidence, model_choice=choice,
+                                                    fresh_session=local_compaction_restarts > 0)
                     except KeyboardInterrupt:
                         print('\nStopped. Completed passes remain recorded; unfinished pass can be retried.')
                         return
@@ -1366,6 +1413,27 @@ def process(minutes, unsafe, backend, quota_wait, max_functions,
                             print('\nStopped; valid attempts preserved.')
                             return
                         continue
+                    if backend == 'local' and kind == 'COMPACTION':
+                        store.record_incident(va, answer, pass_number, log,
+                                              run_id=rid, worker_idx=worker_idx)
+                        local_compaction_restarts += 1
+                        try:
+                            max_restarts = int(os.environ.get('SPORE_LOCAL_COMPACTION_RESTARTS', '3'))
+                        except ValueError:
+                            max_restarts = 3
+                        max_restarts = max(0, min(max_restarts, 10))
+                        if local_compaction_restarts <= max_restarts:
+                            print(f'    Local compaction failed; restarting a FRESH agent from '
+                                  f'durable source/evidence ({local_compaction_restarts}/{max_restarts}). '
+                                  f'No pass counted. Log: {log}', flush=True)
+                            if evidence:
+                                investigation.refresh(ROOT, va)
+                            continue
+                        print(f'    Compaction failed repeatedly for {va}; deferring this function '
+                              f'without consuming a pass. Log: {log}', flush=True)
+                        if dynamic:
+                            store.ignore_run_target(rid, va, 'local compaction recovery exhausted')
+                        break
                     if kind == 'IDLE':
                         print(f'Idle watchdog stopped {va}: {answer}; no pass consumed.', flush=True)
                         if dynamic:
@@ -1383,7 +1451,7 @@ def process(minutes, unsafe, backend, quota_wait, max_functions,
                     # The failed probe or stalled stream never spends a pass;
                     # a delayed provider VA is eligible for another worker.
                     break
-                if kind == 'IDLE':
+                if kind in ('IDLE', 'COMPACTION'):
                     break
 
                 # The model can misunderstand its tool output; independently

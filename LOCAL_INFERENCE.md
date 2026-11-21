@@ -92,6 +92,35 @@ A 32K context is not a guarantee that Inkling will successfully compact every
 very long conversation. This is an experimental local backend, so start with
 one inference slot and one function.
 
+## High-effort local profile
+
+The local backend has a separate `spore_local_high_effort_prompt.txt` instead
+of inheriting the paid first-pass prompt's single-check constraint. Local
+continuation passes also remove the paid-provider three-check cap. By default
+the agent can make up to **24 meaningful compiler-check iterations** for a
+single function and must work from retail-assembly differences. Override via
+`SPORE_LOCAL_CHECK_BUDGET` (1–128).
+
+The model's default reasoning effort is **high (0.9)**. SAD explicitly requests
+`reasoning_effort=high` through OpenCode's compatible request body. Set
+`SPORE_LOCAL_REASONING_EFFORT=xhigh` to ask the model for 0.99, but runtime
+support for this request field depends on the installed llama.cpp build.
+The local backend does not accept low/medium effort in this profile.
+
+The runtime's active context is authoritative. SAD's output allowance scales
+automatically with its declared context: 16K→4K, 32K→8K, 64K→16K, 128K→32K,
+256K→64K. `SPORE_LOCAL_OUTPUT` can override within validated limits.
+At 64K+ SAD uses a 15% OpenCode compaction buffer and retains up to 15K recent
+tokens; the small-context buffer is 20%. It will recover up to three times
+from `compaction.failed` by starting a new agent in the SAME pass using the
+existing source, checker experiments and durable evidence. This does not
+tick a new attempt. `SPORE_LOCAL_COMPACTION_RESTARTS` adjusts the retry cap
+(0–10). Repeated compaction failure defers just that function, allowing the
+worker to continue.
+
+The model may loop or hallucinate; repeated compiler checks and an independent
+final byte-exact check, not self-reported success, determine MATCH.
+
 ## Configure and test SAD from WSL2
 
 Stop existing workers. From the SAD checkout:

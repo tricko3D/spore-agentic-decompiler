@@ -35,7 +35,10 @@ class LocalInferenceTests(unittest.TestCase):
             config = router.local_opencode_config()
             self.assertEqual(config["providers"]["spore_local"]["models"]["inkling"]["limit"],
                              {"context": 32768, "output": 4096})
-            self.assertEqual(config["compaction"]["buffer"], "30%")
+            self.assertEqual(config["compaction"]["buffer"], "20%")
+            self.assertEqual(config["compaction"]["keep"]["tokens"], 4096)
+            self.assertEqual(config["providers"]["spore_local"]["models"]["inkling"]["body"],
+                             {"reasoning_effort": "high"})
         with self.local_env(), mock.patch.dict(os.environ, {
             "SPORE_LOCAL_CONTEXT": "16384",
             "SPORE_LOCAL_OUTPUT": "30000",
@@ -49,6 +52,23 @@ class LocalInferenceTests(unittest.TestCase):
                     b'{"data":[{"id":"Inkling-2-Mini-UD-Q4_K_M.gguf","meta":{"n_ctx":16384}}]}')):
                 with self.assertRaises(RuntimeError):
                     router.probe_local()
+
+    def test_default_output_scales_with_context(self):
+        for ctx, expected in ((16384, 4096), (32768, 8192),
+                              (65536, 16384), (131072, 32768), (262144, 65536)):
+            with self.local_env(), mock.patch.dict(os.environ, {
+                "SPORE_LOCAL_CONTEXT": str(ctx), "SPORE_LOCAL_OUTPUT": "",
+            }):
+                config = router.local_opencode_config()
+                model = config["providers"]["spore_local"]["models"]["inkling"]
+                self.assertEqual(model["limit"]["output"], expected)
+                self.assertEqual(config["compaction"]["buffer"],
+                                 "15%" if ctx >= 65536 else "20%")
+        with self.local_env(), mock.patch.dict(os.environ, {
+            "SPORE_LOCAL_REASONING_EFFORT": "low"
+        }):
+            with self.assertRaises(ValueError):
+                router.local_opencode_config()
 
     def test_rejects_remote_endpoint_and_missing_model(self):
         with mock.patch.dict(os.environ, {

@@ -46,6 +46,7 @@ INSTALL = {
     'work/scratch/spore_memory_evidence.py': 'spore_provider_fix/work/scratch/spore_memory_evidence.py',
     'work/scratch/spore_technique_consolidator.py': 'spore_provider_fix/work/scratch/spore_technique_consolidator.py',
     'work/scratch/spore_first_pass_prompt.txt': 'spore_first_pass_prompt.txt',
+    'work/scratch/spore_local_high_effort_prompt.txt': 'spore_local_high_effort_prompt.txt',
     'migrate_spore_sqlite.py': 'migrate_spore_sqlite.py',
     'install_spore_sqlite.py': 'install_spore_sqlite.py',
     'bootstrap_spore_queue.py': 'bootstrap_queue.py',

@@ -352,10 +352,11 @@ def local_limits():
     """Match the actual llama.cpp context window; leave room for tool replies."""
     try:
         context = int(os.environ.get("SPORE_LOCAL_CONTEXT", "16384"))
-        output = int(os.environ.get("SPORE_LOCAL_OUTPUT", "4096"))
+        raw_output = os.environ.get("SPORE_LOCAL_OUTPUT", "").strip()
+        output = int(raw_output) if raw_output else min(65536, max(4096, context // 4))
     except ValueError:
         raise ValueError("SPORE_LOCAL_CONTEXT and SPORE_LOCAL_OUTPUT must be integers") from None
-    if not 8192 <= context <= 1048576 or not 512 <= output <= min(16384, context // 2):
+    if not 8192 <= context <= 1048576 or not 512 <= output <= min(65536, context // 2):
         raise ValueError("Invalid local context/output limits (output must fit within context)")
     return context, output
 
@@ -388,12 +389,19 @@ def local_opencode_config():
     """Direct OpenAI-compatible model provider; no paid routing or API key."""
     endpoint, model = local_settings()
     context, output = local_limits()
+    effort = os.environ.get("SPORE_LOCAL_REASONING_EFFORT", "high").lower()
+    if effort not in ("high", "xhigh", "max"):
+        raise ValueError("SPORE_LOCAL_REASONING_EFFORT must be high, xhigh or max")
     return {
         "$schema": "https://opencode.ai/config.json",
         "share": "disabled",
-        # A 65% buffer caused premature compaction of Inkling's short 16K window.
-        # Retain a smaller, realistic summary reserve while lowering output headroom.
-        "compaction": {"auto": True, "keep": {"tokens": 1200}, "buffer": "30%"},
+        # Retain recent verified tool/checker evidence, with room for future output.
+        # The server's actual context is validated by probe_local().
+        "compaction": {
+            "auto": True, "background": False,
+            "keep": {"tokens": min(15000, max(1200, context // 8))},
+            "buffer": "15%" if context >= 65536 else "20%",
+        },
         "model": "spore_local/inkling",
         "providers": {
             "spore_local": {
@@ -404,6 +412,7 @@ def local_opencode_config():
                     "inkling": {
                         "modelID": model, "name": model,
                         "limit": {"context": context, "output": output},
+                        "body": {"reasoning_effort": effort},
                         "capabilities": {"tools": True, "input": ["text"], "output": ["text"]},
                     },
                 },
