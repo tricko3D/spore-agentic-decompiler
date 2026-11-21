@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""High-effort local SAD runner: manage optimized llama.cpp + verified agents.
+"""High-effort local SAD runner: use benchmark-selected llama.cpp configuration.
 
 Stdlib-only. Reuses an existing loopback server or starts the locally installed
 Unsloth binary and cached GGUF. Never contacts paid inference services.
@@ -24,6 +24,15 @@ OVERRIDE = (
     r"blk\.(0|1|2|3|4|5|18|19|20|21|22|23)\.ffn_.*_exps\.weight=CPU"
 )
 CONTEXT_STEPS = (131072, 65536, 32768, 16384)
+PROFILE = Path.home() / "inkling-runtime" / "sad-parallel-profile.json"
+
+
+def expert_override(cpu_expert_layers: int = 12) -> str:
+    if cpu_expert_layers not in (8, 10, 12, 14, 16, 18):
+        raise ValueError("CPU expert layers must be one of 8, 10, 12, 14, 16, 18")
+    half = cpu_expert_layers // 2
+    indices = list(range(half)) + list(range(24 - half, 24))
+    return r"blk\.(" + "|".join(map(str, indices)) + r")\.ffn_.*_exps\.weight=CPU"
 
 
 def query_server(base: str, timeout: float = 3):
@@ -69,8 +78,13 @@ def contexts(maximum: int):
     return list(dict.fromkeys([maximum] + [c for c in CONTEXT_STEPS if c < maximum]))
 
 
-def start_server(max_context: int, base: str, slots: int = 2):
-    """Try 128K first, then smaller contexts if this hardware cannot allocate it."""
+def start_server(max_context: int, base: str, slots: int = 2, threads: int = 6,
+                 cpu_expert_layers: int = 12, allow_context_fallback: bool = True,
+                 startup_seconds: int = 240):
+    """Start measured GPU/CPU offload. Exact context during benchmarking."""
+    if not 1 <= slots <= 32 or not 1 <= threads <= 32:
+        raise ValueError("slots and CPU threads must both be 1..32")
+    offload = expert_override(cpu_expert_layers)
     if base != "http://127.0.0.1:8080/v1":
         raise RuntimeError("Automatic server startup is supported at http://127.0.0.1:8080/v1")
     if not SERVER.is_file():
@@ -78,23 +92,24 @@ def start_server(max_context: int, base: str, slots: int = 2):
     model = cached_model()
     log_dir = Path.home() / "inkling-runtime"
     log_dir.mkdir(parents=True, exist_ok=True)
-    for context in contexts(max_context):
-        log = log_dir / f"sad-inkling-{context}.log"
+    candidates = contexts(max_context) if allow_context_fallback else [max_context]
+    for context in candidates:
+        log = log_dir / f"sad-inkling-{context}-np{slots}-t{threads}-cpu{cpu_expert_layers}.log"
         command = [
             str(SERVER), "--model", str(model),
             "--host", "127.0.0.1", "--port", "8080",
             "--jinja", "-c", str(context), "-ngl", "99",
-            "--fit", "off", "-fa", "on", "-np", str(slots), "-t", "6",
+            "--fit", "off", "-fa", "on", "-np", str(slots), "-t", str(threads),
             "-b", "1024", "-ub", "32" if context >= 131072 else "64",
             "-ctk", "q4_0", "-ctv", "q4_0",
             "--temp", "1.0", "--top-p", "1.0", "--top-k", "0",
-            "--min-p", "0.0", "-ot", OVERRIDE,
+            "--min-p", "0.0", "-ot", offload,
         ]
         print(f"Starting optimized Inkling at {context:,} tokens, log: {log}", flush=True)
         with log.open("wb") as stream:
             proc = subprocess.Popen(command, stdout=stream, stderr=subprocess.STDOUT,
                                     cwd=log_dir, start_new_session=True)
-        deadline = time.monotonic() + 240
+        deadline = time.monotonic() + startup_seconds
         while time.monotonic() < deadline:
             if proc.poll() is not None:
                 break
@@ -137,7 +152,14 @@ def main(argv=None):
                         default="xhigh")
     parser.add_argument("--minutes", type=int, default=60,
                         help="Inactivity watchdog, not a total agent timeout")
-    parser.add_argument("--workers", type=int, default=2)
+    parser.add_argument("--workers", default="auto",
+                        help="auto uses measured benchmark profile; alternatively 1..32")
+    parser.add_argument("--benchmark-profile", default=str(PROFILE),
+                        help="Saved results from scripts/benchmark_local_parallel.py")
+    parser.add_argument("--threads", type=int, default=6,
+                        help="CPU threads for llama.cpp when workers are manual")
+    parser.add_argument("--cpu-expert-layers", type=int, default=12,
+                        help="MoE expert layers on CPU (manual mode)")
     parser.add_argument("--max-tools", type=int, default=30,
                         help="Absolute tool-call cap per function across retries")
     parser.add_argument("--hours", type=float, default=24,
@@ -154,8 +176,34 @@ def main(argv=None):
         parser.error("--output nonnegative, --checks 1..128, --max-tools 1..10000")
     if not 0 < args.hours <= 168:
         parser.error("--hours must be between 0 and 168")
-    if args.workers < 1 or args.workers > 32:
+    auto = args.workers == "auto"
+    if auto:
+        try:
+            selected = json.loads(Path(args.benchmark_profile).expanduser().read_text())["recommended"]
+            args.workers = int(selected["workers"])
+            args.context = int(selected["total_context"])
+            args.threads = int(selected["threads"])
+            args.cpu_expert_layers = int(selected["cpu_expert_layers"])
+            required_slot_context = int(selected["slot_context"])
+        except (OSError, ValueError, TypeError, KeyError) as exc:
+            parser.error("No usable throughput profile. Run "
+                         "python3 scripts/benchmark_local_parallel.py first. "
+                         f"Details: {exc}")
+        print("Using measured benchmark profile:", args.benchmark_profile, flush=True)
+    else:
+        try:
+            args.workers = int(args.workers)
+        except ValueError:
+            parser.error("--workers must be auto or an integer 1..32")
+        required_slot_context = 0
+    if not 1 <= args.workers <= 32:
         parser.error("--workers must be 1..32")
+    if not 1 <= args.threads <= 32:
+        parser.error("--threads must be 1..32")
+    try:
+        expert_override(args.cpu_expert_layers)
+    except ValueError as exc:
+        parser.error(str(exc))
     if args.minutes < 1 or args.minutes > 120:
         parser.error("--minutes must be 1..120")
     if args.passes < 1 or args.passes > 24:
@@ -167,7 +215,10 @@ def main(argv=None):
     try:
         served = query_server(base)
         if served is None:
-            owned, served = start_server(args.context, base, args.workers)
+            owned, served = start_server(
+                args.context, base, args.workers,
+                threads=args.threads, cpu_expert_layers=args.cpu_expert_layers,
+                allow_context_fallback=not auto)
         else:
             print("Reusing the already-running Inkling server.", flush=True)
         model_id = served["id"]
@@ -177,6 +228,11 @@ def main(argv=None):
                 f"Existing llama.cpp server has only {available_slots} slot(s), "
                 f"but {args.workers} workers requested. Stop the old server "
                 "and rerun this launcher to start multiple slots.")
+        if auto and (available_slots != args.workers or context < required_slot_context):
+            raise RuntimeError(
+                f"Active llama.cpp server has {available_slots} slots with {context} context "
+                f"per slot, but the benchmark selected {args.workers} slots with at least "
+                f"{required_slot_context} context. Stop the old server first.")
         output = args.output or min(65536, max(4096, context // 4))
         if output > min(65536, context // 2):
             raise RuntimeError(f"Output {output} does not fit available {context} context")
@@ -197,6 +253,7 @@ def main(argv=None):
         print(f"High-effort Inkling: context={context:,}, output={output:,}, "
               f"checks/function={args.checks}, tools/function={args.max_tools}, "
               f"workers={args.workers}, slots={available_slots}, "
+              f"CPU threads={args.threads}, CPU expert layers={args.cpu_expert_layers}, "
               f"duration={args.hours:g}h, effort={args.reasoning_effort}", flush=True)
         if args.serve_only:
             if owned is None:
