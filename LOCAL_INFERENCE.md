@@ -14,10 +14,13 @@ Unsloth's GGUF, loading the rest of the weights into system RAM:
 
 ```bash
 llama serve -hf unsloth/Inkling-2-Mini-GGUF:UD-Q4_K_M \
-  --host 127.0.0.1 --port 8080 -c 16384 -ngl 8 --parallel 2 --jinja
+  --host 127.0.0.1 --port 8080 -c 16384 -ngl 8 --parallel 1 --jinja
 ```
 
 Install CUDA llama.cpp from https://github.com/ggml-org/llama.cpp if needed.
+Start with one inference slot so the full 16K context is available to it.
+When increasing to two simultaneous server slots, increase `-c` to 32768
+(or lower the per-request context limits) and check KV cache memory.
 Increase GPU offloading only after measuring VRAM, RAM and throughput. Q4_K_M
 weights are about 16.6 GB, more than 4070 Ti's 12 GB VRAM. Test tool calling,
 not just text generation, before dispatching decompilation workers. If a compatible
@@ -48,7 +51,7 @@ export SPORE_LOCAL_MODEL="$(curl -fsS "$SPORE_LOCAL_BASE_URL/models" |
 
 python3 spore_agentic.py doctor --provider local --live
 python3 spore_agentic.py run --provider local --model-policy fixed \
-  --workers 2 --max-inflight 2 --passes 1 --max-functions-per-worker 1
+  --workers 2 --max-inflight 1 --passes 1 --max-functions-per-worker 1
 ```
 
 For a compatible vLLM server, set `SPORE_LOCAL_BASE_URL` to
@@ -63,7 +66,7 @@ the dashboard selector, then restart the dashboard with both variables exported.
 
 All workers share one inference server. SAD enforces `--max-inflight` through
 the existing SQLite inference-slot mechanism; server batching and `--parallel`
-must also be sized appropriately. Begin with 1-2 slots and compare exact matches
+must also be sized appropriately. Begin with one inference slot and compare exact matches
 per hour, then increase concurrency.
 
 Local mode deliberately has no automatic paid-provider fallback. Its USD budget
