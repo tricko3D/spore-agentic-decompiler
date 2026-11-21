@@ -82,8 +82,8 @@ def start_server(max_context: int, base: str, slots: int = 2, threads: int = 6,
                  cpu_expert_layers: int = 12, allow_context_fallback: bool = True,
                  startup_seconds: int = 240):
     """Start measured GPU/CPU offload. Exact context during benchmarking."""
-    if not 1 <= slots <= 32 or not 1 <= threads <= 32:
-        raise ValueError("slots and CPU threads must both be 1..32")
+    if slots < 1 or not 1 <= threads <= 32:
+        raise ValueError("slots must be positive and CPU threads must be 1..32")
     offload = expert_override(cpu_expert_layers)
     if base != "http://127.0.0.1:8080/v1":
         raise RuntimeError("Automatic server startup is supported at http://127.0.0.1:8080/v1")
@@ -194,10 +194,10 @@ def main(argv=None):
         try:
             args.workers = int(args.workers)
         except ValueError:
-            parser.error("--workers must be auto or an integer 1..32")
+            parser.error("--workers must be auto or a positive integer")
         required_slot_context = 0
-    if not 1 <= args.workers <= 32:
-        parser.error("--workers must be 1..32")
+    if args.workers < 1:
+        parser.error("--workers must be positive")
     if not 1 <= args.threads <= 32:
         parser.error("--threads must be 1..32")
     try:

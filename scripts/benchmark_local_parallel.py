@@ -49,13 +49,13 @@ def publish_live(stage: str, **details):
     os.replace(tmp, LIVE)
 
 
-def numbers(value: str, upper: int = 32):
+def numbers(value: str, upper: int | None = None):
     try:
         items = sorted(set(int(x.strip()) for x in value.split(",")))
     except ValueError:
         raise argparse.ArgumentTypeError("Expected comma-separated integers") from None
-    if not items or any(x < 1 or x > upper for x in items):
-        raise argparse.ArgumentTypeError(f"Values must be between 1 and {upper}")
+    if not items or any(x < 1 or (upper is not None and x > upper) for x in items):
+        raise argparse.ArgumentTypeError("Values must be positive integers")
     return items
 
 

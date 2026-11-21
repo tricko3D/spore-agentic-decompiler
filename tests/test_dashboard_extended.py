@@ -146,9 +146,10 @@ s.create_run('run1',2,3,{'0x00000001':0,'0x00000002':1,'0x00000003':0})
         data={'module':'not-a-real-module','workers':3,'max_inflight':2,'passes':3,'minutes':5,'budget':20}
         with self.assertRaises(ValueError):control.start(data)
         data['module']='SPGonzago'
-        data['workers']=200
+        data['workers']=0
         with self.assertRaises(ValueError):control.start(data)
-        data['workers']=3
+        data['workers']=200
+        data['max_inflight']=200
         with patch('spore_dashboard_control.subprocess.run') as run,patch('spore_dashboard_control.subprocess.Popen') as popen:
             run.return_value.returncode=0
             popen.return_value.pid=12345
@@ -161,6 +162,8 @@ s.create_run('run1',2,3,{'0x00000001':0,'0x00000002':1,'0x00000003':0})
             self.assertIn('--module',argv)
             self.assertIn('SPGonzago',argv)
             self.assertIn('--max-inflight',argv)
+            self.assertEqual(argv[argv.index('--workers')+1], '200')
+            self.assertEqual(argv[argv.index('--max-inflight')+1], '200')
 
     def test_dashboard_uses_rotated_saved_key_instead_of_stale_environment(self):
         import hashlib

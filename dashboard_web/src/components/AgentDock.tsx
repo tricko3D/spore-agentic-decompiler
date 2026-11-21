@@ -93,7 +93,7 @@ export default function AgentDock({snapshot,onUpdated}:{snapshot:Snapshot|null;o
    {form.module==='__claimed__'&&<label>Claimant<select value={form.claim_user} onChange={e=>update('claim_user',e.target.value)}>
     <option value="">Choose…</option>{claimants?.users?.map(x=><option key={x.name} value={x.name}>{x.name}{x.count!=null?' ('+x.count+')':''}</option>)}
    </select></label>}
-   {([['workers','Workers',1,32],['max_inflight','In flight',1,32],
+   {([['workers','Workers',1,undefined],['max_inflight','In flight',1,undefined],
      ['passes','Passes',1,24],['minutes','Idle min',15,120]] as const).map(([field,label,min,max])=>
      <label key={field}>{label}<input type="number" min={min} max={max} value={form[field]}
       onChange={e=>update(field,Number(e.target.value))}/></label>)}

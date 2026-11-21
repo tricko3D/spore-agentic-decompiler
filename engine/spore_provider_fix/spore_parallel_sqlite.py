@@ -241,11 +241,11 @@ def run(a):
         sys.exit(f'Run from {ROOT}')
     if a.backend in ('deepinfra', 'local') and a.model_policy != 'fixed':
         sys.exit('DeepInfra currently supports fixed-model routing; use --model-policy fixed')
-    if not (1 <= a.workers <= 32):
-        sys.exit('--workers must be between 1 and 32')
+    if a.workers < 1:
+        sys.exit('--workers must be positive')
     if not (1 <= a.passes <= 24):
         sys.exit('--passes must be between 1 and 24')
-    if a.minutes < 1 or a.budget <= 0 or a.max_functions_per_worker < 0 or a.quota_wait < 0 or not 1 <= a.max_inflight <= 32 or a.provider_retries < 0:
+    if a.minutes < 1 or a.budget <= 0 or a.max_functions_per_worker < 0 or a.quota_wait < 0 or a.max_inflight < 1 or a.provider_retries < 0:
         sys.exit('Invalid time, budget, quota wait or function limit')
     if shutil.which('opencode') is None:
         sys.exit('opencode not found on PATH')
@@ -394,8 +394,8 @@ def main():
     if a.command == 'plan':
         store.ensure_imported()
         store.assert_legacy_unchanged()
-        if not 1<=a.workers<=32:
-            p.error('--workers must be between 1 and 32')
+        if a.workers < 1:
+            p.error('--workers must be positive')
         mod=load_runner()
         allowed,assignments,counts,_=make_assignments(read_queue(),a.workers,mod)
         print(f'{mod.module_scope()} runnable functions (passes are additional per run): {len(allowed)}')

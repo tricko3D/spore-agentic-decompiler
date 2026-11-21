@@ -339,8 +339,8 @@ print(json.dumps({
         if not isinstance(module,str) or (
                 module not in ('*','__allowlist__','__claimed__') and module not in modules(self.repo)):
             raise ValueError('Select a classified module, allow list, or claimed functions')
-        if type(workers) is not int or not 1<=workers<=32:
-            raise ValueError('workers must be between 1 and 32')
+        if type(workers) is not int or workers < 1:
+            raise ValueError('workers must be a positive integer')
         selected=(self._claim_scope(claim_user) if module=='__claimed__'
                   else self._retry_allowlist(module))
         try:
@@ -485,10 +485,12 @@ print(json.dumps({
                 module not in ('*','__allowlist__','__claimed__') and module not in modules(self.repo)):
             raise ValueError('Select a classified module, allow list, or claimed functions')
         values={}
-        for field,minimum,maximum in (('workers',1,32),('max_inflight',1,32),('passes',1,24),('minutes',1,120)):
+        for field,minimum,maximum in (('workers',1,None),('max_inflight',1,None),('passes',1,24),('minutes',1,120)):
             value=data.get(field)
-            if type(value) is not int or not minimum<=value<=maximum:
-                raise ValueError(f'{field} must be between {minimum} and {maximum}')
+            if type(value) is not int or value < minimum or (maximum is not None and value > maximum):
+                description = (f'at least {minimum}' if maximum is None
+                               else f'between {minimum} and {maximum}')
+                raise ValueError(f'{field} must be {description}')
             values[field]=value
         budget=data.get('budget')
         if type(budget) not in (float,int) or not 0<float(budget)<=100000:

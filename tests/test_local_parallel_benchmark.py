@@ -16,6 +16,7 @@ benchmark = importlib.import_module("benchmark_local_parallel")
 class ParallelBenchmarkTests(unittest.TestCase):
     def test_candidate_parsing(self):
         self.assertEqual(benchmark.numbers("8,2,4,2,1"), [1, 2, 4, 8])
+        self.assertEqual(benchmark.numbers("40,64"), [40,64])
         with self.assertRaises(Exception):
             benchmark.numbers("0,40")
         with self.assertRaises(Exception):

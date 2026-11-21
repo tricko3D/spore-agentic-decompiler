@@ -389,10 +389,10 @@ def command_rotate_key(args):
 
 def validate_settings(s):
     scope_settings(argparse.Namespace(), s)
-    if not 1 <= int(s['workers']) <= 32:
-        fail('workers must be 1..32')
-    if not 1 <= int(s['max_inflight']) <= 32:
-        fail('max-inflight must be 1..32')
+    if int(s['workers']) < 1:
+        fail('workers must be positive')
+    if int(s['max_inflight']) < 1:
+        fail('max-inflight must be positive')
     if not 1 <= int(s['passes']) <= 24:
         fail('passes must be 1..24')
     if not 1 <= int(s['minutes']) <= 120:
