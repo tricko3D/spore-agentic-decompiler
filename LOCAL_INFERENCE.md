@@ -38,13 +38,15 @@ cd ~/spore-agentic-decompiler
 python3 spore_agentic.py dashboard --repo ~/spore-decomp --control
 ```
 
-Select **Local** and click **Launch**. Each existing Agent card shows live generated tokens/sec when
-llama.cpp's active request contains that agent's current function address.
-The aggregate is the sum of attributed live decoding rates. During prompt
-processing the rate is zero, and if the model cannot identify which worker
-owns a request, the rate stays unknown rather than being assigned by slot
-number. The separate slot grid has been removed; there is no additional
-dashboard or launcher.
+Select **Local** and click **Launch**. Each existing Agent card shows live generated tokens/sec. SAD attaches a
+per-worker sampling seed to its OpenCode requests; llama.cpp reports that
+seed in the existing /slots telemetry, allowing exact worker attribution
+without exposing prompts or adding a proxy. Sampling remains stochastic.
+Unattributed requests still count toward the real aggregate throughput.
+The local status labels are WAITING, PREFILL, GENERATING and WORKING,
+rather than OpenRouter's PROBING. Restart SAD workers after installing this
+update to have new requests carry the worker seed. The local LLM server can
+continue running; there is no separate dashboard or launcher.
 
 Run the 24-hour experiment from the measured profile:
 

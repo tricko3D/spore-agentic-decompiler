@@ -394,6 +394,17 @@ def probe_local(settings=None):
     return endpoint, model
 
 
+def local_slot_seed(run_id, worker_idx):
+    """Unique per-run local worker tag in llama.cpp's existing seed field.
+
+    The seed has the same pseudorandom distribution as an ordinary sampling
+    seed. Its value also identifies a worker in the read-only /slots telemetry,
+    without adding an HTTP proxy, daemon or separate dashboard.
+    """
+    offset = int.from_bytes(hashlib.sha256(run_id.encode()).digest()[:4], "big")
+    return (offset + worker_idx) % 4294967295
+
+
 def local_opencode_config():
     """Direct OpenAI-compatible model provider; no paid routing or API key."""
     endpoint, model = local_settings()
@@ -401,6 +412,11 @@ def local_opencode_config():
     effort = os.environ.get("SPORE_LOCAL_REASONING_EFFORT", "high").lower()
     if effort not in ("high", "xhigh", "max"):
         raise ValueError("SPORE_LOCAL_REASONING_EFFORT must be high, xhigh or max")
+    body = {"reasoning_effort": effort}
+    run_id = os.environ.get("SPORE_SQLITE_RUN_ID", "")
+    worker_idx = os.environ.get("SPORE_SQLITE_WORKER_IDX", "")
+    if run_id and worker_idx.isdecimal():
+        body["seed"] = local_slot_seed(run_id, int(worker_idx))
     return {
         "$schema": "https://opencode.ai/config.json",
         "share": "disabled",
@@ -421,7 +437,7 @@ def local_opencode_config():
                     "inkling": {
                         "modelID": model, "name": model,
                         "limit": {"context": context, "output": output},
-                        "body": {"reasoning_effort": effort},
+                        "body": body,
                         "capabilities": {"tools": True, "input": ["text"], "output": ["text"]},
                     },
                 },

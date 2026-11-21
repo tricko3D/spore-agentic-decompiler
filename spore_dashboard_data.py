@@ -10,6 +10,7 @@ from functools import lru_cache
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
+import hashlib
 import json
 import os
 import re
@@ -19,8 +20,10 @@ import time
 from urllib.parse import urlsplit
 from urllib.request import Request, urlopen
 
-# Slot decode counters are sampled read-only and attributed by the target VA
-# embedded in the active prompt. Slot IDs are not worker IDs.
+# The local model exposes counters and the request sampling seed via /slots.
+# The local runner tags each worker with a distinct per-run seed, so model
+# slots can be mapped to existing SAD Agent cards without relying on prompts.
+# No extra server, worker launcher or slot grid is required.
 _LOCAL_SLOT_LOCK = threading.Lock()
 _LOCAL_SLOT_SAMPLES = {}
 
@@ -34,6 +37,11 @@ def _slot_decoded(row):
     if type(n) is not int:
         n = row.get('n_decoded')
     return n if type(n) is int and n >= 0 else None
+
+
+def _local_slot_seed(run_id, worker_idx):
+    offset = int.from_bytes(hashlib.sha256(run_id.encode()).digest()[:4], "big")
+    return (offset + worker_idx) % 4294967295
 
 
 def _slot_target(prompt, current):
@@ -57,9 +65,9 @@ def _slot_target(prompt, current):
 def live_agent_throughput(repo,run_id,workers):
     """Update existing Agent cards from live llama.cpp decode counters.
 
-    A model slot is assigned to a SAD worker only if its active prompt
-    identifies that worker's current VA. No prompt or slot ID is sent to
-    browsers. Missing attribution/counters remain unknown, not invented.
+    Active requests are attributed by their sampling seed. Old sessions can
+    still match by prompt if the server exposes it. Unknown slots contribute
+    only to aggregate throughput, never to guessed per-worker rates.
     """
     if not run_id or not any(w['alive'] and w.get('current') for w in workers):
         return
@@ -90,8 +98,12 @@ def live_agent_throughput(repo,run_id,workers):
 
     by_va={w['current'].lower():w for w in workers
            if w['alive'] and isinstance(w.get('current'),str)}
+    by_seed={_local_slot_seed(run_id,w['worker']-1):w for w in workers
+             if w['alive'] and isinstance(w.get('worker'),int)}
     now=time.monotonic()
     active=set()
+    total_rate=0.0
+    measured=0
     with _LOCAL_SLOT_LOCK:
         for index,slot in enumerate(slots):
             if not isinstance(slot,dict) or not slot.get('is_processing'):
@@ -103,7 +115,14 @@ def live_agent_throughput(repo,run_id,workers):
             key=(run_id,sid)
             active.add(key)
             n=_slot_decoded(slot)
-            va=_slot_target(slot.get('prompt'),by_va)
+            params=slot.get('params')
+            seed=params.get('seed') if isinstance(params,dict) else None
+            worker=by_seed.get(seed) if type(seed) is int else None
+            if worker is None:
+                va=_slot_target(slot.get('prompt'),by_va)
+                worker=by_va.get(va)
+            else:
+                va=worker.get('current')
             previous=_LOCAL_SLOT_SAMPLES.get(key)
             rate=None
             if n is not None:
@@ -114,8 +133,10 @@ def live_agent_throughput(repo,run_id,workers):
                 elif n==0:
                     rate=0.0
             _LOCAL_SLOT_SAMPLES[key]={'task':task,'va':va,'n':n,'time':now}
-            worker=by_va.get(va)
-            if worker is None:
+            if rate is not None:
+                total_rate+=rate
+                measured+=1
+            if worker is None or not worker.get('current'):
                 continue
             worker['phase']='PREFILL' if n==0 else 'GENERATING' if n is not None else 'INFERENCE'
             if rate is not None:
@@ -123,6 +144,7 @@ def live_agent_throughput(repo,run_id,workers):
         for key in list(_LOCAL_SLOT_SAMPLES):
             if key not in active:
                 del _LOCAL_SLOT_SAMPLES[key]
+    return round(total_rate,1) if measured else None
 
 
 VA_RE = re.compile(r'0x[0-9a-fA-F]{8}\Z')
@@ -306,9 +328,12 @@ def worker_info(repo,run_id,claimed,last_attempts=None,byte_sizes=None,active_sl
     if not run_id:return workers
     file=repo/'work/scratch/codex-pass1/parallel'/run_id/'run.json'
     try:
-        processes=json.loads(file.read_text()).get('processes',[])
-    except (OSError,ValueError):
+        report=json.loads(file.read_text())
+        processes=report.get('processes',[])
+        local_run=report.get('backend')=='local'
+    except (OSError,ValueError,AttributeError):
         processes=[]
+        local_run=False
     for item in processes:
         i=item.get('worker')
         if not isinstance(i,int):continue
@@ -317,9 +342,12 @@ def worker_info(repo,run_id,claimed,last_attempts=None,byte_sizes=None,active_sl
         last_va=va or (last_attempts or {}).get(i)
         slots=active_slots or {}
         # Active SQLite slot state, not stale lines in the last agent log.
-        phase=('VERIFIED' if slots.get(va) else 'PROBING') if va in slots else ('NO SLOT' if va else 'IDLE')
+        if local_run:
+            phase=('WAITING' if va in slots else 'WORKING') if va else 'IDLE'
+        else:
+            phase=('VERIFIED' if slots.get(va) else 'PROBING') if va in slots else ('NO SLOT' if va else 'IDLE')
         logfile=_log_for_va(repo,last_va)
-        view=stream(repo,logfile,limit=4) if logfile and phase in ('VERIFIED','PROBING') else []
+        view=stream(repo,logfile,limit=4) if logfile and va and phase!='IDLE' else []
         alive=proc_running(pid)
         workers.append({'worker':i+1,'pid':pid,'alive':alive,
                         'current':va,'last_function':last_va,'phase':phase,
@@ -535,10 +563,11 @@ def snapshot(repo):
         from spore_dashboard_control import modules as known_modules
         module_names=known_modules(repo)
     workers=worker_info(repo,rid,claims,last_by_worker,byte_sizes,active_slots=active_slots)
-    live_agent_throughput(repo,rid,workers)
+    aggregate=live_agent_throughput(repo,rid,workers)
     run['live_workers']=sum(w['alive'] for w in workers)
     recent=[w['tps'] for w in workers if w['tps'] is not None]
-    run['aggregate_tps']=round(sum(recent),1) if recent else None
+    run['aggregate_tps']=(aggregate if aggregate is not None else
+                          round(sum(recent),1) if recent else None)
     if not rid:
         run['state']='none'
     elif run['finished']:

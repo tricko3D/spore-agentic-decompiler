@@ -48,6 +48,17 @@ class ModelRouterTests(unittest.TestCase):
             router.local_endpoint({'SPORE_LOCAL_BASE_URL':'http://example.org/v1'})
 
 
+    def test_local_worker_seed_is_stable_and_sent_in_model_body(self):
+        environment={"SPORE_SQLITE_RUN_ID":"test-run-123",
+                     "SPORE_SQLITE_WORKER_IDX":"8",
+                     "SPORE_LOCAL_MODEL":"local-model"}
+        with mock.patch.dict(router.os.environ,environment):
+            config=router.local_opencode_config()
+        body=config["providers"]["spore_local"]["models"]["inkling"]["body"]
+        self.assertEqual(body["seed"],router.local_slot_seed("test-run-123",8))
+        self.assertNotEqual(body["seed"],router.local_slot_seed("test-run-123",9))
+        self.assertEqual(body["reasoning_effort"],"high")
+
     def test_price_weighting_and_cache(self):
         p = {
             "prompt": "0.000001", "completion": "0.000002",

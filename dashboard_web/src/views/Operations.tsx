@@ -114,7 +114,7 @@ export default function Operations({active,snapshot,snapshotError}:{active:boole
    </div>
    <Panel title="Agent fleet" subtitle="Live workers, current functions and newest recorded events" className="fleet">
     <div className="agent-grid">{d?.workers?.map(w=>{
-      const phase=!w.alive?'offline':w.phase==='VERIFIED'?'verified':w.phase==='NO SLOT'?'no-slot':['PROBING','PREFILL','GENERATING','INFERENCE'].includes(w.phase||'')?'probing':'idle';
+      const phase=!w.alive?'offline':w.phase==='VERIFIED'?'verified':w.phase==='NO SLOT'?'no-slot':w.phase==='WAITING'?'no-slot':['PROBING','WORKING','PREFILL','GENERATING','INFERENCE'].includes(w.phase||'')?'probing':'idle';
       return <button className={'agent '+phase} key={w.worker} onClick={()=>setDetail({kind:'agent',id:String(w.worker)})}>
        <div className="row-between"><strong>Agent {String(w.worker).padStart(2,'0')}</strong><Tag value={!w.alive?'OFFLINE':w.phase||'IDLE'} tone={phase}/></div>
        <span className="mono accent">{w.current||w.last_function||'Idle / waiting'}</span>
